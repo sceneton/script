@@ -1405,6 +1405,9 @@ do
 
     local resultsScreenWasVisible = false
     local replayVoteLogged = false
+    local replayButtonFirstSeenAt = nil
+    local trackedReplayButton = nil
+    local REPLAY_READY_DELAY = 2.0
 
     task.spawn(function()
         while not Unloaded do
@@ -1414,6 +1417,7 @@ do
                 replayFiredForThisEnding = false
                 replayVoteLogged = false
                 resultsScreenWasVisible = false
+                replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                 introSkipStreak = 0
                 introSkipPending = false
                 introSkipFirstSeenAt = nil
@@ -1432,6 +1436,7 @@ do
                     introFailsafeActive = false
                     if not resultsScreenWasVisible then
                         resultsScreenWasVisible = true
+                        replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                         replayFiredForThisEnding = false
                         replayClickStreak = 0
                         lastReplayClickTime = 0
@@ -1442,6 +1447,10 @@ do
                     if afkFarmModeActive() then
                         local replayButton = findReplayButton()
                         if replayButton then
+                            if trackedReplayButton ~= replayButton then
+                                trackedReplayButton = replayButton
+                                replayButtonFirstSeenAt = now
+                            end
                             if hasReplayVote(replayButton) then
                                 replayFiredForThisEnding = true
                                 if not replayVoteLogged then
@@ -1450,7 +1459,8 @@ do
                                 end
                             elseif not replayFiredForThisEnding then
                                 local cooldown = getReplayCooldown()
-                                if now - lastReplayClickTime >= cooldown and not autoUiMouseBusy and not needlePickupActive then
+                                if now - replayButtonFirstSeenAt >= REPLAY_READY_DELAY
+                                    and now - lastReplayClickTime >= cooldown and not autoUiMouseBusy and not needlePickupActive then
                                     replayClickStreak = replayClickStreak + 1
                                     lastReplayClickTime = now
                                     local clicked = activateButton(replayButton)
@@ -1460,8 +1470,8 @@ do
 
                                 end
                             end
-                        elseif replayClickStreak == 0 then
-
+                        else
+                            replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                         end
                     end
                 else
@@ -1469,6 +1479,7 @@ do
                         print("[AutoUI] Results screen closed")
                     end
                     resultsScreenWasVisible = false
+                    replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                     replayFiredForThisEnding = false
                     replayVoteLogged = false
                     replayClickStreak = 0

@@ -143,12 +143,12 @@ local introReady=false
 local sceneBlocked=false
 local autoPuzzleReady=function() return false end
 local startAutomaticPuzzles=function() end
-local puzzleEnabled=true
+local puzzleEnabled=false
 local puzzleGeneration=0
 local setPuzzleEnabled=function() end
 local resetPuzzleStartup=function() end
 local puzzleConfigPath="BeyyHub/ch2_standalone_puzzles.txt"
-local puzzleConfigStatus="Puzzle toggle auto-saves • default ON"
+local puzzleConfigStatus="Puzzle toggle auto-saves • default OFF"
 if type(writefile)~="function" then puzzleConfigStatus="Session only • file saving unavailable" end
 if type(readfile)=="function" then
     local ok,value=pcall(readfile,puzzleConfigPath)

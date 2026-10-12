@@ -1,5 +1,4 @@
--- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.2.2
-if game.PlaceId ~= 83445806734780 then warn("[Beyy CH2] Join Chapter 2 before running this script") return end
+-- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.3.0
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local Workspace=game:GetService("Workspace")
@@ -15,6 +14,68 @@ if type(getgenv)=="function" then
     if ok and type(result)=="table" then env=result end
 end
 if type(env.__BEYY_CH2_STANDALONE_STOP)=="function" then pcall(env.__BEYY_CH2_STANDALONE_STOP) end
+local teleportStatus="Unavailable • teleport queue is not supported"
+local reportTeleport=function() end
+local teleportConnection
+local teleportQueued=false
+local queueTeleport=(type(queue_on_teleport)=="function" and queue_on_teleport)
+    or (type(queueonteleport)=="function" and queueonteleport)
+    or (type(queue_on_tp)=="function" and queue_on_tp)
+    or (type(env.queue_on_teleport)=="function" and env.queue_on_teleport)
+    or (type(env.queueonteleport)=="function" and env.queueonteleport)
+    or (type(env.queue_on_tp)=="function" and env.queue_on_tp)
+local teleportPayload=[==[
+    if not game:IsLoaded() then game.Loaded:Wait() end
+    local players=game:GetService("Players")
+    local deadline=os.clock()+15
+    while not players.LocalPlayer and os.clock()<deadline do task.wait(0.05) end
+    if not players.LocalPlayer then warn("[Beyy CH2] Teleport reload: player unavailable") return end
+    local shared=_G
+    if type(getgenv)=="function" then local ok,t=pcall(getgenv);if ok and type(t)=="table" then shared=t end end
+    if shared.__BEYY_CH2_TELEPORT_BOOT then return end
+    shared.__BEYY_CH2_TELEPORT_BOOT=true
+    local nonce="?refresh="..tostring(os.time()).."-"..tostring(math.random(1,1000000000))
+    local function valid(body)
+        return type(body)=="string" and body:find("-- Beyy Chapter 2 standalone",1,true) and loadstring(body)
+    end
+    local url="https://raw.githubusercontent.com/sceneton/script/feature/chapter2-standalone/chapter2_standalone.lua"
+    local checked,info=pcall(function()
+        return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.github.com/repos/sceneton/script/commits/feature%2Fchapter2-standalone"..nonce))
+    end)
+    if checked and type(info)=="table" and type(info.sha)=="string" and #info.sha==40 and info.sha:match("^%x+$") then
+        url="https://raw.githubusercontent.com/sceneton/script/"..info.sha.."/chapter2_standalone.lua"
+    end
+    local ok,body=pcall(function() return game:HttpGet(url..nonce) end)
+    if not ok or not valid(body) then
+        shared.__BEYY_CH2_TELEPORT_BOOT=nil
+        warn("[Beyy CH2] Teleport reload download failed; rerun the standalone loader")
+        return
+    end
+    local executed,err=pcall(assert(loadstring(body)))
+    if not executed then
+        shared.__BEYY_CH2_TELEPORT_BOOT=nil
+        warn("[Beyy CH2] Teleport reload failed: "..tostring(err))
+    end
+]==]
+local function detachTeleport()
+    if teleportConnection then teleportConnection:Disconnect();teleportConnection=nil end
+end
+if queueTeleport and LocalPlayer.OnTeleport then
+    teleportStatus="Armed • reloads latest standalone on teleport"
+    teleportConnection=LocalPlayer.OnTeleport:Connect(function(state)
+        if teleportQueued or (state~=Enum.TeleportState.Started and state~=Enum.TeleportState.InProgress) then return end
+        local ok,err=pcall(queueTeleport,teleportPayload)
+        if ok then teleportQueued=true;teleportStatus="Queued for the next destination"
+        else teleportStatus="Queue failed: "..tostring(err) end
+        reportTeleport(teleportStatus)
+    end)
+end
+
+if game.PlaceId~=83445806734780 then
+    env.__BEYY_CH2_STANDALONE_STOP=detachTeleport
+    warn("[Beyy CH2] "..teleportStatus.."; waiting to arrive in Chapter 2")
+    return
+end
 -- Release the full hub before acquiring its camera/mouse controls.
 if type(_G.__BEYY_HUB_CLEANUP)=="function" then pcall(_G.__BEYY_HUB_CLEANUP) end
 local hubUnloaded=false
@@ -78,6 +139,8 @@ local objectiveBusy=function() return false end
 local objectiveTick=function() end
 local objectiveCleanup
 local startupTick=function() return false end
+local introReady=false
+local sceneBlocked=false
 local autoPuzzleReady=function() return false end
 local startAutomaticPuzzles=function() end
 local introMouseDown=false
@@ -141,6 +204,7 @@ local cleanup
 cleanup=function()
     if hubUnloaded then return end
     hubUnloaded=true
+    detachTeleport()
     hubWindow:Close()
     releaseVacuum()
     if objectiveCleanup then pcall(objectiveCleanup) end
@@ -1717,6 +1781,7 @@ return solved]===]
         end
         local function runAllPuzzles()
             if allPuzzlesRunning then allStatus("Already running"); return end
+            if not introReady or sceneBlocked then allStatus("Waiting for intro/scene completion before solving") return end
             if objectiveBusy() then allStatus("Key interaction is active; retry after it finishes") return end
             if hubUnloaded or puzzleControllerBusy or leverRunning or colourRunning then
                 allStatus("Cannot start while another puzzle controller is active")
@@ -1839,7 +1904,7 @@ return solved]===]
         })
 
         autoPuzzleReady=function()
-            if hubUnloaded or sharedFarmPuzzleBusy() or objectiveBusy() then return false end
+            if hubUnloaded or not introReady or sceneBlocked or sharedFarmPuzzleBusy() or objectiveBusy() then return false end
             local char=LocalPlayer.Character
             local root=char and char:FindFirstChild("HumanoidRootPart")
             local folder=leverFolder()
@@ -1860,6 +1925,10 @@ return solved]===]
 
 end
 statusRow("Startup")
+statusRow("Cutscene")
+statusRow("Teleport")
+reportTeleport=function(message) updateStatus("Teleport",message) end
+reportTeleport(teleportStatus)
 do
 local started=false
 local skipButtons=setmetatable({}, {__mode="k"})
@@ -1877,21 +1946,31 @@ local function indexSkip(item)
     end
     if marked then skipButtons[item]=true end
 end
-local function visibleSkip()
+local function guiVisible(item)
+    if not item or not item.Parent then return false end
+    local parent=item
+    while parent and parent~=playerGui do
+        if parent:IsA("GuiObject") and not parent.Visible then return false end
+        if parent:IsA("ScreenGui") and not parent.Enabled then return false end
+        parent=parent.Parent
+    end
+    return parent==playerGui
+end
+local function visibleSkip(kind)
     for button in pairs(skipButtons) do
         if not button.Parent then skipButtons[button]=nil
         else
             local visible=true
+            local ending=false
             local parent=button
             while parent and parent~=playerGui do
                 local name=parent.Name:lower()
-                -- Only click pre-start skip UI, excluding end/results controls.
-                if name:find("ending",1,true) or name:find("results",1,true) then visible=false;break end
+                if name:find("ending",1,true) or name:find("results",1,true) or name:find("outro",1,true) then ending=true end
                 if parent:IsA("GuiObject") and not parent.Visible then visible=false;break end
                 if parent:IsA("ScreenGui") and not parent.Enabled then visible=false;break end
                 parent=parent.Parent
             end
-            if parent==playerGui and visible and button.AbsoluteSize.X>0 and button.AbsoluteSize.Y>0 then return button end
+            if parent==playerGui and visible and ending==(kind=="outro") and button.AbsoluteSize.X>0 and button.AbsoluteSize.Y>0 then return button end
         end
     end
 end
@@ -1921,6 +2000,21 @@ local function clickSkip(button)
         introMouseDown=false
         pcall(function() VirtualInputManager:SendMouseButtonEvent(introClickPoint.X,introClickPoint.Y,0,false,game,0) end)
     end
+    -- Original integrated skip: virtual click plus available GUI signal activation.
+    if not hubUnloaded and type(firesignal)=="function" then
+        local function fireOn(item)
+            if hubUnloaded or not guiVisible(item) then return end
+            if not item:IsA("TextButton") and not item:IsA("ImageButton") then return end
+            pcall(function() firesignal(item.MouseButton1Click) end)
+            pcall(function() firesignal(item.MouseButton1Down) end)
+            task.wait(0.03)
+            if hubUnloaded then return end
+            pcall(function() firesignal(item.MouseButton1Up) end)
+            pcall(function() firesignal(item.Activated) end)
+        end
+        fireOn(button)
+        for _,child in ipairs(button:GetDescendants()) do fireOn(child) end
+    end
     RunService:UnbindFromRenderStep(introCursorBind)
     if not hubUnloaded then
         if hubWindow.Closed then UserInputService.MouseBehavior=oldBehavior;UserInputService.MouseIconEnabled=oldIcon
@@ -1931,18 +2025,34 @@ local function clickSkip(button)
 end
 if playerGui then connect(playerGui.DescendantAdded,indexSkip) end
 startupTick=function()
-    if started then return false end
     if hubUnloaded then return true end
-    if sharedFarmPuzzleBusy() then started=true;updateStatus("Startup","Puzzle solver started manually");return false end
-    if not hubWindow.Closed then hubWindow:Close() end
     local now=os.clock()
     if now>=nextScan then
         nextScan=now+0.5
         if playerGui then for _,item in ipairs(playerGui:GetDescendants()) do indexSkip(item) end end
     end
+    local outro=visibleSkip("outro")
+    local ending=playerGui and playerGui:FindFirstChild("NeedleEndingUI")
+    local results=ending and ending:FindFirstChild("ReturnToLobby")
+    sceneBlocked=outro~=nil or guiVisible(results)
+    if sceneBlocked then
+        releaseVacuum()
+        if outro and not sharedFarmPuzzleBusy() and not objectiveBusy() then
+            if not hubWindow.Closed then hubWindow:Close() end
+            updateStatus("Cutscene","Attempting outro Skip")
+            if now>=nextSkip then nextSkip=now+1;clickSkip(outro) end
+        else
+            updateStatus("Cutscene",outro and "Waiting for active interaction to release controls" or "Results screen • waiting for next scene/teleport")
+        end
+        return true
+    end
+    if started then updateStatus("Cutscene","No intro/outro skip pending");return false end
+    if sharedFarmPuzzleBusy() then started=true;updateStatus("Startup","Puzzle solver started manually");return false end
+    if not hubWindow.Closed then hubWindow:Close() end
     local intro=LocalPlayer:GetAttribute("IntroCutsceneFinished")
-    local skip=intro~=true and visibleSkip() or nil
+    local skip=visibleSkip("intro")
     if skip then
+        introReady=false
         neutralSince=nil
         updateStatus("Startup","Attempting intro Skip")
         if now>=nextSkip then nextSkip=now+0.5;clickSkip(skip) end
@@ -1950,6 +2060,7 @@ startupTick=function()
     end
     local blocked=LocalPlayer:GetAttribute("CutsceneActive")==true or LocalPlayer:GetAttribute("NeedleInputLocked")==true
     if intro==false or blocked then
+        introReady=false
         neutralSince=nil
         updateStatus("Startup","Waiting for intro to finish / controls to unlock")
         return true
@@ -1957,6 +2068,8 @@ startupTick=function()
     -- With no intro attribute, require a short neutral interval to avoid racing its initial replication.
     neutralSince=neutralSince or now
     if intro==nil and now-neutralSince<0.25 then return true end
+    introReady=true
+    updateStatus("Cutscene","Intro clear • controls ready")
     if autoPuzzleReady() then
         if startAutomaticPuzzles() then started=true;updateStatus("Startup","Intro ready • puzzle sequence launched") end
     else
@@ -2256,6 +2369,7 @@ local function turnInScan()
 end
 objectiveTick=function()
     if hubUnloaded then return end
+    if not introReady or sceneBlocked then setPickupStatus("Waiting for intro/outro scene completion") return end
     if sharedFarmPuzzleBusy() then setPickupStatus("Waiting for puzzle automation") return end
     if not hubWindow.Closed then setPickupStatus("Close the GUI with Right Ctrl to allow key automation") return end
     if LocalPlayer:GetAttribute("CutsceneActive")==true then setPickupStatus("Waiting for cutscene to finish") return end
@@ -2332,6 +2446,7 @@ if LocalPlayer.GetAttributeChangedSignal then
     connect(LocalPlayer:GetAttributeChangedSignal("DroneDeployed"),tryDeployDrone)
 end
 local function toolBlockReason()
+    if not introReady or sceneBlocked then return "Paused: intro/outro scene" end
     if objectiveBusy() then return "Paused: key interaction owns controls" end
     if objectiveState.AutoHandInNeedle and LocalPlayer:GetAttribute("NeedleOwned")==true then return "Paused: key turn-in pending" end
     if sharedFarmPuzzleBusy() then return "Paused: puzzle solver owns controls" end

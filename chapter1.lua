@@ -1015,11 +1015,14 @@ end
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
-
     { name = "base", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-transition", radius = 20.0, standoff = 2.1, cameraLift = 5.0, focusYOffset = 0.7 },
     { name = "lower-middle", radius = 18.0, standoff = 2.0, cameraLift = 5.0, focusYOffset = -0.1 },
+    { name = "middle-transition", radius = 16.0, standoff = 1.95, cameraLift = 5.1, focusYOffset = -0.8 },
     { name = "upper-middle", radius = 14.0, standoff = 1.9, cameraLift = 5.2, focusYOffset = -1.5 },
+    { name = "upper-transition", radius = 11.0, standoff = 1.8, cameraLift = 5.6, focusYOffset = -0.75 },
     { name = "peak", radius = 8.0, standoff = 1.7, cameraLift = 6.0, focusYOffset = 0.0 },
+    { name = "inner-peak", radius = 5.0, standoff = 1.6, cameraLift = 6.0, focusYOffset = 0.2 },
 }
 local afkOrbitAngle = 0
 local afkOrbitLap = 0
@@ -1087,7 +1090,8 @@ local function measureAfkBandSurfaces(center)
         folder = Workspace:FindFirstChild("HaystackClient")
         HayFolder = folder
     end
-    local radialTops = {{}, {}, {}, {}}
+    local radialTops = {}
+    for i = 1, #AFK_ORBIT_BANDS do radialTops[i] = {} end
     local floorY, highestY = math.huge, -math.huge
     if folder then
         for _, part in ipairs(folder:GetChildren()) do
@@ -1109,7 +1113,7 @@ local function measureAfkBandSurfaces(center)
     end
     if floorY == math.huge then floorY = center.Y - 4 end
     if highestY == -math.huge then highestY = center.Y + 8 end
-    local fractions = {0.12, 0.36, 0.63, 0.88}
+    local fractions = {0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
     local surfaces = {}
     for i, samples in ipairs(radialTops) do
         local baseline = floorY + (highestY - floorY) * fractions[i]
@@ -1123,7 +1127,9 @@ local function measureAfkBandSurfaces(center)
         end
         if i > 1 then surfaces[i] = math.max(surfaces[i], surfaces[i - 1]) end
     end
-    print(string.format("[AFK Orbit] Fixed level heights: base=%.1f lower=%.1f upper=%.1f peak=%.1f", table.unpack(surfaces)))
+    local heightLabels = {}
+    for i, band in ipairs(AFK_ORBIT_BANDS) do heightLabels[i] = string.format("%s=%.1f", band.name, surfaces[i]) end
+    print("[AFK Orbit] Fixed level heights: " .. table.concat(heightLabels, " "))
     return surfaces, highestY
 end
 
@@ -1247,7 +1253,7 @@ local function startAfkCamera()
     afkPreviousCFrame = cam.CFrame
     pcall(function() RunService:UnbindFromRenderStep(AFK_CAMERA_BIND) end)
     if bindAfkCameraView() then
-        print(string.format("[Camera] FIXED 4-band sweep started: %.1f deg/s, %ds full sweep, bands base/lower/upper/peak = 22/18/14/8 studs",
+        print(string.format("[Camera] FIXED 8-band sweep started: %.1f deg/s, %ds full sweep, bands = 22/20/18/16/14/11/8/5 studs",
             AFK_ORBIT_SPEED_DEG, math.floor(360 / AFK_ORBIT_SPEED_DEG * #AFK_ORBIT_BANDS + 0.5)))
     end
 end
@@ -1888,14 +1894,14 @@ do
     Info(MainTab, "Toggle UI: RightControl")
 
     AddToggle(MainTab, "AutoFarmWins", "Auto Farm Wins (AFK Farm Mode)", false,
-        "AFK round-create, 48 deg/s four-band sweep (22 / 18 / 14 / 8 studs), and automatic vacuum when enabled below.",
+        "AFK round-create, 48 deg/s eight-band sweep (22 / 20 / 18 / 16 / 14 / 11 / 8 / 5 studs), and automatic vacuum when enabled below.",
         function(v)
             if not v then releaseAfkCamera() end
             safeWrite(CACHE_FOLDER .. "/autofarmwins_shared.txt", tostring(v))
             print("[Mode] AFK Farm Mode = ".. tostring(State.AutoFarmWins))
         end)
     AddToggle(MainTab, "AutoFarmVacuum", "Vacuum During Auto Farm Wins", true,
-        "Use heat-bar-controlled suction while the character follows the base, lower-middle, upper-middle and peak sweep.")
+        "Use heat-bar-controlled suction while the character follows the eight circular sweep routes.")
 
     local sessionPara = MainTab:Paragraph({ Title = "Session", Desc = "0s elapsed" })
     task.spawn(function()

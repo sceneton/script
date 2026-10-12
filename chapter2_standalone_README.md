@@ -1,4 +1,4 @@
-# Beyy Chapter 2 Standalone 1.3.1
+# Beyy Chapter 2 Standalone 1.4.1
 
 A separate Chapter 2 puzzle and automatic tool controller with a native Roblox GUI. Runs only in PlaceId `83445806734780`.
 
@@ -21,6 +21,8 @@ The puzzle sequence launches once per enabled run. Switching OFF cancels the act
 - **Vacuum slot** cycles through hotbar slots 1–9; default is 5.
 - **Auto Pick Up Key: ALWAYS ON** finds `Workspace.NeedleObjectiveServer.Key`, moves beside it, aims and clicks until ownership is confirmed. The target requires a numeric `HayId` and must not be marked hidden.
 - **Auto Turn In Key: ALWAYS ON** moves beneath `Workspace.Laser` and submits through the existing `NeedleHandIn` remote, checking that ownership clears. These are fixed enabled indicators; there are no off toggles.
+- **Auto Selected Upgrades: ON/OFF** starts ON and purchases only VacuumPower, VacuumCooling, TntCooldown (TNT speed) and TntPower. It reads prices/max levels from the game's Config, checks cash, sends at most one request per 0.75 seconds and waits up to three seconds for level confirmation before retrying. Vacuum runtime, TNT luck and other tracks are excluded.
+- **Unskippable Scene Bypass: ON/OFF** starts ON and restores local camera/movement through flagged post-intro cinematics. It masks matching cinematic overlays temporarily and restores camera, mouse, head visibility and overlays when the scene ends or control is handed to another interaction. It yields to menus, outro/results UI, puzzles and key work.
 - **Stop tools** switches automatic tool requests off and releases input. An already deployed drone continues its autonomous collection; turning its toggle off does not recall it.
 - **Unload** cancels workers, releases mouse/key input, restores controls and removes the GUI.
 - Drag the title to reposition the panel. Progress appears in the puzzle and tool status rows.
@@ -31,7 +33,9 @@ No WindUI or other external UI download. One adaptive background scheduler handl
 
 TNT, Pitchfork and Vacuum pause while puzzle workers or key interactions own input, while the GUI is open, during flagged cutscenes and when game input is locked. The one-time drone request is independent of these input locks. Key automation waits for puzzle workers to finish. The scheduler releases Mouse1 before a puzzle or key interaction starts. Vacuum uses the live heat bar when available, with timed fallback when the HUD is unavailable. Opening the GUI cancels an active pickup and restores the temporary hay/camera changes.
 
-This script closes an already-running Beyy hub before taking camera/mouse control in Chapter 2. Re-executing the standalone unloads its previous instance. It does not need the split hub loader and does not change the split hub files. TNT/Drone default on, Pitchfork/Vacuum default off, and both key options are always enabled on each execution.
+This script closes an already-running Beyy hub before taking camera/mouse control in Chapter 2. Re-executing the standalone unloads its previous instance. It does not need the split hub loader and does not change the split hub files. TNT/Drone, selected upgrades and unskippable-scene bypass default on; Pitchfork/Vacuum default off; both key options are always enabled. Only the puzzle toggle is persisted.
+
+The unskippable bypass is local visual/control handling. Server cutscene timers, anchored movement and progression requirements still apply; puzzle/key workers continue to wait for their required flags to clear. It cannot guarantee a server-side instant skip. An active bypass uses a render callback; the callback is removed when inactive, yielding or unloaded.
 
 ## Minimal config
 

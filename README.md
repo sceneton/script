@@ -1,6 +1,6 @@
 # Beyy native integrated hub
 
-Fixed native Roblox GUI for the lobby and all three chapters. Right Ctrl opens/closes it. No UI animations, dragging, resizing, remote UI package, or UI polling while closed. Numeric settings use a text field and +/- buttons. Dropdowns expand instantly.
+Native Roblox GUI for the lobby and all three chapters. Right Ctrl opens/closes it. Drag the title bar with the mouse or touch; the panel stays on screen. No UI animations, resizing, remote UI package, or UI polling while closed. Numeric settings use a text field and +/- buttons. Dropdowns expand instantly.
 
 Existing config keys and WindUI/BeyyHub/config/*.json files remain compatible. Overview & Settings contains configs, chapter 1 farm settings, and cutscene settings. Lobby Tools follows Overview & Settings. Existing gameplay callbacks remain unchanged, including Chapter 1's two-second Replay delay.
 

@@ -60,6 +60,104 @@ end
 
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
+-- Pitchfork-only targeting: maintain child slots and budget large searches.
+local function createPitchforkSelector(allowModels, preferHovered)
+    local alive, folder = true, nil
+    local slots, positions, freeSlots, connections = {}, {}, {}, {}
+    local slotCount = 0
+    local lastTarget, lastTargetTime
+    local function clearFolder()
+        for _,c in ipairs(connections) do c:Disconnect() end
+        table.clear(connections); table.clear(slots); table.clear(positions); table.clear(freeSlots)
+        slotCount=0; lastTarget=nil; lastTargetTime=nil
+    end
+    local function add(obj)
+        if positions[obj] or not (obj:IsA("BasePart") or (allowModels and obj:IsA("Model"))) then return end
+        local index=table.remove(freeSlots)
+        if not index then slotCount+=1; index=slotCount end
+        slots[index]=obj; positions[obj]=index
+    end
+    local function remove(obj)
+        local index=positions[obj]
+        if not index then return end
+        positions[obj]=nil; slots[index]=false; freeSlots[#freeSlots+1]=index
+        if lastTarget==obj or (lastTarget and lastTarget:IsDescendantOf(obj)) then lastTarget=nil end
+    end
+    local function watchFolder(current)
+        if current==folder then return end
+        clearFolder(); folder=current
+        if not folder then return end
+        connections[1]=folder.ChildAdded:Connect(add)
+        connections[2]=folder.ChildRemoved:Connect(remove)
+        local scanFolder=folder
+        local sliceStarted=os.clock()
+        for index,obj in ipairs(folder:GetChildren()) do
+            if not alive or folder~=scanFolder then return end
+            if obj.Parent==scanFolder then add(obj) end
+            if index%32==0 and os.clock()-sliceStarted>=0.002 then task.wait(); sliceStarted=os.clock() end
+        end
+    end
+    local function stop()
+        alive=false; clearFolder(); folder=nil
+    end
+    local function selectTarget(isAllowed, cacheSeconds)
+        if not alive or not isAllowed() then return nil end
+        local current=Workspace:FindFirstChild("HaystackClient")
+        watchFolder(current)
+        if not alive or not isAllowed() then return nil end
+        local character=LocalPlayer.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        if not folder or not root then return nil end
+        local hovered=preferHovered and LocalPlayer:GetAttribute("HoveredHayId") or nil
+        if lastTarget and lastTarget.Parent and lastTarget:IsDescendantOf(folder)
+            and os.clock()-(lastTargetTime or 0)<(cacheSeconds or 0)
+            and lastTarget:GetAttribute("HayId") then return lastTarget,lastTarget:GetAttribute("HayId") end
+        local best,bestId,hoveredPart,hoveredId=nil,nil,nil,nil
+        local bestObject,hoveredObject
+        local bestDistance=30*30
+        local sliceStarted=os.clock()
+        local origin=root.Position
+        local scanFolder=folder
+        local index=1
+        while index<=slotCount do
+            if not alive or folder~=scanFolder or not scanFolder.Parent then return nil end
+            local obj=slots[index]
+            if obj and obj.Parent==scanFolder then
+                local part=obj:IsA("BasePart") and obj or (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart",true))
+                if part then
+                    local id=part:GetAttribute("HayId") or (allowModels and obj:GetAttribute("HayId"))
+                    if id then
+                        if hovered and id==hovered then hoveredPart,hoveredId,hoveredObject=part,id,obj end
+                        local delta=part.Position-origin
+                        local distance=delta:Dot(delta)
+                        if distance<bestDistance then best,bestId,bestDistance,bestObject=part,id,distance,obj end
+                    end
+                end
+            end
+            index+=1
+            if index%32==0 and os.clock()-sliceStarted>=0.002 then
+                if not isAllowed() then return nil end
+                task.wait()
+                sliceStarted=os.clock()
+            end
+        end
+        best,bestId=hoveredPart or best,hoveredId or bestId
+        bestObject=hoveredObject or bestObject
+        if not best or not best.Parent or not best:IsDescendantOf(scanFolder) then return nil end
+        if not alive or not isAllowed() or Workspace:FindFirstChild("HaystackClient")~=scanFolder
+            or LocalPlayer.Character~=character then return nil end
+        -- Recheck range after any yield; hovered selection keeps Chapter 1's rules.
+        local delta=best.Position-root.Position
+        if not hoveredPart and delta:Dot(delta)>=30*30 then return nil end
+        lastTarget,lastTargetTime=best,os.clock()
+        local currentId=best:GetAttribute("HayId") or (allowModels and bestObject and bestObject:GetAttribute("HayId"))
+        if not currentId then lastTarget=nil; return nil end
+        return best,currentId
+    end
+    return selectTarget,stop
+end
+
+local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
 local earlyIntroRunning = true
 local earlyIntroPending = false
@@ -173,6 +271,7 @@ do
     local hubCursorCleanup = nil
     _G.__BEYY_HUB_CLEANUP = function()
     stopEarlyIntro()
+    stopPitchforkSelector()
         hubUnloaded = true
         if hubRestoreAction then pcall(hubRestoreAction) end
         if hubCursorCleanup then pcall(hubCursorCleanup) end
@@ -775,7 +874,7 @@ end
             if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
                 and needleFolder and not farmBlocked() and not needlePriority() then
                 if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
-                    local _,id=closestInFolder("HaystackClient","HayId",30)
+                    local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() end)
                     if id then sendFarmRemote("PitchforkDig",id) end
                 end
                 if sharedFarmState.AutoDeployDrone and LocalPlayer:GetAttribute("DroneOwned")==true

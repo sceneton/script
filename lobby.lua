@@ -1047,6 +1047,727 @@ end
         end)
 
     do
+        local overview = overviewTab
+local function cutsceneResultsVisible()
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local ending = pg and pg:FindFirstChild("NeedleEndingUI")
+    return ending and ending:IsA("ScreenGui") and ending.Enabled == true
+end
+local function shouldYieldCutsceneBypass()
+    return hubUnloaded or not hubWindow.Closed or needleBusy or sharedFarmPuzzleBusy() or cutsceneResultsVisible()
+end
+local function setCutsceneBypassActive(_) end
+local cutsceneBypassStop = nil
+local function launchCutsceneBypass()
+    if cutsceneBypassStop then return true end
+    local ok, result = pcall(function()
+
+        local Players = game:GetService("Players")
+        local RunService = game:GetService("RunService")
+        local UserInputService = game:GetService("UserInputService")
+        local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+        local env = _G
+        if type(getgenv) == "function" then
+            local ok, tbl = pcall(getgenv)
+            if ok and type(tbl) == "table" then env = tbl end
+        end
+        local older = env.__BEYY_CUTSCENE_BYPASS_STOP or _G.__BEYY_CUTSCENE_BYPASS_STOP
+        if type(older) == "function" then pcall(older) end
+
+        local alive, enabled, active = true, true, false
+        local scene = nil
+        local recoveryEnd = 0
+        local lastNormalDistance, lastNormalYaw, lastNormalPitch = 0.6, nil, nil
+        local normalFirstPerson, cameraFirstPerson = true, true
+        local yaw, pitch, distance = nil, -0.18, 0.6
+        local lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil
+        local controls, cachedCamera = nil, nil
+        local originalMouseBehavior = nil
+        local connections = {}
+        local hudEnabled = true
+        local faceCameraEnabled = true
+        local hudNormal, hudForced = {}, {}
+        local headTransparencyBefore = {}
+        local finalVisualsEnabled = true
+        local finalVisualBefore = {}
+        local cameraWatch = nil
+        local inCameraWrite, cameraErrorWarned = false, false
+        local renderId = "BeyyCutsceneCameraV103Last"
+        local renderPriority = Enum.RenderPriority.Last.Value + 2000
+        local RECOVERY_GRACE_SECONDS = 0.035
+        local INTRO_SETTLE_SECONDS = 1.0
+        local introConfirmedAt = player:GetAttribute("IntroCutsceneFinished") == true and (os.clock() - 2) or nil
+        local introNeutralSeen = introConfirmedAt ~= nil and player:GetAttribute("CutsceneActive") ~= true
+        local chapter2ReleaseSeen = player:GetAttribute("Chapter2ReleaseActive") == true
+        local yieldingToEnding = false
+        local lastEndingSkipScan, lastEndingSkipVisible = 0, false
+        local skipCandidates = setmetatable({}, { __mode = "k" })
+        local skipGui, skipGuiAddedConnection = nil, nil
+        local lastSkipFallbackScan = 0
+        local lastRenderTime = os.clock()
+
+        local function log(s)
+            -- Keep the controller quiet during normal scene transitions.
+        end
+        local function hook(c)
+            if c then connections[#connections+1] = c end
+        end
+        local function humanoid()
+            local char = player.Character
+            return char and char:FindFirstChildOfClass("Humanoid")
+        end
+        local function root()
+            local char = player.Character
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+        local function camera()
+            return workspace.CurrentCamera
+        end
+        local function getControls()
+            if controls then return controls end
+            local ps = player:FindFirstChild("PlayerScripts")
+            local pm = ps and ps:FindFirstChild("PlayerModule")
+            if not pm then return nil end
+            local ok, mod = pcall(require, pm)
+            if not ok or type(mod) ~= "table" then return nil end
+            local ok2, obj = pcall(function() return mod:GetControls() end)
+            if ok2 then controls = obj end
+            return controls
+        end
+        local function rememberGameplay()
+            local hum = humanoid()
+            if hum then
+                if hum.WalkSpeed > 0 then lastSavedSpeed = hum.WalkSpeed end
+                if hum.JumpPower > 0 then lastSavedJump = hum.JumpPower end
+                lastSavedRotate = hum.AutoRotate
+            end
+            local cam, rt = camera(), root()
+            if cam and rt and cam.CameraType == Enum.CameraType.Custom then
+                local look = cam.CFrame.LookVector
+                if look.Magnitude > 0.5 then
+                    local planar = Vector3.new(look.X, 0, look.Z)
+                    if planar.Magnitude > 0.1 then
+                        lastNormalYaw = math.atan2(planar.X, planar.Z)
+                    end
+                    lastNormalPitch = math.asin(math.max(-0.97, math.min(0.97, look.Y)))
+                end
+                local char = player.Character
+                local head = char and char:FindFirstChild("Head")
+                local eye = head and head.Position or (rt.Position + Vector3.new(0, 1.6, 0))
+                local d = (cam.CFrame.Position - eye).Magnitude
+                if d <= 22 then
+                    lastNormalDistance = d
+                    normalFirstPerson = (d < 2.5 or player.CameraMode == Enum.CameraMode.LockFirstPerson)
+                end
+            end
+        end
+        local function kind()
+            if shouldYieldCutsceneBypass() then return nil end
+            -- Explicit unfinished intros and visible skip/results UI keep normal behavior.
+            if player:GetAttribute("IntroCutsceneFinished") == false then return nil end
+            if introConfirmedAt and os.clock() - introConfirmedAt < INTRO_SETTLE_SECONDS then return nil end
+            if yieldingToEnding then return nil end
+            if player:GetAttribute("Chapter2ReleaseActive") == true then return "THREE PUZZLES" end
+            if player:GetAttribute("CutsceneActive") == true then return "THREE LEVERS" end
+            return nil
+        end
+        local function clamp(v, lo, hi)
+            return math.max(lo, math.min(hi, v))
+        end
+        local function setupPlayableCamera()
+            local rt = root()
+            local facing = rt and rt.CFrame.LookVector or Vector3.new(0,0,-1)
+            local planar = Vector3.new(facing.X, 0, facing.Z)
+            if planar.Magnitude < 0.01 then planar = Vector3.new(0,0,-1) end
+            yaw = lastNormalYaw or math.atan2(planar.X, planar.Z)
+            pitch = clamp(lastNormalPitch or -0.16, -1.20, 1.05)
+            cameraFirstPerson = normalFirstPerson or player.CameraMode == Enum.CameraMode.LockFirstPerson
+            distance = clamp(lastNormalDistance or 0.6, 0.0, 22)
+            log(string.format("Normal camera calibration: %s d=%.2f pitch=%.2f (no forced 6+ stud zoom)",
+                cameraFirstPerson and "FIRST PERSON" or "THIRD PERSON", distance, pitch))
+            cameraErrorWarned = false
+            if originalMouseBehavior == nil then originalMouseBehavior = UserInputService.MouseBehavior end
+        end
+        local function lookVector()
+            local cp = math.cos(pitch)
+            return Vector3.new(math.sin(yaw)*cp, math.sin(pitch), math.cos(yaw)*cp)
+        end
+        local function hideHeadForFirstPerson()
+            if not cameraFirstPerson then return end
+            local char = player.Character
+            if not char then return end
+            local function hidePart(inst)
+                if not inst or not inst:IsA("BasePart") then return end
+                if headTransparencyBefore[inst] == nil then
+                    headTransparencyBefore[inst] = inst.LocalTransparencyModifier
+                end
+                inst.LocalTransparencyModifier = 1
+            end
+            hidePart(char:FindFirstChild("Head"))
+            for _, item in ipairs(char:GetChildren()) do
+                if item:IsA("Accessory") then
+                    hidePart(item:FindFirstChild("Handle"))
+                end
+            end
+        end
+        local function restoreHeadTransparency()
+            for part, before in pairs(headTransparencyBefore) do
+                if part.Parent then
+                    pcall(function() part.LocalTransparencyModifier = before end)
+                end
+                headTransparencyBefore[part] = nil
+            end
+        end
+        local function forceCamera()
+            if not alive or not enabled or not active or inCameraWrite or shouldYieldCutsceneBypass() then return end
+            local cam, rt = camera(), root()
+            if not cam or not rt or not yaw then return end
+            inCameraWrite = true
+            local safe, err = pcall(function()
+                local vec = lookVector()
+                local char = player.Character
+                local head = char and char:FindFirstChild("Head")
+                local eye = head and head.Position or (rt.Position + Vector3.new(0, 1.6, 0))
+                local result, focus
+                if cameraFirstPerson then
+                    result = CFrame.lookAt(eye, eye + vec * 8, Vector3.yAxis)
+                    focus = eye + vec * 8
+                    hideHeadForFirstPerson()
+                else
+                    local target = rt.Position + Vector3.new(0, 1.6, 0)
+                    local desired = target - vec * distance
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = char and {char} or {}
+                    params.RespectCanCollide = true
+                    local hit = workspace:Raycast(target, desired - target, params)
+                    if hit then
+                        local hitDistance = (hit.Position - target).Magnitude
+                        desired = target - vec * math.max(0.35, math.min(distance, hitDistance - 0.40))
+                    end
+                    result = CFrame.lookAt(desired, target, Vector3.yAxis)
+                    focus = target
+                end
+                cam.CameraType = Enum.CameraType.Scriptable
+                local hum = humanoid()
+                if hum then cam.CameraSubject = hum end
+                cam.CFrame = result
+                cam.Focus = CFrame.new(focus)
+            end)
+            inCameraWrite = false
+            if not safe and not cameraErrorWarned then
+                cameraErrorWarned = true
+                warn("[BeyyHub Cutscene] Camera write failed: " .. tostring(err))
+            end
+        end
+        local function unwatchLeverCamera()
+            if cameraWatch then pcall(function() cameraWatch:Disconnect() end) end
+            cameraWatch, cachedCamera = nil, nil
+        end
+        local function watchLeverCamera()
+            if not alive or not enabled or not active or scene ~= "THREE LEVERS" then
+                unwatchLeverCamera()
+                return
+            end
+            local cam = camera()
+            if cam == cachedCamera and cameraWatch then return end
+            unwatchLeverCamera()
+            cachedCamera = cam
+            if not cam then return end
+            cameraWatch = cam:GetPropertyChangedSignal("CFrame"):Connect(function()
+                if alive and enabled and active and scene == "THREE LEVERS" and not inCameraWrite then
+                    forceCamera()
+                end
+            end)
+        end
+        hook(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+            if active and scene == "THREE LEVERS" then watchLeverCamera() end
+        end))
+
+        local SAFE_HUD_NAMES = { hud = true, needlehud = true, notifications = true }
+        local function rememberGameplayHud()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return end
+            for _, gui in ipairs(pg:GetChildren()) do
+                if gui:IsA("ScreenGui") and SAFE_HUD_NAMES[gui.Name:lower()] then
+                    hudNormal[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder }
+                end
+            end
+        end
+        local function showGameplayHud()
+            if not hudEnabled then return end
+            for gui, before in pairs(hudNormal) do
+                if gui.Parent and before.enabled then
+                    if not hudForced[gui] then hudForced[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder } end
+                    if not gui.Enabled then
+                        pcall(function() gui.Enabled = true end)
+                    end
+                    local targetOrder = math.max(before.order or 0, 10000)
+                    if gui.DisplayOrder ~= targetOrder then
+                        pcall(function() gui.DisplayOrder = targetOrder end)
+                    end
+                end
+            end
+        end
+        local function restoreGameplayHud()
+            for gui, saved in pairs(hudForced) do
+                if gui.Parent then
+                    local wasNormal = hudNormal[gui]
+                    pcall(function()
+                        gui.DisplayOrder = saved.order
+                        if wasNormal and wasNormal.enabled then gui.Enabled = true end
+                    end)
+                end
+                hudForced[gui] = nil
+            end
+        end
+
+        local function isFinalOverlay(gui)
+            if not gui:IsA("ScreenGui") then return false end
+            local name = gui.Name:lower()
+            if name:find("ending", 1, true) or name:find("needle", 1, true) then return false end
+            return name == "cutscenefade" or name:find("cutscene", 1, true) ~= nil
+                or name:find("cinematic", 1, true) ~= nil
+                or name:find("chapter2release", 1, true) ~= nil
+        end
+        local function maskFinalProperty(inst, key)
+            local ok, previous = pcall(function() return inst[key] end)
+            if not ok or type(previous) ~= "number" or previous >= 1 then return end
+            local saved = finalVisualBefore[inst]
+            if not saved then saved = {}; finalVisualBefore[inst] = saved end
+            if saved[key] == nil then saved[key] = previous end
+            pcall(function() inst[key] = 1 end)
+        end
+        local function hideFinalCutsceneVisuals()
+            if not finalVisualsEnabled or not scene then return end
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return end
+            for _, gui in ipairs(pg:GetChildren()) do
+                if isFinalOverlay(gui) then
+                    for _, el in ipairs(gui:GetDescendants()) do
+                        if el:IsA("GuiObject") then
+                            maskFinalProperty(el, "BackgroundTransparency")
+                            if el:IsA("TextLabel") or el:IsA("TextButton") or el:IsA("TextBox") then
+                                maskFinalProperty(el, "TextTransparency")
+                                maskFinalProperty(el, "TextStrokeTransparency")
+                            end
+                            if el:IsA("ImageLabel") or el:IsA("ImageButton") then
+                                maskFinalProperty(el, "ImageTransparency")
+                            end
+                        elseif el:IsA("UIStroke") then
+                            maskFinalProperty(el, "Transparency")
+                        end
+                    end
+                end
+            end
+        end
+        local function restoreFinalCutsceneVisuals()
+            for inst, props in pairs(finalVisualBefore) do
+                if inst.Parent then
+                    for key, original in pairs(props) do
+                        pcall(function() inst[key] = original end)
+                    end
+                end
+                finalVisualBefore[inst] = nil
+            end
+        end
+
+        local function indexSkipCandidate(inst)
+            if not inst then return end
+            local btn = nil
+            if inst:IsA("GuiButton") then
+                btn = inst
+            elseif inst:IsA("TextLabel") and inst.Text:lower():find("skip", 1, true) then
+                local ancestor = inst.Parent
+                while ancestor and not ancestor:IsA("GuiButton") do
+                    ancestor = ancestor.Parent
+                end
+                btn = ancestor
+            end
+            if not btn then return end
+            local name = btn.Name:lower()
+            local text = btn:IsA("TextButton") and btn.Text:lower() or ""
+            local marked = name:find("skip", 1, true) or text:find("skip", 1, true)
+            if not marked then
+                for _, child in ipairs(btn:GetChildren()) do
+                    if child:IsA("TextLabel") and child.Text:lower():find("skip", 1, true) then
+                        marked = true
+                        break
+                    end
+                end
+            end
+            if marked then skipCandidates[btn] = true end
+        end
+        local function scanSkipCandidates(pg)
+            for _, obj in ipairs(pg:GetDescendants()) do indexSkipCandidate(obj) end
+        end
+        local function watchSkipGui()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if pg == skipGui and skipGuiAddedConnection then return pg end
+            if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end
+            skipGuiAddedConnection, skipGui = nil, pg
+            if pg then
+                scanSkipCandidates(pg)
+                skipGuiAddedConnection = pg.DescendantAdded:Connect(indexSkipCandidate)
+            end
+            return pg
+        end
+        local function skipButtonVisible(pg)
+            for btn in pairs(skipCandidates) do
+                if not btn.Parent or not btn:IsDescendantOf(pg) then
+                    skipCandidates[btn] = nil
+                else
+                    local visible, parent = true, btn
+                    while parent and parent ~= pg do
+                        if parent:IsA("GuiObject") and not parent.Visible then visible = false; break end
+                        if parent:IsA("ScreenGui") and not parent.Enabled then visible = false; break end
+                        parent = parent.Parent
+                    end
+                    if visible then return true end
+                end
+            end
+            return false
+        end
+        local function skipButtonOnScreen()
+            local now = os.clock()
+            if now - lastEndingSkipScan < 0.08 then return lastEndingSkipVisible end
+            lastEndingSkipScan = now
+            local pg = watchSkipGui()
+            if not pg then lastEndingSkipVisible = false; return false end
+            lastEndingSkipVisible = skipButtonVisible(pg)
+            local endingUI = pg:FindFirstChild("NeedleEndingUI")
+            local endingLikely = player:GetAttribute("NeedleOwned") == true
+                or player:GetAttribute("CutsceneActive") == true
+                or (endingUI and endingUI.Enabled == true)
+            local fallbackEvery = endingLikely and 0.1 or 4
+            if not lastEndingSkipVisible and now - lastSkipFallbackScan >= fallbackEvery then
+                lastSkipFallbackScan = now
+                scanSkipCandidates(pg)
+                lastEndingSkipVisible = skipButtonVisible(pg)
+            end
+            return lastEndingSkipVisible
+        end
+        local function releaseEndingCursor()
+            pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
+            pcall(function() UserInputService.MouseIconEnabled = true end)
+        end
+
+        local function restoreInputs()
+            local hum = humanoid()
+            if hum then
+                if hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
+                if hum.Sit then pcall(function() hum.Sit = false end) end
+                if hum.WalkSpeed <= 0 and lastSavedSpeed then hum.WalkSpeed = lastSavedSpeed end
+                if hum.JumpPower <= 0 and lastSavedJump then hum.JumpPower = lastSavedJump end
+                if not faceCameraEnabled and lastSavedRotate ~= nil and hum.AutoRotate ~= lastSavedRotate then
+                    hum.AutoRotate = lastSavedRotate
+                end
+            end
+            local ctrl = getControls()
+            if ctrl and ctrl.enabled == false then
+                pcall(function() ctrl:Enable() end)
+            end
+            if player:GetAttribute("NeedleInputLocked") == true then
+                pcall(function() player:SetAttribute("NeedleInputLocked", nil) end)
+            end
+        end
+        local function alignCharacterFacing()
+            if not alive or not enabled or not active or not faceCameraEnabled then return end
+            local hum, rt = humanoid(), root()
+            if not hum or not rt or rt.Anchored or not yaw then return end
+            local forward = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
+            local oldLook = rt.CFrame.LookVector
+            local flatOld = Vector3.new(oldLook.X, 0, oldLook.Z)
+            local dot = flatOld.Magnitude > 0.01 and flatOld.Unit:Dot(forward) or 0
+            if hum.AutoRotate then hum.AutoRotate = false end
+            if dot < 0.9995 then
+                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, Vector3.yAxis)
+                pcall(function() rt.CFrame = rt.CFrame:Lerp(desired, 0.35) end)
+            end
+        end
+        local function directMovement()
+            local hum = humanoid()
+            if not hum or UserInputService:GetFocusedTextBox() then return end
+            local function down(key)
+                return UserInputService:IsKeyDown(key)
+            end
+            local x = (down(Enum.KeyCode.D) and 1 or 0) - (down(Enum.KeyCode.A) and 1 or 0)
+            local z = (down(Enum.KeyCode.W) and 1 or 0) - (down(Enum.KeyCode.S) and 1 or 0)
+            if x ~= 0 or z ~= 0 then
+                if not yaw then return end
+                local front = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
+                local right = Vector3.new(-front.Z, 0, front.X)
+                local motion = front*z + right*x
+                if motion.Magnitude > 1 then motion = motion.Unit end
+                pcall(function() hum:Move(motion, false) end)
+            end
+            if down(Enum.KeyCode.Space) then pcall(function() hum.Jump = true end) end
+        end
+        local function restoreCamera()
+            restoreHeadTransparency()
+            local cam = camera()
+            if cam then
+                local hum = humanoid()
+                if hum then pcall(function() cam.CameraSubject = hum end) end
+                pcall(function() cam.CameraType = Enum.CameraType.Custom end)
+            end
+            local hum = humanoid()
+            if hum and lastSavedRotate ~= nil then
+                pcall(function() hum.AutoRotate = lastSavedRotate end)
+            end
+            local ctrl = getControls()
+            if ctrl then pcall(function() ctrl:Enable() end) end
+            if originalMouseBehavior then
+                pcall(function() UserInputService.MouseBehavior = originalMouseBehavior end)
+                originalMouseBehavior = nil
+            end
+        end
+        local function enablePlayableCamera(reason)
+            if active then return end
+            setCutsceneBypassActive(true)
+            active = true
+            setupPlayableCamera()
+            local ctrl = getControls()
+            if ctrl then pcall(function() ctrl:Enable() end) end
+            log("PLAYABLE CAMERA ENABLED: " .. tostring(reason))
+            if scene == "THREE LEVERS" then watchLeverCamera() end
+            forceCamera()
+        end
+        local function disablePlayableCamera(reason)
+            unwatchLeverCamera()
+            if not active then return end
+            active = false
+            restoreCamera()
+            setCutsceneBypassActive(false)
+            log("ROBLOX CAMERA RETURNED: " .. tostring(reason))
+        end
+        local function updateScene()
+            if not alive then return end
+            local now = os.clock()
+            if player:GetAttribute("Chapter2ReleaseActive") == true then chapter2ReleaseSeen = true end
+            local hasSkip = skipButtonOnScreen()
+            if not hasSkip then yieldingToEnding = false end
+            if hasSkip and not yieldingToEnding then
+                yieldingToEnding = true
+                recoveryEnd = 0
+                log("SKIPPABLE NEEDLE ENDING DETECTED — camera bypass released; mouse unlocked for SKIP / hub AutoSkip")
+            end
+            local current = enabled and kind() or nil
+            if current then
+                if current ~= scene then
+                    scene = current
+                    if current == "THREE PUZZLES" then
+                        unwatchLeverCamera()
+                        log("CHAPTER 2 RELEASE: camera/movement override; optional transparency-only cutscene visual mask")
+                    end
+                    log("CUTSCENE DETECTED: " .. current)
+                    if current == "THREE PUZZLES" then
+                        log("Final cinematic: preserve normal viewing distance and hide cutscene visuals only; ending AutoSkip UI untouched")
+                    end
+                    recoveryEnd = 0
+                    if not active then enablePlayableCamera(current) end
+                end
+            elseif scene then
+                log("CUTSCENE FLAG CLEARED: " .. scene .. " — restoring Roblox camera in " .. RECOVERY_GRACE_SECONDS .. "s")
+                restoreFinalCutsceneVisuals()
+                unwatchLeverCamera()
+                scene = nil
+                recoveryEnd = now + RECOVERY_GRACE_SECONDS
+                task.delay(RECOVERY_GRACE_SECONDS + 0.008, function()
+                    if alive then updateScene() end
+                end)
+            end
+            local shouldKeep = enabled and not yieldingToEnding and (current ~= nil or now < recoveryEnd)
+            if shouldKeep then
+                if not active then enablePlayableCamera("recovery / F7") end
+                restoreInputs()
+                showGameplayHud()
+                hideFinalCutsceneVisuals()
+            else
+                restoreFinalCutsceneVisuals()
+                restoreGameplayHud()
+                if active then disablePlayableCamera("recovered / bypass disabled") end
+            end
+            if yieldingToEnding and lastEndingSkipVisible then releaseEndingCursor() end
+        end
+
+        hook(UserInputService.InputBegan:Connect(function(input, processed)
+            if processed or UserInputService:GetFocusedTextBox() or shouldYieldCutsceneBypass() then return end
+            if input.KeyCode == Enum.KeyCode.F3 then
+                finalVisualsEnabled = not finalVisualsEnabled
+                if not finalVisualsEnabled then restoreFinalCutsceneVisuals() end
+                log("F3: final cinematic visual masking " .. (finalVisualsEnabled and "ENABLED" or "DISABLED"))
+            elseif input.KeyCode == Enum.KeyCode.F4 then
+                faceCameraEnabled = not faceCameraEnabled
+                local hum = humanoid()
+                if hum and not faceCameraEnabled and lastSavedRotate ~= nil then
+                    pcall(function() hum.AutoRotate = lastSavedRotate end)
+                end
+                log("F4: camera-facing character alignment " .. (faceCameraEnabled and "ENABLED" or "DISABLED"))
+                if faceCameraEnabled then alignCharacterFacing() end
+            elseif input.KeyCode == Enum.KeyCode.F5 then
+                hudEnabled = not hudEnabled
+                if not hudEnabled then restoreGameplayHud() end
+                log("F5: gameplay HUD preservation " .. (hudEnabled and "ENABLED" or "DISABLED"))
+            elseif input.KeyCode == Enum.KeyCode.F7 then
+                recoveryEnd = 0
+                log("F7: Roblox camera recovery requested")
+                updateScene()
+            end
+        end))
+        hook(UserInputService.InputChanged:Connect(function(input)
+            if not active or shouldYieldCutsceneBypass() then return end
+            if input.UserInputType == Enum.UserInputType.MouseWheel then
+                if not cameraFirstPerson then
+                    distance = clamp(distance - input.Position.Z * 1.5, 0.4, 22)
+                end
+            end
+        end))
+        hook(player.AttributeChanged:Connect(function(attr)
+            if attr == "IntroCutsceneFinished" then
+                if player:GetAttribute("IntroCutsceneFinished") == true and not introConfirmedAt then
+                    introConfirmedAt = os.clock()
+                    introNeutralSeen = player:GetAttribute("CutsceneActive") ~= true
+                    log("SKIPPABLE INTRO COMPLETED — waiting for clean lever trigger; intro ignored")
+                elseif player:GetAttribute("IntroCutsceneFinished") ~= true then
+                    introConfirmedAt, introNeutralSeen = nil, false
+                    chapter2ReleaseSeen, yieldingToEnding = false, false
+                    lastEndingSkipScan, lastEndingSkipVisible = 0, false
+                end
+            elseif attr == "CutsceneActive" and player:GetAttribute("CutsceneActive") ~= true
+                and introConfirmedAt then
+                introNeutralSeen = true
+            end
+            if attr == "CutsceneActive" or attr == "Chapter2ReleaseActive" or
+                attr == "IntroCutsceneFinished" or attr == "NeedleInputLocked" or attr == "NeedleOwned" then
+                task.defer(updateScene)
+            end
+        end))
+        hook(player.CharacterAdded:Connect(function()
+            controls, lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil, nil
+            task.delay(0.4, function() if alive and not active then rememberGameplay() end end)
+        end))
+
+        local function handleCameraInput()
+            if not alive or not enabled or not active or not yaw then return end
+            pcall(function()
+                if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+                end
+            end)
+            local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
+            if ok and md then
+                if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
+                    yaw = yaw - md.X * 0.004
+                    pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)
+                end
+            end
+            local now = os.clock()
+            local dt = clamp(now - lastRenderTime, 0, 0.08)
+            lastRenderTime = now
+            local function down(key) return UserInputService:IsKeyDown(key) end
+            if not UserInputService:GetFocusedTextBox() then
+                local h = (down(Enum.KeyCode.Right) and 1 or 0) - (down(Enum.KeyCode.Left) and 1 or 0)
+                local v = (down(Enum.KeyCode.Up) and 1 or 0) - (down(Enum.KeyCode.Down) and 1 or 0)
+                if h ~= 0 or v ~= 0 then
+                    yaw = yaw - h * dt * 1.9
+                    pitch = clamp(pitch + v * dt * 1.3, -1.0, 0.85)
+                end
+            end
+        end
+        RunService:BindToRenderStep(renderId, renderPriority, function()
+            if alive and yieldingToEnding and skipButtonOnScreen() then
+                if active then updateScene() end
+                releaseEndingCursor()
+            end
+            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then
+                handleCameraInput()
+                forceCamera()
+                alignCharacterFacing()
+                directMovement()
+                showGameplayHud()
+                if scene then hideFinalCutsceneVisuals() end
+            else
+                lastRenderTime = os.clock()
+            end
+        end)
+        local simulationSignal = RunService.PreSimulation or RunService.Heartbeat
+        hook(simulationSignal:Connect(function()
+            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then directMovement() end
+        end))
+
+        local function stop()
+            if not alive then return end
+            local wasActive = active
+            alive, enabled, active = false, false, false
+            pcall(function() RunService:UnbindFromRenderStep(renderId) end)
+            unwatchLeverCamera()
+            if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end
+            skipGuiAddedConnection = nil
+            restoreGameplayHud()
+            restoreFinalCutsceneVisuals()
+            for _, conn in ipairs(connections) do pcall(function() conn:Disconnect() end) end
+            if wasActive then restoreCamera() end
+            setCutsceneBypassActive(false)
+            if env.__BEYY_CUTSCENE_BYPASS_STOP == stop then env.__BEYY_CUTSCENE_BYPASS_STOP = nil end
+            if _G.__BEYY_CUTSCENE_BYPASS_STOP == stop then _G.__BEYY_CUTSCENE_BYPASS_STOP = nil end
+            if lastEndingSkipVisible then releaseEndingCursor() end
+            log("STOPPED")
+        end
+
+        rememberGameplay()
+        rememberGameplayHud()
+        updateScene()
+        task.spawn(function()
+            while alive do
+                task.wait(0.1)
+                if not active and not scene then
+                    rememberGameplay()
+                    rememberGameplayHud()
+                end
+                updateScene()
+            end
+        end)
+        log("READY: three-lever and three-puzzle cutscenes only; intro and needle ending excluded")
+        log("F3 visual mask | F4 facing | F5 HUD | F7 restore | Exploit-tab toggle controls enable/disable")
+        log("Mouse / arrows aim, WASD moves. Normal camera restores immediately after cutscenes.")
+        log("Visual/client-side bypass only; no server cutscene timers or progression changed.")
+
+        env.__BEYY_CUTSCENE_BYPASS_STOP = stop
+        return stop
+    end)
+    if not ok or type(result) ~= "function" then
+        warn("[BeyyHub] Cutscene bypass failed to start: " .. tostring(result))
+        return false
+    end
+    cutsceneBypassStop = result
+    return true
+end
+local function shutdownCutsceneBypass()
+    local stopFn = cutsceneBypassStop
+    cutsceneBypassStop = nil
+    if stopFn then pcall(stopFn) end
+end
+local previousCutsceneHubCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    shutdownCutsceneBypass()
+    if previousCutsceneHubCleanup then pcall(previousCutsceneHubCleanup) end
+end
+
+    overview:Section({ Title = "Cutscenes" })
+    Registry.CutsceneBypass = overview:Toggle({
+        Title = "Unskippable Cutscene Bypass", Value = false,
+        Desc = "Keep local camera and movement during flagged unskippable scenes. Server timers still apply; menus, intro/skip screens and automation take priority.",
+        Callback = function(enabled)
+            if enabled then
+                if not launchCutsceneBypass() then warn("[BeyyHub] Cutscene bypass could not start") end
+            else shutdownCutsceneBypass() end
+        end,
+    })
+    end
+
+    do
         local SettingsTab = overviewTab
         local ConfigManager = hubWindow.ConfigManager
         local function Header(tab, title) tab:Section({ Title = title }) end

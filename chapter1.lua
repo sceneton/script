@@ -149,6 +149,7 @@ print("[BeyyHub] IN_GAME = ".. tostring(IN_GAME))
 local State = {}
 local Registry = {}
 local Unloaded = false
+local cutsceneBypassActive = false
 
 _G.__BEYY_HUB_CLEANUP = function()
     print("[BeyyHub] Cleanup requested by new session")
@@ -429,6 +430,20 @@ local function findClosestHayCached()
     return best
 end
 
+local function isPileHay(part)
+    if not part or not part:IsA("BasePart") or part:GetAttribute("HayId") == nil then return false end
+    if part:GetAttribute("IsHeld") == true or part:GetAttribute("Held") == true then return false end
+    local character = LocalPlayer.Character
+    local parent = part
+    for _ = 1, 10 do
+        if not parent then break end
+        if character and parent == character then return false end
+        if parent:IsA("Tool") or parent:IsA("Accessory") then return false end
+        parent = parent.Parent
+    end
+    return true
+end
+
 local function getHaystackCenter()
     local folder = HayFolder
     if not folder or not folder.Parent then HayFolder = Workspace:FindFirstChild("HaystackClient"); folder = HayFolder end
@@ -636,11 +651,11 @@ end)
 
 local vacuumSuctionActive = false
 local function farmLoopEnabled()
-    return not Unloaded and not needleHasPriority() and not roundEndingVisible()
+    return not Unloaded and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
 end
 
 local function afkFarmModeActive()
-    return State.AutoFarmWins == true
+    return State.AutoFarmWins == true and not cutsceneBypassActive
 end
 local function afkVacuumOrbitEnabled()
     return afkFarmModeActive() and State.AutoFarmVacuum == true
@@ -650,31 +665,32 @@ local function vacuumRequested()
 end
 
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
-local AFK_ORBIT_SPEED_DEG = 15.0
-local AFK_ORBIT_OUTER_RADIUS = 18.0
-local AFK_ORBIT_INNER_RADIUS = 14.0
-local AFK_ORBIT_OUTER_CAMERA_HEIGHT = -3.0
-local AFK_ORBIT_INNER_CAMERA_HEIGHT = -1.0
-local AFK_ORBIT_OUTER_DOWN_DEG = 50.0
-local AFK_ORBIT_INNER_DOWN_DEG = 35.0
-local AFK_ORBIT_SECOND_PAIR_PITCH_DELTA_DEG = -10.0
+local AFK_ORBIT_SPEED_DEG = 48.0
+local AFK_ORBIT_BANDS = {
+
+    { name = "base", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "lower-middle", radius = 18.0, standoff = 2.0, cameraLift = 5.0, focusYOffset = -0.1 },
+    { name = "upper-middle", radius = 14.0, standoff = 1.9, cameraLift = 5.2, focusYOffset = -1.5 },
+    { name = "peak", radius = 8.0, standoff = 1.7, cameraLift = 6.0, focusYOffset = 0.0 },
+}
 local afkOrbitAngle = 0
 local afkOrbitLap = 0
 local afkOrbitRadius = 16
 
-local afkCameraSmoothRadius = nil
-local afkCameraSmoothPitchDeltaDeg = nil
+local afkSweepRadius = nil
+local afkSweepSurfaceY = nil
+local afkSweepFocusOffsetY = nil
+local afkBandSurfaceHeights = nil
 local afkCameraPileTopY = nil
 local afkVacuumTargetReady = false
+local function afkCurrentBand()
+    return AFK_ORBIT_BANDS[(afkOrbitLap % #AFK_ORBIT_BANDS) + 1]
+end
 local function afkCurrentRingRadius()
-    return (afkOrbitLap % 2 == 0) and AFK_ORBIT_OUTER_RADIUS or AFK_ORBIT_INNER_RADIUS
+    return afkCurrentBand().radius
 end
 local function afkCurrentRingName()
-    return (afkOrbitLap % 2 == 0) and "outer" or "inner"
-end
-
-local function afkCurrentPitchDeltaDeg()
-    return (math.floor(afkOrbitLap / 2) % 2 == 1) and AFK_ORBIT_SECOND_PAIR_PITCH_DELTA_DEG or 0.0
+    return afkCurrentBand().name
 end
 local afkCameraBound = false
 local afkCameraSuspended = false
@@ -710,27 +726,57 @@ local function releaseAfkCamera()
     afkPreviousSubject = nil
     afkPreviousCFrame = nil
     afkCameraAnchor = nil
-    afkCameraSmoothRadius = nil
-    afkCameraSmoothPitchDeltaDeg = nil
+    afkSweepRadius = nil
+    afkSweepSurfaceY = nil
+    afkSweepFocusOffsetY = nil
+    afkBandSurfaceHeights = nil
     afkCameraPileTopY = nil
 end
 
-local function getAfkHaypileTopY(fallbackY)
+local function measureAfkBandSurfaces(center)
     local folder = HayFolder
     if not folder or not folder.Parent then
         folder = Workspace:FindFirstChild("HaystackClient")
         HayFolder = folder
     end
-    local highest = nil
+    local radialTops = {{}, {}, {}, {}}
+    local floorY, highestY = math.huge, -math.huge
     if folder then
         for _, part in ipairs(folder:GetChildren()) do
-            if part:IsA("BasePart") and part:GetAttribute("HayId") ~= nil then
-                local top = part.Position.Y + part.Size.Y * 0.5
-                if not highest or top > highest then highest = top end
+            if isPileHay(part) then
+                local p = part.Position
+                local topY = p.Y + part.Size.Y * 0.5
+                floorY = math.min(floorY, p.Y - part.Size.Y * 0.5)
+                highestY = math.max(highestY, topY)
+                local dx, dz = p.X - center.X, p.Z - center.Z
+                local r = math.sqrt(dx * dx + dz * dz)
+                for i, band in ipairs(AFK_ORBIT_BANDS) do
+                    if math.abs(r - band.radius) <= 5.5 then
+                        local values = radialTops[i]
+                        values[#values + 1] = topY
+                    end
+                end
             end
         end
     end
-    return highest or fallbackY
+    if floorY == math.huge then floorY = center.Y - 4 end
+    if highestY == -math.huge then highestY = center.Y + 8 end
+    local fractions = {0.12, 0.36, 0.63, 0.88}
+    local surfaces = {}
+    for i, samples in ipairs(radialTops) do
+        local baseline = floorY + (highestY - floorY) * fractions[i]
+        if #samples >= 6 then
+            table.sort(samples)
+            local observed = samples[math.max(1, math.ceil(#samples * 0.90))]
+
+            surfaces[i] = math.clamp(observed, floorY, highestY)
+        else
+            surfaces[i] = baseline
+        end
+        if i > 1 then surfaces[i] = math.max(surfaces[i], surfaces[i - 1]) end
+    end
+    print(string.format("[AFK Orbit] Fixed level heights: base=%.1f lower=%.1f upper=%.1f peak=%.1f", table.unpack(surfaces)))
+    return surfaces, highestY
 end
 
 local function estimateAfkOrbitRadius(center)
@@ -776,43 +822,44 @@ local function bindAfkCameraView()
             if Unloaded or not IN_GAME or not afkFarmModeActive() or needleHasPriority() or roundEndingVisible() then return end
             local current = Workspace.CurrentCamera
             if not current or not afkCameraAnchor then return end
-            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * math.max(0, math.min(dt, 0.25))
-            if nextAngle >= (2 * math.pi) then
+            local delta = math.max(0, math.min(dt, 0.25))
+            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * delta
+            if nextAngle >= 2 * math.pi then
                 afkOrbitLap += 1
+                local nextBand = afkCurrentBand()
+                print(string.format("[AFK Orbit] Lap %d complete; next fixed band %s (%.1f studs)",
+                    afkOrbitLap, nextBand.name, nextBand.radius))
             end
             afkOrbitAngle = nextAngle % (2 * math.pi)
-            local anchor = afkCameraAnchor
-            local camAt
+            local bandIndex = (afkOrbitLap % #AFK_ORBIT_BANDS) + 1
+            local band = AFK_ORBIT_BANDS[bandIndex]
             if afkVacuumOrbitEnabled() then
 
-                local targetRadius = afkCurrentRingRadius()
-                if not afkCameraSmoothRadius then afkCameraSmoothRadius = targetRadius end
-                local alpha = 1 - math.exp(-2.5 * math.max(0, math.min(dt, 0.25)))
-                afkCameraSmoothRadius += (targetRadius - afkCameraSmoothRadius) * alpha
-                local targetPitchDeltaDeg = afkCurrentPitchDeltaDeg()
-                if afkCameraSmoothPitchDeltaDeg == nil then afkCameraSmoothPitchDeltaDeg = targetPitchDeltaDeg end
-                afkCameraSmoothPitchDeltaDeg += (targetPitchDeltaDeg - afkCameraSmoothPitchDeltaDeg) * alpha
-                local ringBlend = math.clamp(
-                    (afkCameraSmoothRadius - AFK_ORBIT_INNER_RADIUS)
-                        / (AFK_ORBIT_OUTER_RADIUS - AFK_ORBIT_INNER_RADIUS), 0, 1)
-                local heightAbovePile = AFK_ORBIT_INNER_CAMERA_HEIGHT
-                    + (AFK_ORBIT_OUTER_CAMERA_HEIGHT - AFK_ORBIT_INNER_CAMERA_HEIGHT) * ringBlend
-                local downAngle = math.rad(AFK_ORBIT_INNER_DOWN_DEG
-                    + (AFK_ORBIT_OUTER_DOWN_DEG - AFK_ORBIT_INNER_DOWN_DEG) * ringBlend
-                    + afkCameraSmoothPitchDeltaDeg)
-                local cameraRadius = afkCameraSmoothRadius + 1.3
-                camAt = Vector3.new(
-                    anchor.X + math.cos(afkOrbitAngle) * cameraRadius,
-                    (afkCameraPileTopY or anchor.Y) + heightAbovePile,
-                    anchor.Z + math.sin(afkOrbitAngle) * cameraRadius
+                local alpha = 1 - math.exp(-3.0 * delta)
+                local wantedRadius = band.radius + band.standoff
+                local wantedSurface = (afkBandSurfaceHeights and afkBandSurfaceHeights[bandIndex])
+                    or afkCameraPileTopY or afkCameraAnchor.Y
+                afkSweepRadius = (afkSweepRadius or wantedRadius) + (wantedRadius - (afkSweepRadius or wantedRadius)) * alpha
+                afkSweepSurfaceY = (afkSweepSurfaceY or wantedSurface) + (wantedSurface - (afkSweepSurfaceY or wantedSurface)) * alpha
+                local wantedFocusOffsetY = band.focusYOffset
+                afkSweepFocusOffsetY = (afkSweepFocusOffsetY or wantedFocusOffsetY)
+                    + (wantedFocusOffsetY - (afkSweepFocusOffsetY or wantedFocusOffsetY)) * alpha
+                local radial = Vector3.new(math.cos(afkOrbitAngle), 0, math.sin(afkOrbitAngle))
+                local camAt = Vector3.new(
+                    afkCameraAnchor.X + radial.X * (afkSweepRadius + 2.6),
+                    afkSweepSurfaceY + band.cameraLift,
+                    afkCameraAnchor.Z + radial.Z * (afkSweepRadius + 2.6)
                 )
-                local inward = Vector3.new(-math.cos(afkOrbitAngle), 0, -math.sin(afkOrbitAngle))
-                local direction = inward * math.cos(downAngle) - Vector3.yAxis * math.sin(downAngle)
+                local focus = Vector3.new(
+                    afkCameraAnchor.X + radial.X * math.max(0, afkSweepRadius - 5),
+                    afkSweepSurfaceY + afkSweepFocusOffsetY,
+                    afkCameraAnchor.Z + radial.Z * math.max(0, afkSweepRadius - 5)
+                )
                 current.CameraType = Enum.CameraType.Scriptable
-                current.CFrame = CFrame.lookAt(camAt, camAt + direction, Vector3.yAxis)
+                current.CFrame = CFrame.lookAt(camAt, focus, Vector3.yAxis)
             else
-
-                camAt = anchor + Vector3.new(
+                local anchor = afkCameraAnchor
+                local camAt = anchor + Vector3.new(
                     math.cos(afkOrbitAngle) * afkOrbitRadius,
                     math.max(34, afkOrbitRadius * 1.35),
                     math.sin(afkOrbitAngle) * afkOrbitRadius
@@ -827,7 +874,7 @@ local function bindAfkCameraView()
         afkCameraSuspended = false
         return true
     end
-    warn("[Camera] Failed to bind top-down view: " .. tostring(err))
+    warn("[Camera] Failed to bind stable 4-band orbit: " .. tostring(err))
     releaseAfkCamera()
     return false
 end
@@ -842,21 +889,18 @@ local function startAfkCamera()
     if not center or not cam then return end
     afkCameraAnchor = center
     afkOrbitRadius = estimateAfkOrbitRadius(center)
-    afkCameraSmoothRadius = afkCurrentRingRadius()
-    afkCameraSmoothPitchDeltaDeg = afkCurrentPitchDeltaDeg()
-    afkCameraPileTopY = getAfkHaypileTopY(center.Y)
+    afkBandSurfaceHeights, afkCameraPileTopY = measureAfkBandSurfaces(center)
+    afkSweepRadius = afkCurrentBand().radius + afkCurrentBand().standoff
+    afkSweepSurfaceY = afkBandSurfaceHeights[1]
+    afkSweepFocusOffsetY = afkCurrentBand().focusYOffset
     afkPreviousCamera = cam
     afkPreviousType = cam.CameraType
     afkPreviousSubject = cam.CameraSubject
     afkPreviousCFrame = cam.CFrame
     pcall(function() RunService:UnbindFromRenderStep(AFK_CAMERA_BIND) end)
     if bindAfkCameraView() then
-        print(string.format("[Camera] AFK orbit %.1f deg/s; outer radius %.1f, +%.1f high, %.0f deg down; inner radius %.1f, +%.1f high, %.0f deg down (relative to pile top Y=%.1f)",
-            AFK_ORBIT_SPEED_DEG, AFK_ORBIT_OUTER_RADIUS,
-            AFK_ORBIT_OUTER_CAMERA_HEIGHT, AFK_ORBIT_OUTER_DOWN_DEG,
-            AFK_ORBIT_INNER_RADIUS, AFK_ORBIT_INNER_CAMERA_HEIGHT,
-            AFK_ORBIT_INNER_DOWN_DEG, afkCameraPileTopY or center.Y))
-        print("[Camera] Orbit pitch pattern: outer 50, inner 35, outer 40, inner 25 degrees downward; repeat.")
+        print(string.format("[Camera] FIXED 4-band sweep started: %.1f deg/s, %ds full sweep, bands base/lower/upper/peak = 22/18/14/8 studs",
+            AFK_ORBIT_SPEED_DEG, math.floor(360 / AFK_ORBIT_SPEED_DEG * #AFK_ORBIT_BANDS + 0.5)))
     end
 end
 
@@ -976,62 +1020,77 @@ task.spawn(function()
 end)
 
 task.spawn(function()
-    local lastSweepMove = 0
-    local lastCharacter = nil
+    local lastHayReadinessScan = -math.huge
+    local scanSamples, scanTotalMs, scanMaxMs, scannedHayParts = 0, 0, 0, 0
+    local lastPerfReport = os.clock()
     while not Unloaded do
-        task.wait(0.30)
+        task.wait(0.08)
         if not IN_GAME or not afkVacuumOrbitEnabled() or needleHasPriority() or roundEndingVisible() then
             afkVacuumTargetReady = false
+            lastHayReadinessScan = -math.huge
         else
             local character = LocalPlayer.Character
             local root = getHRP()
-            local anchor = afkCameraAnchor or afkPlayerAnchor or getHaystackCenter()
-            if character and root and anchor then
-                if character ~= lastCharacter then
-                    lastCharacter = character
-                    lastSweepMove = 0
-                end
-                local radius = afkCurrentRingRadius()
+            local anchor = afkCameraAnchor
+            local radius = afkSweepRadius
+            local surface = afkSweepSurfaceY
+            if character and root and anchor and radius and surface then
                 local radial = Vector3.new(math.cos(afkOrbitAngle), 0, math.sin(afkOrbitAngle))
-                local orbitPoint = anchor + radial * radius
-                local folder = HayFolder
-                if not folder or not folder.Parent then
-                    folder = Workspace:FindFirstChild("HaystackClient")
-                    HayFolder = folder
+                local wanted = Vector3.new(
+                    anchor.X + radial.X * radius,
+                    surface + 3.25,
+                    anchor.Z + radial.Z * radius
+                )
+
+                if (root.Position - wanted).Magnitude > 0.4 then
+                    local charToRoot = root.CFrame:ToObjectSpace(character:GetPivot())
+                    local facing = Vector3.new(anchor.X, wanted.Y - 1.25, anchor.Z)
+                    local goalRoot = CFrame.lookAt(wanted, facing, Vector3.yAxis)
+                    pcall(function()
+                        if not Unloaded and not needleHasPriority() and not roundEndingVisible()
+                            and character.Parent and root.Parent then
+                            character:PivotTo(goalRoot * charToRoot)
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                        end
+                    end)
                 end
-                local best, bestDistanceSq = nil, math.huge
-                if folder then
-                    for _, hay in ipairs(folder:GetChildren()) do
-                        if hay:IsA("BasePart") and hay:GetAttribute("HayId") ~= nil then
-                            local dx, dz = hay.Position.X - orbitPoint.X, hay.Position.Z - orbitPoint.Z
-                            local score = dx * dx + dz * dz
-                            if score < bestDistanceSq then
-                                best, bestDistanceSq = hay, score
+
+                local now = os.clock()
+                if now - lastHayReadinessScan >= 0.45 then
+                    lastHayReadinessScan = now
+                    local scanStart = os.clock()
+                    local folder = HayFolder
+                    if not folder or not folder.Parent then
+                        folder = Workspace:FindFirstChild("HaystackClient")
+                        HayFolder = folder
+                    end
+                    local nearby, checked = false, 0
+                    if folder then
+                        local probe = anchor + radial * afkCurrentBand().radius
+                        for _, hay in ipairs(folder:GetChildren()) do
+                            checked += 1
+                            if isPileHay(hay) then
+                                local dx, dz = hay.Position.X - probe.X, hay.Position.Z - probe.Z
+                                if dx * dx + dz * dz <= 12 * 12
+                                    and math.abs(hay.Position.Y - surface) <= 12 then
+                                    nearby = true
+                                    break
+                                end
                             end
                         end
                     end
-                end
-
-                local nearby = best and bestDistanceSq <= 11 * 11 and best.Parent ~= nil
-                afkVacuumTargetReady = nearby == true
-                if nearby and os.clock() - lastSweepMove >= 0.45 then
-                    local away = Vector3.new(orbitPoint.X - best.Position.X, 0, orbitPoint.Z - best.Position.Z)
-                    if away.Magnitude < 0.1 then away = radial end
-                    local wanted = Vector3.new(best.Position.X, best.Position.Y, best.Position.Z)
-                        + away.Unit * 2.3 + Vector3.new(0, best.Size.Y * 0.5 + 1.9, 0)
-                    local dist = (root.Position - wanted).Magnitude
-                    if dist > 1.4 and dist < 300 and not needleHasPriority() and not roundEndingVisible() then
-                        lastSweepMove = os.clock()
-                        local charToRoot = root.CFrame:ToObjectSpace(character:GetPivot())
-                        local face = Vector3.new(best.Position.X, wanted.Y, best.Position.Z)
-                        local goalRoot = CFrame.lookAt(wanted, face, Vector3.yAxis)
-                        pcall(function()
-                            if not needleHasPriority() and not roundEndingVisible() and character.Parent and root.Parent then
-                                character:PivotTo(goalRoot * charToRoot)
-                                root.AssemblyLinearVelocity = Vector3.zero
-                                root.AssemblyAngularVelocity = Vector3.zero
-                            end
-                        end)
+                    afkVacuumTargetReady = nearby
+                    local spentMs = (os.clock() - scanStart) * 1000
+                    scanSamples += 1
+                    scannedHayParts += checked
+                    scanTotalMs += spentMs
+                    scanMaxMs = math.max(scanMaxMs, spentMs)
+                    if now - lastPerfReport >= 30 then
+                        print(string.format("[Perf] v103.00 hay scans=%d, parts examined=%d, average=%.2fms, max=%.2fms per scan",
+                            scanSamples, scannedHayParts, scanTotalMs / math.max(1, scanSamples), scanMaxMs))
+                        scanSamples, scannedHayParts, scanTotalMs, scanMaxMs = 0, 0, 0, 0
+                        lastPerfReport = now
                     end
                 end
             else
@@ -1470,14 +1529,14 @@ do
     Info(MainTab, "Toggle UI: RightControl")
 
     AddToggle(MainTab, "AutoFarmWins", "Auto Farm Wins (AFK Farm Mode)", false,
-        "AFK round-create, smooth 15 deg/s dual-circle camera orbit, and automatic vacuum when enabled below.",
+        "AFK round-create, 48 deg/s four-band sweep (22 / 18 / 14 / 8 studs), and automatic vacuum when enabled below.",
         function(v)
             if not v then releaseAfkCamera() end
             safeWrite(CACHE_FOLDER .. "/autofarmwins_shared.txt", tostring(v))
             print("[Mode] AFK Farm Mode = ".. tostring(State.AutoFarmWins))
         end)
     AddToggle(MainTab, "AutoFarmVacuum", "Vacuum During Auto Farm Wins", true,
-        "Use heat-bar-controlled suction automatically. The character follows low outer and inner orbits.")
+        "Use heat-bar-controlled suction while the character follows the base, lower-middle, upper-middle and peak sweep.")
 
     local sessionPara = MainTab:Paragraph({ Title = "Session", Desc = "0s elapsed" })
     task.spawn(function()
@@ -1602,6 +1661,730 @@ do
     })
     Registry.ClassTarget = targetDropdown
     AddSlider(ExploitTab, "ClassRollInterval", "Roll Interval (s)", 0.5, 3, 1.1, 0.1)
+end
+
+do
+    local overview = MainTab
+local function cutsceneResultsVisible()
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local ending = pg and pg:FindFirstChild("NeedleEndingUI")
+    return ending and ending:IsA("ScreenGui") and ending.Enabled == true
+end
+local function shouldYieldCutsceneBypass()
+    return Unloaded or not Window.Closed or needleHasPriority() or roundEndingVisible() or cutsceneResultsVisible()
+end
+local function setCutsceneBypassActive(value)
+    if value then releaseAfkCamera() end
+    cutsceneBypassActive = value
+end
+local cutsceneBypassStop = nil
+local function launchCutsceneBypass()
+    if cutsceneBypassStop then return true end
+    local ok, result = pcall(function()
+
+        local Players = game:GetService("Players")
+        local RunService = game:GetService("RunService")
+        local UserInputService = game:GetService("UserInputService")
+        local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
+
+        local env = _G
+        if type(getgenv) == "function" then
+            local ok, tbl = pcall(getgenv)
+            if ok and type(tbl) == "table" then env = tbl end
+        end
+        local older = env.__BEYY_CUTSCENE_BYPASS_STOP or _G.__BEYY_CUTSCENE_BYPASS_STOP
+        if type(older) == "function" then pcall(older) end
+
+        local alive, enabled, active = true, true, false
+        local scene = nil
+        local recoveryEnd = 0
+        local lastNormalDistance, lastNormalYaw, lastNormalPitch = 0.6, nil, nil
+        local normalFirstPerson, cameraFirstPerson = true, true
+        local yaw, pitch, distance = nil, -0.18, 0.6
+        local lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil
+        local controls, cachedCamera = nil, nil
+        local originalMouseBehavior = nil
+        local connections = {}
+        local hudEnabled = true
+        local faceCameraEnabled = true
+        local hudNormal, hudForced = {}, {}
+        local headTransparencyBefore = {}
+        local finalVisualsEnabled = true
+        local finalVisualBefore = {}
+        local cameraWatch = nil
+        local inCameraWrite, cameraErrorWarned = false, false
+        local renderId = "BeyyCutsceneCameraV103Last"
+        local renderPriority = Enum.RenderPriority.Last.Value + 2000
+        local RECOVERY_GRACE_SECONDS = 0.035
+        local INTRO_SETTLE_SECONDS = 1.0
+        local introConfirmedAt = player:GetAttribute("IntroCutsceneFinished") == true and (os.clock() - 2) or nil
+        local introNeutralSeen = introConfirmedAt ~= nil and player:GetAttribute("CutsceneActive") ~= true
+        local chapter2ReleaseSeen = player:GetAttribute("Chapter2ReleaseActive") == true
+        local yieldingToEnding = false
+        local lastEndingSkipScan, lastEndingSkipVisible = 0, false
+        local skipCandidates = setmetatable({}, { __mode = "k" })
+        local skipGui, skipGuiAddedConnection = nil, nil
+        local lastSkipFallbackScan = 0
+        local lastRenderTime = os.clock()
+
+        local function log(s)
+            -- Keep the controller quiet during normal scene transitions.
+        end
+        local function hook(c)
+            if c then connections[#connections+1] = c end
+        end
+        local function humanoid()
+            local char = player.Character
+            return char and char:FindFirstChildOfClass("Humanoid")
+        end
+        local function root()
+            local char = player.Character
+            return char and char:FindFirstChild("HumanoidRootPart")
+        end
+        local function camera()
+            return workspace.CurrentCamera
+        end
+        local function getControls()
+            if controls then return controls end
+            local ps = player:FindFirstChild("PlayerScripts")
+            local pm = ps and ps:FindFirstChild("PlayerModule")
+            if not pm then return nil end
+            local ok, mod = pcall(require, pm)
+            if not ok or type(mod) ~= "table" then return nil end
+            local ok2, obj = pcall(function() return mod:GetControls() end)
+            if ok2 then controls = obj end
+            return controls
+        end
+        local function rememberGameplay()
+            local hum = humanoid()
+            if hum then
+                if hum.WalkSpeed > 0 then lastSavedSpeed = hum.WalkSpeed end
+                if hum.JumpPower > 0 then lastSavedJump = hum.JumpPower end
+                lastSavedRotate = hum.AutoRotate
+            end
+            local cam, rt = camera(), root()
+            if cam and rt and cam.CameraType == Enum.CameraType.Custom then
+                local look = cam.CFrame.LookVector
+                if look.Magnitude > 0.5 then
+                    local planar = Vector3.new(look.X, 0, look.Z)
+                    if planar.Magnitude > 0.1 then
+                        lastNormalYaw = math.atan2(planar.X, planar.Z)
+                    end
+                    lastNormalPitch = math.asin(math.max(-0.97, math.min(0.97, look.Y)))
+                end
+                local char = player.Character
+                local head = char and char:FindFirstChild("Head")
+                local eye = head and head.Position or (rt.Position + Vector3.new(0, 1.6, 0))
+                local d = (cam.CFrame.Position - eye).Magnitude
+                if d <= 22 then
+                    lastNormalDistance = d
+                    normalFirstPerson = (d < 2.5 or player.CameraMode == Enum.CameraMode.LockFirstPerson)
+                end
+            end
+        end
+        local function kind()
+            if shouldYieldCutsceneBypass() then return nil end
+            -- Explicit unfinished intros and visible skip/results UI keep normal behavior.
+            if player:GetAttribute("IntroCutsceneFinished") == false then return nil end
+            if introConfirmedAt and os.clock() - introConfirmedAt < INTRO_SETTLE_SECONDS then return nil end
+            if yieldingToEnding then return nil end
+            if player:GetAttribute("Chapter2ReleaseActive") == true then return "THREE PUZZLES" end
+            if player:GetAttribute("CutsceneActive") == true then return "THREE LEVERS" end
+            return nil
+        end
+        local function clamp(v, lo, hi)
+            return math.max(lo, math.min(hi, v))
+        end
+        local function setupPlayableCamera()
+            local rt = root()
+            local facing = rt and rt.CFrame.LookVector or Vector3.new(0,0,-1)
+            local planar = Vector3.new(facing.X, 0, facing.Z)
+            if planar.Magnitude < 0.01 then planar = Vector3.new(0,0,-1) end
+            yaw = lastNormalYaw or math.atan2(planar.X, planar.Z)
+            pitch = clamp(lastNormalPitch or -0.16, -1.20, 1.05)
+            cameraFirstPerson = normalFirstPerson or player.CameraMode == Enum.CameraMode.LockFirstPerson
+            distance = clamp(lastNormalDistance or 0.6, 0.0, 22)
+            log(string.format("Normal camera calibration: %s d=%.2f pitch=%.2f (no forced 6+ stud zoom)",
+                cameraFirstPerson and "FIRST PERSON" or "THIRD PERSON", distance, pitch))
+            cameraErrorWarned = false
+            if originalMouseBehavior == nil then originalMouseBehavior = UserInputService.MouseBehavior end
+        end
+        local function lookVector()
+            local cp = math.cos(pitch)
+            return Vector3.new(math.sin(yaw)*cp, math.sin(pitch), math.cos(yaw)*cp)
+        end
+        local function hideHeadForFirstPerson()
+            if not cameraFirstPerson then return end
+            local char = player.Character
+            if not char then return end
+            local function hidePart(inst)
+                if not inst or not inst:IsA("BasePart") then return end
+                if headTransparencyBefore[inst] == nil then
+                    headTransparencyBefore[inst] = inst.LocalTransparencyModifier
+                end
+                inst.LocalTransparencyModifier = 1
+            end
+            hidePart(char:FindFirstChild("Head"))
+            for _, item in ipairs(char:GetChildren()) do
+                if item:IsA("Accessory") then
+                    hidePart(item:FindFirstChild("Handle"))
+                end
+            end
+        end
+        local function restoreHeadTransparency()
+            for part, before in pairs(headTransparencyBefore) do
+                if part.Parent then
+                    pcall(function() part.LocalTransparencyModifier = before end)
+                end
+                headTransparencyBefore[part] = nil
+            end
+        end
+        local function forceCamera()
+            if not alive or not enabled or not active or inCameraWrite or shouldYieldCutsceneBypass() then return end
+            local cam, rt = camera(), root()
+            if not cam or not rt or not yaw then return end
+            inCameraWrite = true
+            local safe, err = pcall(function()
+                local vec = lookVector()
+                local char = player.Character
+                local head = char and char:FindFirstChild("Head")
+                local eye = head and head.Position or (rt.Position + Vector3.new(0, 1.6, 0))
+                local result, focus
+                if cameraFirstPerson then
+                    result = CFrame.lookAt(eye, eye + vec * 8, Vector3.yAxis)
+                    focus = eye + vec * 8
+                    hideHeadForFirstPerson()
+                else
+                    local target = rt.Position + Vector3.new(0, 1.6, 0)
+                    local desired = target - vec * distance
+                    local params = RaycastParams.new()
+                    params.FilterType = Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances = char and {char} or {}
+                    params.RespectCanCollide = true
+                    local hit = workspace:Raycast(target, desired - target, params)
+                    if hit then
+                        local hitDistance = (hit.Position - target).Magnitude
+                        desired = target - vec * math.max(0.35, math.min(distance, hitDistance - 0.40))
+                    end
+                    result = CFrame.lookAt(desired, target, Vector3.yAxis)
+                    focus = target
+                end
+                cam.CameraType = Enum.CameraType.Scriptable
+                local hum = humanoid()
+                if hum then cam.CameraSubject = hum end
+                cam.CFrame = result
+                cam.Focus = CFrame.new(focus)
+            end)
+            inCameraWrite = false
+            if not safe and not cameraErrorWarned then
+                cameraErrorWarned = true
+                warn("[BeyyHub Cutscene] Camera write failed: " .. tostring(err))
+            end
+        end
+        local function unwatchLeverCamera()
+            if cameraWatch then pcall(function() cameraWatch:Disconnect() end) end
+            cameraWatch, cachedCamera = nil, nil
+        end
+        local function watchLeverCamera()
+            if not alive or not enabled or not active or scene ~= "THREE LEVERS" then
+                unwatchLeverCamera()
+                return
+            end
+            local cam = camera()
+            if cam == cachedCamera and cameraWatch then return end
+            unwatchLeverCamera()
+            cachedCamera = cam
+            if not cam then return end
+            cameraWatch = cam:GetPropertyChangedSignal("CFrame"):Connect(function()
+                if alive and enabled and active and scene == "THREE LEVERS" and not inCameraWrite then
+                    forceCamera()
+                end
+            end)
+        end
+        hook(workspace:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+            if active and scene == "THREE LEVERS" then watchLeverCamera() end
+        end))
+
+        local SAFE_HUD_NAMES = { hud = true, needlehud = true, notifications = true }
+        local function rememberGameplayHud()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return end
+            for _, gui in ipairs(pg:GetChildren()) do
+                if gui:IsA("ScreenGui") and SAFE_HUD_NAMES[gui.Name:lower()] then
+                    hudNormal[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder }
+                end
+            end
+        end
+        local function showGameplayHud()
+            if not hudEnabled then return end
+            for gui, before in pairs(hudNormal) do
+                if gui.Parent and before.enabled then
+                    if not hudForced[gui] then hudForced[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder } end
+                    if not gui.Enabled then
+                        pcall(function() gui.Enabled = true end)
+                    end
+                    local targetOrder = math.max(before.order or 0, 10000)
+                    if gui.DisplayOrder ~= targetOrder then
+                        pcall(function() gui.DisplayOrder = targetOrder end)
+                    end
+                end
+            end
+        end
+        local function restoreGameplayHud()
+            for gui, saved in pairs(hudForced) do
+                if gui.Parent then
+                    local wasNormal = hudNormal[gui]
+                    pcall(function()
+                        gui.DisplayOrder = saved.order
+                        if wasNormal and wasNormal.enabled then gui.Enabled = true end
+                    end)
+                end
+                hudForced[gui] = nil
+            end
+        end
+
+        local function isFinalOverlay(gui)
+            if not gui:IsA("ScreenGui") then return false end
+            local name = gui.Name:lower()
+            if name:find("ending", 1, true) or name:find("needle", 1, true) then return false end
+            return name == "cutscenefade" or name:find("cutscene", 1, true) ~= nil
+                or name:find("cinematic", 1, true) ~= nil
+                or name:find("chapter2release", 1, true) ~= nil
+        end
+        local function maskFinalProperty(inst, key)
+            local ok, previous = pcall(function() return inst[key] end)
+            if not ok or type(previous) ~= "number" or previous >= 1 then return end
+            local saved = finalVisualBefore[inst]
+            if not saved then saved = {}; finalVisualBefore[inst] = saved end
+            if saved[key] == nil then saved[key] = previous end
+            pcall(function() inst[key] = 1 end)
+        end
+        local function hideFinalCutsceneVisuals()
+            if not finalVisualsEnabled or not scene then return end
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if not pg then return end
+            for _, gui in ipairs(pg:GetChildren()) do
+                if isFinalOverlay(gui) then
+                    for _, el in ipairs(gui:GetDescendants()) do
+                        if el:IsA("GuiObject") then
+                            maskFinalProperty(el, "BackgroundTransparency")
+                            if el:IsA("TextLabel") or el:IsA("TextButton") or el:IsA("TextBox") then
+                                maskFinalProperty(el, "TextTransparency")
+                                maskFinalProperty(el, "TextStrokeTransparency")
+                            end
+                            if el:IsA("ImageLabel") or el:IsA("ImageButton") then
+                                maskFinalProperty(el, "ImageTransparency")
+                            end
+                        elseif el:IsA("UIStroke") then
+                            maskFinalProperty(el, "Transparency")
+                        end
+                    end
+                end
+            end
+        end
+        local function restoreFinalCutsceneVisuals()
+            for inst, props in pairs(finalVisualBefore) do
+                if inst.Parent then
+                    for key, original in pairs(props) do
+                        pcall(function() inst[key] = original end)
+                    end
+                end
+                finalVisualBefore[inst] = nil
+            end
+        end
+
+        local function indexSkipCandidate(inst)
+            if not inst then return end
+            local btn = nil
+            if inst:IsA("GuiButton") then
+                btn = inst
+            elseif inst:IsA("TextLabel") and inst.Text:lower():find("skip", 1, true) then
+                local ancestor = inst.Parent
+                while ancestor and not ancestor:IsA("GuiButton") do
+                    ancestor = ancestor.Parent
+                end
+                btn = ancestor
+            end
+            if not btn then return end
+            local name = btn.Name:lower()
+            local text = btn:IsA("TextButton") and btn.Text:lower() or ""
+            local marked = name:find("skip", 1, true) or text:find("skip", 1, true)
+            if not marked then
+                for _, child in ipairs(btn:GetChildren()) do
+                    if child:IsA("TextLabel") and child.Text:lower():find("skip", 1, true) then
+                        marked = true
+                        break
+                    end
+                end
+            end
+            if marked then skipCandidates[btn] = true end
+        end
+        local function scanSkipCandidates(pg)
+            for _, obj in ipairs(pg:GetDescendants()) do indexSkipCandidate(obj) end
+        end
+        local function watchSkipGui()
+            local pg = player:FindFirstChildOfClass("PlayerGui")
+            if pg == skipGui and skipGuiAddedConnection then return pg end
+            if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end
+            skipGuiAddedConnection, skipGui = nil, pg
+            if pg then
+                scanSkipCandidates(pg)
+                skipGuiAddedConnection = pg.DescendantAdded:Connect(indexSkipCandidate)
+            end
+            return pg
+        end
+        local function skipButtonVisible(pg)
+            for btn in pairs(skipCandidates) do
+                if not btn.Parent or not btn:IsDescendantOf(pg) then
+                    skipCandidates[btn] = nil
+                else
+                    local visible, parent = true, btn
+                    while parent and parent ~= pg do
+                        if parent:IsA("GuiObject") and not parent.Visible then visible = false; break end
+                        if parent:IsA("ScreenGui") and not parent.Enabled then visible = false; break end
+                        parent = parent.Parent
+                    end
+                    if visible then return true end
+                end
+            end
+            return false
+        end
+        local function skipButtonOnScreen()
+            local now = os.clock()
+            if now - lastEndingSkipScan < 0.08 then return lastEndingSkipVisible end
+            lastEndingSkipScan = now
+            local pg = watchSkipGui()
+            if not pg then lastEndingSkipVisible = false; return false end
+            lastEndingSkipVisible = skipButtonVisible(pg)
+            local endingUI = pg:FindFirstChild("NeedleEndingUI")
+            local endingLikely = player:GetAttribute("NeedleOwned") == true
+                or player:GetAttribute("CutsceneActive") == true
+                or (endingUI and endingUI.Enabled == true)
+            local fallbackEvery = endingLikely and 0.1 or 4
+            if not lastEndingSkipVisible and now - lastSkipFallbackScan >= fallbackEvery then
+                lastSkipFallbackScan = now
+                scanSkipCandidates(pg)
+                lastEndingSkipVisible = skipButtonVisible(pg)
+            end
+            return lastEndingSkipVisible
+        end
+        local function releaseEndingCursor()
+            pcall(function() UserInputService.MouseBehavior = Enum.MouseBehavior.Default end)
+            pcall(function() UserInputService.MouseIconEnabled = true end)
+        end
+
+        local function restoreInputs()
+            local hum = humanoid()
+            if hum then
+                if hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
+                if hum.Sit then pcall(function() hum.Sit = false end) end
+                if hum.WalkSpeed <= 0 and lastSavedSpeed then hum.WalkSpeed = lastSavedSpeed end
+                if hum.JumpPower <= 0 and lastSavedJump then hum.JumpPower = lastSavedJump end
+                if not faceCameraEnabled and lastSavedRotate ~= nil and hum.AutoRotate ~= lastSavedRotate then
+                    hum.AutoRotate = lastSavedRotate
+                end
+            end
+            local ctrl = getControls()
+            if ctrl and ctrl.enabled == false then
+                pcall(function() ctrl:Enable() end)
+            end
+            if player:GetAttribute("NeedleInputLocked") == true then
+                pcall(function() player:SetAttribute("NeedleInputLocked", nil) end)
+            end
+        end
+        local function alignCharacterFacing()
+            if not alive or not enabled or not active or not faceCameraEnabled then return end
+            local hum, rt = humanoid(), root()
+            if not hum or not rt or rt.Anchored or not yaw then return end
+            local forward = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
+            local oldLook = rt.CFrame.LookVector
+            local flatOld = Vector3.new(oldLook.X, 0, oldLook.Z)
+            local dot = flatOld.Magnitude > 0.01 and flatOld.Unit:Dot(forward) or 0
+            if hum.AutoRotate then hum.AutoRotate = false end
+            if dot < 0.9995 then
+                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, Vector3.yAxis)
+                pcall(function() rt.CFrame = rt.CFrame:Lerp(desired, 0.35) end)
+            end
+        end
+        local function directMovement()
+            local hum = humanoid()
+            if not hum or UserInputService:GetFocusedTextBox() then return end
+            local function down(key)
+                return UserInputService:IsKeyDown(key)
+            end
+            local x = (down(Enum.KeyCode.D) and 1 or 0) - (down(Enum.KeyCode.A) and 1 or 0)
+            local z = (down(Enum.KeyCode.W) and 1 or 0) - (down(Enum.KeyCode.S) and 1 or 0)
+            if x ~= 0 or z ~= 0 then
+                if not yaw then return end
+                local front = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
+                local right = Vector3.new(-front.Z, 0, front.X)
+                local motion = front*z + right*x
+                if motion.Magnitude > 1 then motion = motion.Unit end
+                pcall(function() hum:Move(motion, false) end)
+            end
+            if down(Enum.KeyCode.Space) then pcall(function() hum.Jump = true end) end
+        end
+        local function restoreCamera()
+            restoreHeadTransparency()
+            local cam = camera()
+            if cam then
+                local hum = humanoid()
+                if hum then pcall(function() cam.CameraSubject = hum end) end
+                pcall(function() cam.CameraType = Enum.CameraType.Custom end)
+            end
+            local hum = humanoid()
+            if hum and lastSavedRotate ~= nil then
+                pcall(function() hum.AutoRotate = lastSavedRotate end)
+            end
+            local ctrl = getControls()
+            if ctrl then pcall(function() ctrl:Enable() end) end
+            if originalMouseBehavior then
+                pcall(function() UserInputService.MouseBehavior = originalMouseBehavior end)
+                originalMouseBehavior = nil
+            end
+        end
+        local function enablePlayableCamera(reason)
+            if active then return end
+            setCutsceneBypassActive(true)
+            active = true
+            setupPlayableCamera()
+            local ctrl = getControls()
+            if ctrl then pcall(function() ctrl:Enable() end) end
+            log("PLAYABLE CAMERA ENABLED: " .. tostring(reason))
+            if scene == "THREE LEVERS" then watchLeverCamera() end
+            forceCamera()
+        end
+        local function disablePlayableCamera(reason)
+            unwatchLeverCamera()
+            if not active then return end
+            active = false
+            restoreCamera()
+            setCutsceneBypassActive(false)
+            log("ROBLOX CAMERA RETURNED: " .. tostring(reason))
+        end
+        local function updateScene()
+            if not alive then return end
+            local now = os.clock()
+            if player:GetAttribute("Chapter2ReleaseActive") == true then chapter2ReleaseSeen = true end
+            local hasSkip = skipButtonOnScreen()
+            if not hasSkip then yieldingToEnding = false end
+            if hasSkip and not yieldingToEnding then
+                yieldingToEnding = true
+                recoveryEnd = 0
+                log("SKIPPABLE NEEDLE ENDING DETECTED — camera bypass released; mouse unlocked for SKIP / hub AutoSkip")
+            end
+            local current = enabled and kind() or nil
+            if current then
+                if current ~= scene then
+                    scene = current
+                    if current == "THREE PUZZLES" then
+                        unwatchLeverCamera()
+                        log("CHAPTER 2 RELEASE: camera/movement override; optional transparency-only cutscene visual mask")
+                    end
+                    log("CUTSCENE DETECTED: " .. current)
+                    if current == "THREE PUZZLES" then
+                        log("Final cinematic: preserve normal viewing distance and hide cutscene visuals only; ending AutoSkip UI untouched")
+                    end
+                    recoveryEnd = 0
+                    if not active then enablePlayableCamera(current) end
+                end
+            elseif scene then
+                log("CUTSCENE FLAG CLEARED: " .. scene .. " — restoring Roblox camera in " .. RECOVERY_GRACE_SECONDS .. "s")
+                restoreFinalCutsceneVisuals()
+                unwatchLeverCamera()
+                scene = nil
+                recoveryEnd = now + RECOVERY_GRACE_SECONDS
+                task.delay(RECOVERY_GRACE_SECONDS + 0.008, function()
+                    if alive then updateScene() end
+                end)
+            end
+            local shouldKeep = enabled and not yieldingToEnding and (current ~= nil or now < recoveryEnd)
+            if shouldKeep then
+                if not active then enablePlayableCamera("recovery / F7") end
+                restoreInputs()
+                showGameplayHud()
+                hideFinalCutsceneVisuals()
+            else
+                restoreFinalCutsceneVisuals()
+                restoreGameplayHud()
+                if active then disablePlayableCamera("recovered / bypass disabled") end
+            end
+            if yieldingToEnding and lastEndingSkipVisible then releaseEndingCursor() end
+        end
+
+        hook(UserInputService.InputBegan:Connect(function(input, processed)
+            if processed or UserInputService:GetFocusedTextBox() or shouldYieldCutsceneBypass() then return end
+            if input.KeyCode == Enum.KeyCode.F3 then
+                finalVisualsEnabled = not finalVisualsEnabled
+                if not finalVisualsEnabled then restoreFinalCutsceneVisuals() end
+                log("F3: final cinematic visual masking " .. (finalVisualsEnabled and "ENABLED" or "DISABLED"))
+            elseif input.KeyCode == Enum.KeyCode.F4 then
+                faceCameraEnabled = not faceCameraEnabled
+                local hum = humanoid()
+                if hum and not faceCameraEnabled and lastSavedRotate ~= nil then
+                    pcall(function() hum.AutoRotate = lastSavedRotate end)
+                end
+                log("F4: camera-facing character alignment " .. (faceCameraEnabled and "ENABLED" or "DISABLED"))
+                if faceCameraEnabled then alignCharacterFacing() end
+            elseif input.KeyCode == Enum.KeyCode.F5 then
+                hudEnabled = not hudEnabled
+                if not hudEnabled then restoreGameplayHud() end
+                log("F5: gameplay HUD preservation " .. (hudEnabled and "ENABLED" or "DISABLED"))
+            elseif input.KeyCode == Enum.KeyCode.F7 then
+                recoveryEnd = 0
+                log("F7: Roblox camera recovery requested")
+                updateScene()
+            end
+        end))
+        hook(UserInputService.InputChanged:Connect(function(input)
+            if not active or shouldYieldCutsceneBypass() then return end
+            if input.UserInputType == Enum.UserInputType.MouseWheel then
+                if not cameraFirstPerson then
+                    distance = clamp(distance - input.Position.Z * 1.5, 0.4, 22)
+                end
+            end
+        end))
+        hook(player.AttributeChanged:Connect(function(attr)
+            if attr == "IntroCutsceneFinished" then
+                if player:GetAttribute("IntroCutsceneFinished") == true and not introConfirmedAt then
+                    introConfirmedAt = os.clock()
+                    introNeutralSeen = player:GetAttribute("CutsceneActive") ~= true
+                    log("SKIPPABLE INTRO COMPLETED — waiting for clean lever trigger; intro ignored")
+                elseif player:GetAttribute("IntroCutsceneFinished") ~= true then
+                    introConfirmedAt, introNeutralSeen = nil, false
+                    chapter2ReleaseSeen, yieldingToEnding = false, false
+                    lastEndingSkipScan, lastEndingSkipVisible = 0, false
+                end
+            elseif attr == "CutsceneActive" and player:GetAttribute("CutsceneActive") ~= true
+                and introConfirmedAt then
+                introNeutralSeen = true
+            end
+            if attr == "CutsceneActive" or attr == "Chapter2ReleaseActive" or
+                attr == "IntroCutsceneFinished" or attr == "NeedleInputLocked" or attr == "NeedleOwned" then
+                task.defer(updateScene)
+            end
+        end))
+        hook(player.CharacterAdded:Connect(function()
+            controls, lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil, nil
+            task.delay(0.4, function() if alive and not active then rememberGameplay() end end)
+        end))
+
+        local function handleCameraInput()
+            if not alive or not enabled or not active or not yaw then return end
+            pcall(function()
+                if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+                end
+            end)
+            local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
+            if ok and md then
+                if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
+                    yaw = yaw - md.X * 0.004
+                    pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)
+                end
+            end
+            local now = os.clock()
+            local dt = clamp(now - lastRenderTime, 0, 0.08)
+            lastRenderTime = now
+            local function down(key) return UserInputService:IsKeyDown(key) end
+            if not UserInputService:GetFocusedTextBox() then
+                local h = (down(Enum.KeyCode.Right) and 1 or 0) - (down(Enum.KeyCode.Left) and 1 or 0)
+                local v = (down(Enum.KeyCode.Up) and 1 or 0) - (down(Enum.KeyCode.Down) and 1 or 0)
+                if h ~= 0 or v ~= 0 then
+                    yaw = yaw - h * dt * 1.9
+                    pitch = clamp(pitch + v * dt * 1.3, -1.0, 0.85)
+                end
+            end
+        end
+        RunService:BindToRenderStep(renderId, renderPriority, function()
+            if alive and yieldingToEnding and skipButtonOnScreen() then
+                if active then updateScene() end
+                releaseEndingCursor()
+            end
+            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then
+                handleCameraInput()
+                forceCamera()
+                alignCharacterFacing()
+                directMovement()
+                showGameplayHud()
+                if scene then hideFinalCutsceneVisuals() end
+            else
+                lastRenderTime = os.clock()
+            end
+        end)
+        local simulationSignal = RunService.PreSimulation or RunService.Heartbeat
+        hook(simulationSignal:Connect(function()
+            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then directMovement() end
+        end))
+
+        local function stop()
+            if not alive then return end
+            local wasActive = active
+            alive, enabled, active = false, false, false
+            pcall(function() RunService:UnbindFromRenderStep(renderId) end)
+            unwatchLeverCamera()
+            if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end
+            skipGuiAddedConnection = nil
+            restoreGameplayHud()
+            restoreFinalCutsceneVisuals()
+            for _, conn in ipairs(connections) do pcall(function() conn:Disconnect() end) end
+            if wasActive then restoreCamera() end
+            setCutsceneBypassActive(false)
+            if env.__BEYY_CUTSCENE_BYPASS_STOP == stop then env.__BEYY_CUTSCENE_BYPASS_STOP = nil end
+            if _G.__BEYY_CUTSCENE_BYPASS_STOP == stop then _G.__BEYY_CUTSCENE_BYPASS_STOP = nil end
+            if lastEndingSkipVisible then releaseEndingCursor() end
+            log("STOPPED")
+        end
+
+        rememberGameplay()
+        rememberGameplayHud()
+        updateScene()
+        task.spawn(function()
+            while alive do
+                task.wait(0.1)
+                if not active and not scene then
+                    rememberGameplay()
+                    rememberGameplayHud()
+                end
+                updateScene()
+            end
+        end)
+        log("READY: three-lever and three-puzzle cutscenes only; intro and needle ending excluded")
+        log("F3 visual mask | F4 facing | F5 HUD | F7 restore | Exploit-tab toggle controls enable/disable")
+        log("Mouse / arrows aim, WASD moves. Normal camera restores immediately after cutscenes.")
+        log("Visual/client-side bypass only; no server cutscene timers or progression changed.")
+
+        env.__BEYY_CUTSCENE_BYPASS_STOP = stop
+        return stop
+    end)
+    if not ok or type(result) ~= "function" then
+        warn("[BeyyHub] Cutscene bypass failed to start: " .. tostring(result))
+        return false
+    end
+    cutsceneBypassStop = result
+    return true
+end
+local function shutdownCutsceneBypass()
+    local stopFn = cutsceneBypassStop
+    cutsceneBypassStop = nil
+    if stopFn then pcall(stopFn) end
+end
+local previousCutsceneHubCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    shutdownCutsceneBypass()
+    if previousCutsceneHubCleanup then pcall(previousCutsceneHubCleanup) end
+end
+
+    overview:Section({ Title = "Cutscenes" })
+    Registry.CutsceneBypass = overview:Toggle({
+        Title = "Unskippable Cutscene Bypass", Value = false,
+        Desc = "Keep local camera and movement during flagged unskippable scenes. Server timers still apply; menus, intro/skip screens and automation take priority.",
+        Callback = function(enabled)
+            if enabled then
+                if not launchCutsceneBypass() then warn("[BeyyHub] Cutscene bypass could not start") end
+            else shutdownCutsceneBypass() end
+        end,
+    })
 end
 
 do

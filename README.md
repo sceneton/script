@@ -24,7 +24,7 @@ The router validates module length, version and module markers, and compilation 
 
 Only the selected gameplay module is fetched. On the first run the router may additionally fetch itself for teleport caching. Modules load WindUI separately from its upstream latest release, with a local cache.
 
-When filesystem functions exist, v103.00 modules and the router are cached under BeyyHub/v103_00_ui1_*.lua. A valid module cache takes precedence over the remote file: editing GitHub files alone does not invalidate an existing same-version cache. Remove the corresponding v103_00_ui1_ cache files to fetch a fresh release, including the loader cache when changing its URL. WindUI uses BeyyHub/windui.lua.
+When filesystem functions exist, v103.00 modules and the router are cached under BeyyHub/v103_00_rot2_*.lua. A valid module cache takes precedence over the remote file: editing GitHub files alone does not invalidate an existing same-version cache. Remove the corresponding v103_00_rot2_ cache files to fetch a fresh release, including the loader cache when changing its URL. WindUI uses BeyyHub/windui.lua.
 
 Teleport reload is queued when a supported queue function exists; otherwise rerun the loader after changing places. The queued payload prefers the cached router. These environment-provided HTTP, loadstring, filesystem and teleport functions are not a standard Roblox LocalScript interface.
 
@@ -36,4 +36,12 @@ This README was prepared for publication because the original generated README w
 
 ## Overview & Settings update
 
-Saved-config selection, refresh, load and save controls are available under Overview & Settings in every module. Chapter 1 combines its previous Main and Settings tabs there. In the lobby, Chapter 1 round creation and Auto Farm Wins have moved from Lobby to Overview & Settings; Lobby Tools remains separate. Shared configs retain settings for other chapters when saved. Existing config files remain in WindUI/BeyyHub/config/. The updated router uses v103_00_ui1_ script caches; rerun the normal online loader once to fetch this UI revision. Live UI interaction has not been verified in Roblox.
+Saved-config selection, refresh, load and save controls are available under Overview & Settings in every module. Chapter 1 combines its previous Main and Settings tabs there. In the lobby, Chapter 1 round creation and Auto Farm Wins have moved from Lobby to Overview & Settings; Lobby Tools remains separate. Shared configs retain settings for other chapters when saved. Existing config files remain in WindUI/BeyyHub/config/. The updated router uses v103_00_rot2_ script caches; rerun the normal online loader once to fetch this UI revision. Live UI interaction has not been verified in Roblox.
+
+## Reference rotations and cutscene control
+
+Chapter 1 uses the v101.57 reference four-band sweep at 48 degrees per second: 22, 18, 14 and 8 stud bands with fixed measured hay surfaces, smooth band transitions, and matching character movement. A lap takes about 7.5 seconds and the four-band cycle about 30 seconds at normal frame rates.
+
+Every module includes an optional Unskippable Cutscene Bypass under Overview & Settings, saved in named configs. It uses the reference camera/movement controller with generalized CutsceneActive detection and Chapter2ReleaseActive support. It yields to explicit unfinished intros, visible Skip/results UI, the hub menu, and active needle/puzzle automation. Scenes without these replicated attributes cannot be identified automatically. This changes local camera, controls and cutscene overlays only; server timers and progression are unchanged. Turning it off or unloading cleans up its callbacks and restores the camera/HUD. Live compatibility with individual chapter scenes is not yet verified.
+
+Rerun the normal online loader to select the new v103_00_rot2_ script cache. Saved configs are retained.

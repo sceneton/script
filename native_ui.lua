@@ -69,7 +69,10 @@ local function createNativeUI()
         return manager
     end
     function UI:Notify(options)
-        if self.Window and not self.Window.Destroyed then self.Window.Notice.Text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "") end
+        if self.Window and not self.Window.Destroyed then
+            local text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "")
+            if self.Window.Notice.Text~=text then self.Window.Notice.Text=text end
+        end
     end
     function UI:CreateWindow(options)
         local w={Closed=false,Destroyed=false,Connections={},Tabs={},ToggleKey=Enum.KeyCode.RightControl}
@@ -182,8 +185,8 @@ local function createNativeUI()
                 local heading=label(frame,opts.Title); heading.AutomaticSize=Enum.AutomaticSize.Y
                 local desc=label(frame,live and opts.Desc or ""); desc.AutomaticSize=Enum.AutomaticSize.Y
                 local el={}
-                function el:SetDesc(v) desc.Text=tostring(v or "") end
-                function el:SetTitle(v) heading.Text=tostring(v or "") end
+                function el:SetDesc(v) local text=tostring(v or ""); if desc.Text~=text then desc.Text=text end end
+                function el:SetTitle(v) local text=tostring(v or ""); if heading.Text~=text then heading.Text=text end end
                 return el
             end
             function tab:Button(opts)

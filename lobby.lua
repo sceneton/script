@@ -1021,18 +1021,63 @@ end
         local arcadePrompt = arcadeMachine and arcadeMachine:FindFirstChild("PlayPrompt", true)
         local classSystem = ReplicatedStorage:FindFirstChild("ClassSystem")
         local rollClass = classSystem and classSystem:FindFirstChild("RollClass")
-        task.spawn(function()
-            while not hubUnloaded do
-                task.wait(0.2)
-                if lobbyState.ArcadeFarm and arcadePrompt and arcadeReport then
-                    pcall(function()
-                        if type(fireproximityprompt) == "function" then fireproximityprompt(arcadePrompt) end
-                        for _ = 1, 20 do arcadeReport:FireServer("kills", 40, 0) end
-                        if arcadeSession then arcadeSession:FireServer("quit", 0, 0) end
-                    end)
-                end
+local KILLS_PER_CYCLE  = 6
+local CYCLES_PER_YIELD = 10
+local YIELD_DURATION   = 0.001
+
+local function fastLeave()
+    local sg = LocalPlayer.PlayerGui:FindFirstChild("ArcadeScreen")
+    if sg then sg.Enabled = false end
+
+    pcall(function()
+        LocalPlayer:SetAttribute("ArcadePlaying", nil)
+        LocalPlayer:SetAttribute("NeedleInputLocked", nil)
+    end)
+
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = 16
+            hum.JumpPower = 50
+        end
+    end
+
+    local cam = workspace.CurrentCamera
+    if cam then cam.CameraType = Enum.CameraType.Custom end
+    pcall(function() arcadeSession:FireServer("quit", 0, 0) end)
+end
+
+local function arcadeCycle()
+    pcall(function() fireproximityprompt(arcadePrompt) end)
+    for i = 1, KILLS_PER_CYCLE do
+        pcall(function() arcadeReport:FireServer("kills", 40, 0) end)
+    end
+    fastLeave()
+end
+
+task.spawn(function()
+    local cycles = 0
+    while not hubUnloaded do
+        if IN_GAME then
+
+            if lobbyState.ArcadeFarm then
+                lobbyState.ArcadeFarm = false
+                warn("[Arcade] Lobby only.")
             end
-        end)
+            task.wait(0.1)
+        elseif lobbyState.ArcadeFarm and arcadePrompt and arcadeReport then
+            cycles = cycles + 1
+            arcadeCycle()
+            if cycles % CYCLES_PER_YIELD == 0 then
+                task.wait(YIELD_DURATION)
+            end
+        else
+            task.wait(0.1)
+        end
+    end
+end)
+
         task.spawn(function()
             while not hubUnloaded do
                 task.wait(lobbyState.ClassRollInterval)

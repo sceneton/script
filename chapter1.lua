@@ -1690,11 +1690,11 @@ do
     local replayVoteLogged = false
     local replayButtonFirstSeenAt = nil
     local trackedReplayButton = nil
-    local REPLAY_READY_DELAY = 2.0
+    local REPLAY_READY_DELAY = 0.25
 
     task.spawn(function()
         while not Unloaded do
-            task.wait(0.35)
+            task.wait(resultsScreenWasVisible and 0.05 or 0.35)
             if not IN_GAME then
                 hasOwnedNeedleThisRound = false
                 replayFiredForThisEnding = false

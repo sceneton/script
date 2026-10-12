@@ -455,11 +455,11 @@ local function closeMenuOnStartup()
         warn("[BeyyHub] Startup close failed: " .. tostring(err))
         return false
     end
-    print("[BeyyHub] Entire menu minimized immediately (RightControl to reopen)")
+    print("[BeyyHub] Entire menu minimized after startup pause (RightControl to reopen)")
     return true
 end
 
-closeMenuOnStartup()
+task.delay(0.25, closeMenuOnStartup)
 local menuCursorCleanup = function() Window:Destroy() end
 local previousMenuCleanup = _G.__BEYY_HUB_CLEANUP
 _G.__BEYY_HUB_CLEANUP = function()
@@ -3762,7 +3762,6 @@ pcall(function()
     task.defer(function()
         if not Unloaded then pcall(function() CollectingTab:Select() end) end
 
-        if not Unloaded and not Window.Closed then closeMenuOnStartup() end
     end)
 end)
 

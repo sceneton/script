@@ -63,7 +63,22 @@ print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
 local earlyIntroRunning = true
 local earlyIntroPending = false
-local function stopEarlyIntro() earlyIntroRunning = false; earlyIntroPending = false end
+local earlyIntroGui, earlyIntroConnection
+local earlyIntroButtons = setmetatable({}, {__mode="k"})
+local function stopEarlyIntro()
+    earlyIntroRunning = false; earlyIntroPending = false
+    if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
+    table.clear(earlyIntroButtons)
+end
+local function watchEarlyIntroGui(pg)
+    if pg==earlyIntroGui then return end
+    if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
+    earlyIntroGui=pg; table.clear(earlyIntroButtons)
+    if not pg then return end
+    local function index(obj) if obj:IsA("GuiButton") then earlyIntroButtons[obj]=true end end
+    earlyIntroConnection=pg.DescendantAdded:Connect(index)
+    for _,obj in ipairs(pg:GetDescendants()) do index(obj) end
+end
 local function earlyIntroVisible(obj)
     if not obj or not obj.Parent then return false end
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
@@ -79,9 +94,11 @@ end
 local function findEarlyIntroSkip()
     if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true or LocalPlayer:GetAttribute("NeedleOwned") == true then return nil end
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    watchEarlyIntroGui(pg)
     if not pg then return nil end
-    for _,obj in ipairs(pg:GetDescendants()) do
-        if obj:IsA("GuiButton") and earlyIntroVisible(obj) then
+    for obj in pairs(earlyIntroButtons) do
+        if not obj.Parent then earlyIntroButtons[obj]=nil
+        elseif earlyIntroVisible(obj) then
             local context = obj.Name:lower()
             if obj:IsA("TextButton") then context = context .. " " .. obj.Text:lower() end
             for _,child in ipairs(obj:GetDescendants()) do
@@ -298,7 +315,10 @@ local function createNativeUI()
         return manager
     end
     function UI:Notify(options)
-        if self.Window and not self.Window.Destroyed then self.Window.Notice.Text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "") end
+        if self.Window and not self.Window.Destroyed then
+            local text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "")
+            if self.Window.Notice.Text~=text then self.Window.Notice.Text=text end
+        end
     end
     function UI:CreateWindow(options)
         local w={Closed=false,Destroyed=false,Connections={},Tabs={},ToggleKey=Enum.KeyCode.RightControl}
@@ -411,8 +431,8 @@ local function createNativeUI()
                 local heading=label(frame,opts.Title); heading.AutomaticSize=Enum.AutomaticSize.Y
                 local desc=label(frame,live and opts.Desc or ""); desc.AutomaticSize=Enum.AutomaticSize.Y
                 local el={}
-                function el:SetDesc(v) desc.Text=tostring(v or "") end
-                function el:SetTitle(v) heading.Text=tostring(v or "") end
+                function el:SetDesc(v) local text=tostring(v or ""); if desc.Text~=text then desc.Text=text end end
+                function el:SetTitle(v) local text=tostring(v or ""); if heading.Text~=text then heading.Text=text end end
                 return el
             end
             function tab:Button(opts)

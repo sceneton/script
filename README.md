@@ -24,9 +24,9 @@ The router validates module length, version and module markers, and compilation 
 
 Only the selected gameplay module is fetched. On the first run the router may additionally fetch itself for teleport caching. Modules load WindUI separately from its upstream latest release, with a local cache.
 
-When filesystem functions exist, v103.00 modules and the router are cached under BeyyHub/v103_00_tabs3_*.lua. A valid module cache takes precedence over the remote file: editing GitHub files alone does not invalidate an existing same-version cache. Remove the corresponding v103_00_tabs3_ cache files to fetch a fresh release, including the loader cache when changing its URL. WindUI uses BeyyHub/windui.lua.
+When filesystem functions exist, v103.00 modules and the router are cached under BeyyHub/v103_00_tabs3_*.lua. Each run requests a fresh module from GitHub with a unique query parameter, validates it and updates its cache. A validated local cache is used only when the online response is unavailable or invalid. WindUI uses BeyyHub/windui.lua.
 
-Teleport reload is queued when a supported queue function exists; otherwise rerun the loader after changing places. The queued payload prefers the cached router. These environment-provided HTTP, loadstring, filesystem and teleport functions are not a standard Roblox LocalScript interface.
+Teleport reload is queued when a supported queue function exists; otherwise rerun the loader after changing places. The queued payload requests a fresh router first and falls back to a validated cached router. These environment-provided HTTP, loadstring, filesystem and teleport functions are not a standard Roblox LocalScript interface.
 
 ## Verification
 

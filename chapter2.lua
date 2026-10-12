@@ -311,6 +311,13 @@ do
     needleTab:Paragraph({ Title="When a needle is exposed, harvesting pauses automatically." })
     farmToggle(needleTab,"AutoFindNeedle","Auto Find Needle")
     farmToggle(needleTab,"AutoPickupNeedle","Auto Pick Up Needle")
+    local pickupStatus = needleTab:Paragraph({ Title="Key / Needle Pickup Status", Desc="Waiting for the next pickup scan." })
+    local lastPickupStatus
+    local function setPickupStatus(message)
+        if message == lastPickupStatus then return end
+        lastPickupStatus = message
+        pcall(function() pickupStatus:SetDesc(message) end)
+    end
     farmToggle(needleTab,"AutoHandInNeedle","Auto Hand In Needle")
     farmSlider(needleTab,"NeedleInterval","Needle Scan Interval (s)",0.2,3,0.1)
     shopTab:Section({ Title="Purchasing" })
@@ -631,23 +638,45 @@ do
             end
         end
     end)
+    local function pickupBlockReason()
+        if hubUnloaded then return "Hub unloaded" end
+        if not sharedFarmState.AutoPickupNeedle then return "Auto pickup is off" end
+        if LocalPlayer:GetAttribute("NeedleOwned")==true then return "Key / needle collected" end
+        if not needleFolder then return "Waiting for NeedleHaystack to replicate" end
+        if sharedFarmPuzzleBusy() then return "Waiting for puzzle automation to release control" end
+        if LocalPlayer:GetAttribute("CutsceneActive")==true then return "Waiting for CutsceneActive to clear (visual bypass does not clear this flag)" end
+        if LocalPlayer:GetAttribute("NeedleInputLocked")==true then return "Waiting for NeedleInputLocked to clear" end
+        if LocalPlayer:GetAttribute("HintViewerOpen")==true then return "Close the hint viewer to pick up the key" end
+        if needleBusy then return "Pickup in progress" end
+        return nil
+    end
     task.spawn(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.NeedleInterval) or 1))
-            if needleFolder and not farmBlocked() and not needleBusy
-                and sharedFarmState.AutoPickupNeedle and LocalPlayer:GetAttribute("NeedleOwned")~=true then
+            needleFolder = needleFolder or ReplicatedStorage:FindFirstChild("NeedleHaystack")
+            local blocked = pickupBlockReason()
+            if blocked then
+                setPickupStatus(blocked)
+            else
                 local needle=exposedNeedle()
                 local root=farmRoot()
                 local camera=Workspace.CurrentCamera
-                if needle and root and camera and hubWindow.Closed==true then
+                if not needle then
+                    setPickupStatus("Waiting for an exposed objective with a numeric HayId")
+                elseif not root or not camera then
+                    setPickupStatus("Waiting for the character and camera")
+                else
                     needleBusy=true
                     releaseSharedVacuum()
                     local previousRoot=root.CFrame
                     local previousCameraType=camera.CameraType
                     local previousCameraCF=camera.CFrame
+                    local previousHover=LocalPlayer:GetAttribute("HoveredHayId")
                     local renderName="BeyySharedNeedleAim_"..tostring(LocalPlayer.UserId)
                     local bound=false
                     local mouseDown=false
+                    local moved=false
+                    local cameraCaptured=false
                     local function clear()
                         if mouseDown then
                             mouseDown=false
@@ -657,20 +686,41 @@ do
                             end)
                         end
                         if bound then pcall(function() RunService:UnbindFromRenderStep(renderName) end) end
-                        if camera then
+                        if cameraCaptured and camera then
                             pcall(function()
                                 camera.CameraType=previousCameraType
                                 camera.CFrame=previousCameraCF
                             end)
                         end
-                        if root and root.Parent then pcall(function() root.CFrame=previousRoot end) end
+                        if moved and root and root.Parent then pcall(function() root.CFrame=previousRoot end) end
+                        pcall(function() LocalPlayer:SetAttribute("HoveredHayId",previousHover) end)
                         needleBusy=false
                     end
                     local ok,err=xpcall(function()
+                        -- Puzzle automation may reopen the hub. Hide it before sending gameplay clicks.
+                        if hubWindow.Closed~=true then
+                            setPickupStatus("Closing the menu for key pickup")
+                            hubWindow:Close()
+                        end
+                        local menuDeadline=os.clock()+1
+                        repeat
+                            RunService.RenderStepped:Wait()
+                        until hubWindow.Closed==true or hubUnloaded or os.clock()>=menuDeadline
+                        if hubWindow.Closed~=true then error("Menu did not close; pickup will retry") end
+                        -- Give the cutscene controller time to release its camera before capturing it.
+                        task.wait(0.15)
+                        if hubUnloaded or farmBlocked() or not sharedFarmState.AutoPickupNeedle
+                            or not needle.Parent or not root.Parent then return end
+                        if Workspace.CurrentCamera~=camera then error("Camera changed; pickup will retry") end
+                        previousCameraType=camera.CameraType
+                        previousCameraCF=camera.CFrame
+                        cameraCaptured=true
+                        setPickupStatus("Teleporting beside the key / needle")
                         local id=needle:GetAttribute("HayId")
                         -- Land beside the needle while keeping the character clear of the ground.
                         local spot=needle.Position+Vector3.new(1,2.5,0)
                         root.CFrame=CFrame.lookAt(spot,needle.Position)
+                        moved=true
                         root.AssemblyLinearVelocity=Vector3.zero
                         root.AssemblyAngularVelocity=Vector3.zero
                         camera.CameraType=Enum.CameraType.Scriptable
@@ -678,12 +728,14 @@ do
                         camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
                         RunService:BindToRenderStep(renderName,Enum.RenderPriority.Last.Value+30,function()
                             if needle.Parent then
+                                camera.CameraType=Enum.CameraType.Scriptable
                                 camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
                                 LocalPlayer:SetAttribute("HoveredHayId",id)
                             end
                         end)
                         bound=true
                         task.wait(0.1)
+                        setPickupStatus("Clicking the objective; waiting for ownership confirmation")
                         for _=1,8 do
                             if hubUnloaded or farmBlocked() or not sharedFarmState.AutoPickupNeedle
                                 or not needle.Parent or LocalPlayer:GetAttribute("NeedleOwned")==true then break end
@@ -700,7 +752,14 @@ do
                         end
                     end,function(e) return tostring(e) end)
                     clear()
-                    if not ok then warn("[BeyyHub] Other-chapter needle pickup: "..tostring(err)) end
+                    if not ok then
+                        setPickupStatus("Pickup error: "..tostring(err))
+                        warn("[BeyyHub] Chapter 2 key pickup: "..tostring(err))
+                    elseif LocalPlayer:GetAttribute("NeedleOwned")==true then
+                        setPickupStatus("Key / needle collected")
+                    else
+                        setPickupStatus("Pickup not confirmed; retrying on the next scan")
+                    end
                 end
             end
         end

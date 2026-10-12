@@ -159,7 +159,10 @@ local function createNativeUI()
         return manager
     end
     function UI:Notify(options)
-        if self.Window and not self.Window.Destroyed then self.Window.Notice.Text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "") end
+        if self.Window and not self.Window.Destroyed then
+            local text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "")
+            if self.Window.Notice.Text~=text then self.Window.Notice.Text=text end
+        end
     end
     function UI:CreateWindow(options)
         local w={Closed=false,Destroyed=false,Connections={},Tabs={},ToggleKey=Enum.KeyCode.RightControl}
@@ -272,8 +275,8 @@ local function createNativeUI()
                 local heading=label(frame,opts.Title); heading.AutomaticSize=Enum.AutomaticSize.Y
                 local desc=label(frame,live and opts.Desc or ""); desc.AutomaticSize=Enum.AutomaticSize.Y
                 local el={}
-                function el:SetDesc(v) desc.Text=tostring(v or "") end
-                function el:SetTitle(v) heading.Text=tostring(v or "") end
+                function el:SetDesc(v) local text=tostring(v or ""); if desc.Text~=text then desc.Text=text end end
+                function el:SetTitle(v) local text=tostring(v or ""); if heading.Text~=text then heading.Text=text end end
                 return el
             end
             function tab:Button(opts)
@@ -548,6 +551,9 @@ end
     upgradesTab:Section({ Title="Capacity (Cash)" })
     farmToggle(upgradesTab,"UpgCapacity","Auto Upgrade Carry Capacity")
 
+    local function spawnChapterWorker(fn)
+        if BEYY_CHAPTER ~= "Lobby" then task.spawn(fn) end
+    end
     local needleFolder = ReplicatedStorage:FindFirstChild("NeedleHaystack")
     local sharedGameConfig, sharedUpgradeConfig
     if needleFolder then
@@ -559,16 +565,19 @@ end
             if module then sharedUpgradeConfig=require(module) end
         end)
     end
+    local farmRemoteCache = {}
     local function farmRemote(name)
         local folder=ReplicatedStorage:FindFirstChild("NeedleHaystack")
+        local cached=farmRemoteCache[name]
+        if folder and cached and cached.Parent==folder and cached.Name==name then return cached end
         local result=folder and folder:FindFirstChild(name)
+        farmRemoteCache[name]=result and result:IsA("RemoteEvent") and result or nil
         return result and result:IsA("RemoteEvent") and result or nil
     end
     local function sendFarmRemote(name,...)
         local remote=farmRemote(name)
         if not remote then return false end
-        local args=table.pack(...)
-        return pcall(function() remote:FireServer(table.unpack(args,1,args.n)) end)
+        return pcall(remote.FireServer,remote,...)
     end
     local function farmRoot()
         local character=LocalPlayer.Character
@@ -621,10 +630,11 @@ end
         return (tonumber(LocalPlayer:GetAttribute("HayHeld")) or 0)
             >= (tonumber(LocalPlayer:GetAttribute("HayCapacity")) or 25)
     end
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.1,tonumber(sharedFarmState.CollectInterval) or 0.5))
-            if needleFolder and not farmBlocked() and not needlePriority() then
+            if (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle or sharedFarmState.AutoCollectDroppedHay or sharedFarmState.AutoCollectGems)
+                and needleFolder and not farmBlocked() and not needlePriority() then
                 if (sharedFarmState.AutoPickHay or (sharedFarmState.AutoFindNeedle and not exposedNeedle())) and not bagFull() then
                     local hay,id=closestInFolder("HaystackClient","HayId",30)
                     if id then
@@ -657,10 +667,10 @@ end
             end
         end
     end)
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(1)
-            if needleFolder and not farmBlocked() and not needlePriority() and sharedFarmState.AutoSellHay then
+            if sharedFarmState.AutoSellHay and needleFolder and not farmBlocked() and not needlePriority() then
                 local held=tonumber(LocalPlayer:GetAttribute("HayHeld")) or 0
                 local threshold=tonumber(sharedFarmState.SellThreshold) or 25
                 if held>0 and ((sharedFarmState.SellOnlyIfFull and bagFull())
@@ -670,10 +680,11 @@ end
             end
         end
     end)
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
-            if needleFolder and not farmBlocked() and not needlePriority() then
+            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
+                and needleFolder and not farmBlocked() and not needlePriority() then
                 if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
                     local _,id=closestInFolder("HaystackClient","HayId",30)
                     if id then sendFarmRemote("PitchforkDig",id) end
@@ -714,7 +725,7 @@ end
         releaseSharedVacuum()
         if oldCleanup then pcall(oldCleanup) end
     end
-    task.spawn(function()
+    spawnChapterWorker(function()
         local hotbar={Enum.KeyCode.One,Enum.KeyCode.Two,Enum.KeyCode.Three,
             Enum.KeyCode.Four,Enum.KeyCode.Five,Enum.KeyCode.Six,
             Enum.KeyCode.Seven,Enum.KeyCode.Eight,Enum.KeyCode.Nine}
@@ -773,7 +784,7 @@ end
             warn("[BeyyHub] Needle turn-in: " .. tostring(message))
         end
     end
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.NeedleInterval) or 1))
             if needleFolder and not farmBlocked() and sharedFarmState.AutoHandInNeedle
@@ -825,7 +836,7 @@ end
             end
         end
     end)
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.NeedleInterval) or 1))
             if needleFolder and not farmBlocked() and not needleBusy
@@ -925,7 +936,7 @@ end
             sendFarmRemote("BuyUpgrade",name)
         end
     end
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.5,tonumber(sharedFarmState.BuyInterval) or 1))
             if needleFolder and sharedFarmState.AutoBuyTools and BEYY_CHAPTER~="Lobby" then
@@ -954,7 +965,7 @@ end
             end
         end
     end)
-    task.spawn(function()
+    spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.5,tonumber(sharedFarmState.PermInterval) or 1))
             if needleFolder and BEYY_CHAPTER~="Lobby" then
@@ -966,7 +977,7 @@ end
             end
         end
     end)
-    task.spawn(function()
+    spawnChapterWorker(function()
         local tracks={
             UpgCapacity="Capacity",UpgHandSpeed="Speed",UpgHandGrab="Grab",UpgHandHold="HandHold",
             UpgTntLuck="TntLuck",UpgTntCooldown="TntCooldown",UpgTntPower="TntPower",

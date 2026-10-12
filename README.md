@@ -13,3 +13,5 @@ loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/featu
 The router downloads only the current place's module, checks the native branch revision, uses separate native caches, and queues the router on teleport when supported. Each module embeds native_ui.lua; editing that file alone does not update the modules.
 
 Verification: all files compile using the official Luau compiler. Mocked native control/config and router tests cover behavior; live executor/game performance and gameplay still need an in-game check.
+
+Optimizations: confirmed-revision module and router caches avoid repeated downloads; nine chapter farming workers are omitted in the lobby; disabled collect/sell/tool actions avoid objective checks; remote references are cached with parent validation; intro skip indexes GUI buttons once and watches additions; repeated status text writes are avoided. Config keys, action intervals, puzzle stages, farm rotations, and Replay timing are preserved.

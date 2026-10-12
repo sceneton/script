@@ -271,7 +271,7 @@ local function createNativeUI()
         local close=button(root,"X",UDim2.fromOffset(28,24),UDim2.new(1,-34,0,3))
         local sidebar=node("ScrollingFrame",root,{Position=UDim2.fromOffset(0,34),Size=UDim2.new(0,180,1,-72),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y})
         layout(sidebar)
-        w.Notice=label(root,"Right Ctrl: show / hide",32); w.Notice.Position=UDim2.new(0,10,1,-34); w.Notice.Size=UDim2.new(1,-20,0,32)
+        w.Notice=label(root,"",32); w.Notice.Position=UDim2.new(0,10,1,-34); w.Notice.Size=UDim2.new(1,-20,0,32)
         local bind="BeyyNativeCursor_"..tostring(game:GetService("Players").LocalPlayer.UserId)
         local previousBehavior,previousIcon,cursorBound
         local function releaseCursor()
@@ -315,9 +315,8 @@ local function createNativeUI()
             connect(nav.Activated,function() tab:Select() end)
             if #self.Tabs==1 then tab:Select() end
             local function row(opts,height)
-                local frame=node("Frame",page,{Size=UDim2.new(1,-2,0,height or (opts.Desc and 68 or 42)),BackgroundColor3=colors.row,BorderSizePixel=0})
+                local frame=node("Frame",page,{Size=UDim2.new(1,-2,0,height or 42),BackgroundColor3=colors.row,BorderSizePixel=0})
                 local heading=label(frame,opts.Title,24); heading.Position=UDim2.fromOffset(8,2); heading.Size=UDim2.new(1,-160,0,24)
-                if opts.Desc then local desc=label(frame,opts.Desc,34); desc.Position=UDim2.fromOffset(8,29); desc.Size=UDim2.new(1,-16,0,34); desc.TextSize=12 end
                 return frame
             end
             local function control(kind,opts,value)
@@ -329,10 +328,15 @@ local function createNativeUI()
             end
             function tab:Section(opts) return label(page,opts.Title,26) end
             function tab:Paragraph(opts)
+                -- Static help paragraphs are omitted; live status panels remain.
+                local live=opts.Title=="Session" or tostring(opts.Title):find("Status",1,true)~=nil
+                if not live and opts.Title~="Configs unavailable" then
+                    return {SetDesc=function() end,SetTitle=function() end}
+                end
                 local frame=node("Frame",page,{Size=UDim2.new(1,-2,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1})
                 layout(frame)
                 local heading=label(frame,opts.Title); heading.AutomaticSize=Enum.AutomaticSize.Y
-                local desc=label(frame,opts.Desc or ""); desc.AutomaticSize=Enum.AutomaticSize.Y
+                local desc=label(frame,live and opts.Desc or ""); desc.AutomaticSize=Enum.AutomaticSize.Y
                 local el={}
                 function el:SetDesc(v) desc.Text=tostring(v or "") end
                 function el:SetTitle(v) heading.Text=tostring(v or "") end

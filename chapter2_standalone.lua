@@ -1,4 +1,4 @@
--- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.2.0
+-- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.2.2
 if game.PlaceId ~= 83445806734780 then warn("[Beyy CH2] Join Chapter 2 before running this script") return end
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -84,7 +84,7 @@ local introMouseDown=false
 local introClickPoint=Vector2.zero
 local introSavedBehavior,introSavedIcon
 local introCursorBind="BeyyCH2StandaloneIntroCursor_"..tostring(LocalPlayer.UserId)
-local toolState={TNT=false,Pitchfork=false,Drone=false,Vacuum=false,Slot=5}
+local toolState={TNT=true,Pitchfork=false,Drone=true,Vacuum=false,Slot=5}
 local vacuumHeld=false
 local vacuumPoint=Vector2.zero
 local vacuumEquipKey
@@ -1700,17 +1700,6 @@ return solved]===]
             return not isNumberStageCancelled()
         end
 
-        local function stopAllPuzzles()
-            if not allPuzzlesRunning then
-                allStatus("No complete puzzle sequence is running")
-                return
-            end
-            allPuzzlesCancel = true
-            leverCancelled = true
-            colourCancel = true
-            pictureCancelled = true
-            allStatus("Stop requested; restoring controls and position")
-        end
         local originalHubCleanup = _G.__BEYY_HUB_CLEANUP
         _G.__BEYY_HUB_CLEANUP = function()
             allPuzzlesCancel = true
@@ -1848,37 +1837,6 @@ return solved]===]
                 if not allPuzzlesRunning then task.spawn(runAllPuzzles) end
             end,
         })
-        puzzleTab:Button({
-            Title = "Stop Auto Solve Puzzles",
-            Desc = "Cancel any remaining stages and restore movement/camera when safe.",
-            Callback = stopAllPuzzles,
-        })
-        puzzleTab:Button({
-            Title = "Auto Number Puzzle (only)",
-            Desc = "Run the integrated note finder and four-digit keypad submission without levers or colour puzzle.",
-            Callback = function()
-                if allPuzzlesRunning or puzzleControllerBusy or hubUnloaded or objectiveBusy() then
-                    allStatus("Another puzzle controller is active")
-                    return
-                end
-                task.spawn(function()
-                    if allPuzzlesRunning then return end
-                    releaseVacuum()
-                    allPuzzlesRunning, allPuzzlesCancel = true, false
-                    allStatus("Number puzzle only: starting code finder...")
-                    local ok, result = pcall(runNumberPuzzleInHub)
-                    if not ok then
-                        allStatus("Number-only ERROR: " .. tostring(result))
-                    elseif result then
-                        allStatus("Number-only: keypad submission confirmed")
-                    elseif not isNumberStageCancelled() then
-                        allStatus("Number-only: keypad not confirmed; inspect NumberSolver logs")
-                    end
-                    allPuzzlesRunning = false
-                end)
-            end,
-        })
-
 
         autoPuzzleReady=function()
             if hubUnloaded or sharedFarmPuzzleBusy() or objectiveBusy() then return false end
@@ -2318,7 +2276,7 @@ local toggleButtons={}
 for _,entry in ipairs({{"TNT","TNT"},{"Pitchfork","Pitchfork"},{"Drone","Drone"},{"Vacuum","Vacuum"}}) do
     local key,label=entry[1],entry[2]
     local item
-    item=button(label..": OFF",function()
+    item=button(label..": "..(toolState[key] and "ON" or "OFF"),function()
         toolState[key]=not toolState[key]
         item.Text=label..": "..(toolState[key] and "ON" or "OFF")
         if key=="Vacuum" and not toolState.Vacuum then releaseVacuum() end
@@ -2332,6 +2290,7 @@ slotButton=button("Vacuum slot: 5 (click to cycle)",function()
     releaseVacuum()
 end)
 statusRow("Tools")
+statusRow("Drone")
 button("Stop tools",function()
     stopTools()
     for key,item in pairs(toggleButtons) do item.Text=key..": OFF" end
@@ -2349,6 +2308,28 @@ local function send(name,...)
     local item=remote(name)
     if not item then return false end
     return pcall(item.FireServer,item,...)
+end
+local droneRequested=false
+local function tryDeployDrone()
+    if hubUnloaded or droneRequested or not toolState.Drone then return end
+    if LocalPlayer:GetAttribute("DroneDeployed")==true then
+        droneRequested=true
+        updateStatus("Drone","Already deployed")
+        return
+    end
+    if LocalPlayer:GetAttribute("DroneOwned")~=true then updateStatus("Drone","Waiting for ownership") return end
+    local deploy=remote("DeployDrone")
+    if not deploy then updateStatus("Drone","Waiting for DeployDrone remote") return end
+    droneRequested=true
+    local ok=pcall(deploy.FireServer,deploy)
+    if ok then updateStatus("Drone","Deployment requested once • autonomous collecting")
+    else droneRequested=false;updateStatus("Drone","Send failed; will retry") end
+end
+-- Drone deployment uses no camera or mouse; it need not wait for intro/puzzle input.
+tryDeployDrone()
+if LocalPlayer.GetAttributeChangedSignal then
+    connect(LocalPlayer:GetAttributeChangedSignal("DroneOwned"),tryDeployDrone)
+    connect(LocalPlayer:GetAttributeChangedSignal("DroneDeployed"),tryDeployDrone)
 end
 local function toolBlockReason()
     if objectiveBusy() then return "Paused: key interaction owns controls" end
@@ -2392,7 +2373,7 @@ local function vacuumHeat()
 end
 -- One adaptive scheduler handles all four tools. Puzzle workers exist only while requested.
 task.spawn(function()
-    local nextPitch,nextDrone,nextTnt=0,0,0
+    local nextPitch,nextTnt=0,0
     local throwAt
     local vacuumStage="idle"
     local stageAt,startedAt=0,0
@@ -2404,6 +2385,7 @@ task.spawn(function()
         local keyEnabled=objectiveState.AutoPickupNeedle or objectiveState.AutoHandInNeedle
         task.wait((enabled or keyEnabled) and 0.08 or 0.5)
         if hubUnloaded then break end
+        tryDeployDrone()
         local startupWaiting=startupTick()
         if hubUnloaded then break end
         if startupWaiting then
@@ -2431,10 +2413,6 @@ task.spawn(function()
                     local id=nearestHayId()
                     if id then send("PitchforkDig",id) end
                 end
-            end
-            if toolState.Drone and now>=nextDrone then
-                nextDrone=now+1
-                if LocalPlayer:GetAttribute("DroneOwned")==true and LocalPlayer:GetAttribute("DroneDeployed")~=true then send("DeployDrone") end
             end
             if not toolState.TNT then throwAt=nil
             elseif throwAt and now>=throwAt then

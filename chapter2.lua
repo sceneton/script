@@ -2471,20 +2471,13 @@ return solved]===]
                 end
             end
             local deadline = os.clock() + 4.0
-            local clearSince = nil
             while not hubUnloaded and not allPuzzlesCancel and os.clock() < deadline do
                 if hubWindow.Closed == true and not windUIOverCrosshair() then
-                    clearSince = clearSince or os.clock()
-                    if os.clock() - clearSince >= 0.85 then
-                        RunService.RenderStepped:Wait()
-                        RunService.RenderStepped:Wait()
-                        if hubWindow.Closed == true and not windUIOverCrosshair() then
-                            return true
-                        end
-                        clearSince = nil
+                    RunService.RenderStepped:Wait()
+                    RunService.RenderStepped:Wait()
+                    if hubWindow.Closed == true and not windUIOverCrosshair() then
+                        return true
                     end
-                else
-                    clearSince = nil
                 end
                 RunService.RenderStepped:Wait()
             end

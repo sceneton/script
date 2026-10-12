@@ -60,6 +60,78 @@ end
 
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
+-- Start intro input before constructing the menu or waiting for gameplay assets.
+local earlyIntroRunning = true
+local earlyIntroPending = false
+local function stopEarlyIntro() earlyIntroRunning = false; earlyIntroPending = false end
+local function earlyIntroVisible(obj)
+    if not obj or not obj.Parent then return false end
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local ancestor = obj
+    while ancestor and ancestor ~= pg do
+        if ancestor:IsA("GuiObject") and not ancestor.Visible then return false end
+        if ancestor:IsA("ScreenGui") and not ancestor.Enabled then return false end
+        if ancestor.Name == "BeyyNativeHub" or ancestor.Name == "NeedleEndingUI" then return false end
+        ancestor = ancestor.Parent
+    end
+    return ancestor == pg and obj.AbsoluteSize.X > 0 and obj.AbsoluteSize.Y > 0
+end
+local function findEarlyIntroSkip()
+    if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true or LocalPlayer:GetAttribute("NeedleOwned") == true then return nil end
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pg then return nil end
+    for _,obj in ipairs(pg:GetDescendants()) do
+        if obj:IsA("GuiButton") and earlyIntroVisible(obj) then
+            local context = obj.Name:lower()
+            if obj:IsA("TextButton") then context = context .. " " .. obj.Text:lower() end
+            for _,child in ipairs(obj:GetDescendants()) do
+                if child:IsA("TextLabel") then context = context .. " " .. child.Text:lower() end
+            end
+            local ancestor = obj.Parent
+            while ancestor and ancestor ~= pg do
+                context = context .. " " .. ancestor.Name:lower()
+                ancestor = ancestor.Parent
+            end
+            if context:find("skip",1,true) and not context:find("ending",1,true)
+                and not context:find("outro",1,true) and not context:find("replay",1,true) then return obj end
+        end
+    end
+end
+task.spawn(function()
+    local deadline = os.clock() + 20
+    local lastAttempt = -math.huge
+    while earlyIntroRunning and os.clock() < deadline do
+        if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true then break end
+        pcall(function()
+            local btn = findEarlyIntroSkip()
+            earlyIntroPending = btn ~= nil
+            if not btn or os.clock() - lastAttempt < 0.2 then return end
+            lastAttempt = os.clock()
+            -- Signals avoid an overlapping startup menu when supported.
+            if type(firesignal) == "function" then
+                pcall(function() firesignal(btn.Activated) end)
+                pcall(function() firesignal(btn.MouseButton1Click) end)
+                task.wait(0.05)
+            end
+            if not earlyIntroRunning or not earlyIntroVisible(btn)
+                or LocalPlayer:GetAttribute("IntroCutsceneFinished") == true then return end
+            local inset = GuiService:GetGuiInset()
+            local pos,size = btn.AbsolutePosition,btn.AbsoluteSize
+            local x,y = pos.X+size.X/2+inset.X,pos.Y+size.Y/2+inset.Y
+            VirtualInputManager:SendMouseMoveEvent(x,y,game)
+            local pressed = false
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(x,y,0,true,game,0)
+                pressed = true
+                task.wait(0.03)
+            end)
+            if pressed then pcall(function() VirtualInputManager:SendMouseButtonEvent(x,y,0,false,game,0) end) end
+        end)
+        task.wait(0.05)
+    end
+    stopEarlyIntro()
+end)
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -83,6 +155,7 @@ do
     local hubRestoreAction = nil
     local hubCursorCleanup = nil
     _G.__BEYY_HUB_CLEANUP = function()
+    stopEarlyIntro()
         hubUnloaded = true
         if hubRestoreAction then pcall(hubRestoreAction) end
         if hubCursorCleanup then pcall(hubCursorCleanup) end

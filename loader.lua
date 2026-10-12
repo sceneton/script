@@ -61,12 +61,19 @@ end
 local moduleCache = CACHE_PREFIX .. target.file
 local source = nil
 local url = downloadBase .. "/" .. target.file
-local onlineOK, onlineSource = pcall(fetchFresh, url)
-if onlineOK and valid(onlineSource, target.name) then
-    source = onlineSource
-    if type(writefile) == "function" then pcall(writefile, moduleCache, source) end
+-- A confirmed SHA names immutable source; validate and reuse its local cache.
+if revision then
+    local cached = readCache(moduleCache)
+    if valid(cached, target.name) then source = cached end
 end
--- Cached modules are an offline fallback, never preferred over a valid update.
+if not source then
+    local onlineOK, onlineSource = pcall(fetchFresh, url)
+    if onlineOK and valid(onlineSource, target.name) then
+        source = onlineSource
+        if type(writefile) == "function" then pcall(writefile, moduleCache, source) end
+    end
+end
+-- Without a confirmed revision, retain the online attempt before offline fallback.
 if not source and type(readfile) == "function" then
     local ok, result = pcall(readfile, moduleCache)
     if ok and valid(result, target.name) then source = result end
@@ -100,7 +107,10 @@ print("[BeyyHub] Loading " .. target.name .. " | revision " .. (selectedRevision
 -- Only the module for the current place is downloaded and executed.
 local loaderCache = CACHE_PREFIX .. "loader.lua"
 local loaderURL = BASE_RAW_URL .. "/loader.lua"
-if type(writefile) == "function" then
+local cachedLoader = revision and readCache(loaderCache)
+local cachedLoaderValid = type(cachedLoader) == "string" and #cachedLoader > 1500
+    and cachedLoader:find("-- beyy v103.00 | GitHub PlaceId router", 1, true) and loadstring(cachedLoader)
+if type(writefile) == "function" and not cachedLoaderValid then
         local ok, data = pcall(fetchFresh, downloadBase .. "/loader.lua")
         if ok and type(data) == "string" and #data > 1500
             and data:find("-- beyy v103.00 | GitHub PlaceId router", 1, true)

@@ -1,4 +1,4 @@
-# Beyy Chapter 2 Standalone 1.3.0
+# Beyy Chapter 2 Standalone 1.3.1
 
 A separate Chapter 2 puzzle and automatic tool controller with a native Roblox GUI. Runs only in PlaceId `83445806734780`.
 
@@ -8,15 +8,15 @@ local r=game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.gith
 
 ## Automatic startup
 
-On execution the script hides its GUI, attempts visible intro Skip controls, and starts the complete puzzle sequence once intro Skip UI has disappeared, intro/input flags have cleared and the character, camera and three lever targets are ready. With a confirmed IntroCutsceneFinished flag there is no extra fixed startup delay. If that attribute is absent, a 0.25-second neutral interval prevents racing initial scene replication. A scene without a usable Skip control must finish normally.
+When the saved puzzle toggle is ON, the script attempts visible intro Skip controls and starts the complete puzzle sequence once intro Skip UI has disappeared, intro/input flags have cleared and the character, camera and three lever targets are ready. With a confirmed IntroCutsceneFinished flag there is no extra fixed startup delay. If that attribute is absent, a 0.25-second neutral interval prevents racing initial scene replication. A scene without a usable Skip control must finish normally. Intro/outro handling remains available when the puzzle toggle is OFF.
 
 Skip activation uses the original integrated routine's virtual mouse click plus optional firesignal activation of MouseButton1Click, MouseButton1Down/Up and Activated signals, including visible nested buttons. Intro skips retry every 0.5 seconds; outro skips retry every second. Outro/results UI is identified separately and pauses key/tool actions. Visible outro Skip controls are clicked once active puzzle/key interactions have released input. The script does not auto-vote Replay or change server cutscene timers. Cutscene status is shown in the GUI.
 
-The puzzle sequence launches once per execution. Right Ctrl opens the menu for manual control; Unload cancels all workers. Key pickup and turn-in are permanently enabled and resume after the puzzle sequence when game controls allow it. TNT starts enabled. Drone auto-deployment starts enabled and sends one request as soon as ownership and the remote are available, without waiting for intro/puzzle input control. It does not repeat successful requests or redeploy an already active drone.
+The puzzle sequence launches once per enabled run. Switching OFF cancels the active workers; switching ON re-arms the sequence, waiting for cancelled workers and normal readiness before starting. Right Ctrl opens the menu for manual control; Unload cancels all workers. Key pickup and turn-in are permanently enabled and resume when game controls allow it. TNT starts enabled. Drone auto-deployment starts enabled and sends one request as soon as ownership and the remote are available, without waiting for intro/puzzle input control. It does not repeat successful requests or redeploy an already active drone.
 
 ## Controls
 
-- **Auto Solve Puzzles** runs the existing lever, number, picture and colour sequence. The panel hides during the sequence and returns afterwards.
+- **Auto Solve Puzzles: ON/OFF** controls the complete lever, number, picture and colour sequence. Changes automatically save; OFF cancels and ON starts once readiness checks pass. The menu hides while the automatic startup is active.
 - **TNT / Pitchfork / Drone / Vacuum** turn automatic usage on or off. TNT and Drone start on; Pitchfork and Vacuum start off. TNT, Pitchfork and Vacuum pause while the GUI is open or puzzle/key interactions own input. Drone deployment uses no mouse/camera and can be sent during intro/puzzles.
 - **Vacuum slot** cycles through hotbar slots 1–9; default is 5.
 - **Auto Pick Up Key: ALWAYS ON** finds `Workspace.NeedleObjectiveServer.Key`, moves beside it, aims and clicks until ownership is confirmed. The target requires a numeric `HayId` and must not be marked hidden.
@@ -31,7 +31,11 @@ No WindUI or other external UI download. One adaptive background scheduler handl
 
 TNT, Pitchfork and Vacuum pause while puzzle workers or key interactions own input, while the GUI is open, during flagged cutscenes and when game input is locked. The one-time drone request is independent of these input locks. Key automation waits for puzzle workers to finish. The scheduler releases Mouse1 before a puzzle or key interaction starts. Vacuum uses the live heat bar when available, with timed fallback when the HUD is unavailable. Opening the GUI cancels an active pickup and restores the temporary hay/camera changes.
 
-This script closes an already-running Beyy hub before taking camera/mouse control in Chapter 2. Re-executing the standalone unloads its previous instance. It does not need the split hub loader and does not change the split hub files. This version contains puzzles, tools and key pickup/turn-in; it has no upgrades, gem exploit, config manager or cutscene camera bypass. TNT/Drone default on, Pitchfork/Vacuum default off, and both key options are always enabled on each execution.
+This script closes an already-running Beyy hub before taking camera/mouse control in Chapter 2. Re-executing the standalone unloads its previous instance. It does not need the split hub loader and does not change the split hub files. TNT/Drone default on, Pitchfork/Vacuum default off, and both key options are always enabled on each execution.
+
+## Minimal config
+
+Only the puzzle toggle is saved, automatically, in `BeyyHub/ch2_standalone_puzzles.txt`. Its entire contents are one byte: `1` for ON or `0` for OFF. The saved value is read on execution, including teleport reloads. A missing or invalid file defaults to ON. No named presets, Save/Load buttons, UI library or extra config settings are used. If filesystem saving is unsupported or a write fails, the Config status reports it and the toggle still applies for the current session.
 
 ## Teleport reload
 
@@ -39,7 +43,7 @@ The script listens for a teleport and queues a bootstrap using supported queue_o
 
 Run it once in the lobby to arm reloads without creating a GUI, or run it directly in Chapter 2. It keeps the teleport listener armed in other destinations and runs gameplay automation only in Chapter 2. Duplicate teleport events queue once, and the destination bootstrap prevents duplicate executions. Unload disconnects the listener before a new teleport is queued. A payload already queued for an ongoing teleport cannot be revoked by the script.
 
-The Teleport status row reports whether reload is armed, queued or unavailable. Automatic reload requires the execution environment's teleport queue support. Defaults are reapplied on arrival; temporary tool settings are not transferred.
+The Teleport status row reports whether reload is armed, queued or unavailable. Automatic reload requires the execution environment's teleport queue support. The saved puzzle toggle is restored on arrival; other defaults are reapplied and temporary tool settings are not transferred.
 
 ## Verification
 

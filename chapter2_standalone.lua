@@ -1,4 +1,4 @@
--- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.1.0
+-- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.2.0
 if game.PlaceId ~= 83445806734780 then warn("[Beyy CH2] Join Chapter 2 before running this script") return end
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -73,10 +73,17 @@ local function button(title,callback)
     return item
 end
 local sharedFarmPuzzleBusy=function() return false end
-local objectiveState={AutoPickupNeedle=false,AutoHandInNeedle=false}
+local objectiveState={AutoPickupNeedle=true,AutoHandInNeedle=true}
 local objectiveBusy=function() return false end
 local objectiveTick=function() end
 local objectiveCleanup
+local startupTick=function() return false end
+local autoPuzzleReady=function() return false end
+local startAutomaticPuzzles=function() end
+local introMouseDown=false
+local introClickPoint=Vector2.zero
+local introSavedBehavior,introSavedIcon
+local introCursorBind="BeyyCH2StandaloneIntroCursor_"..tostring(LocalPlayer.UserId)
 local toolState={TNT=false,Pitchfork=false,Drone=false,Vacuum=false,Slot=5}
 local vacuumHeld=false
 local vacuumPoint=Vector2.zero
@@ -115,6 +122,7 @@ end
 function hubWindow:Open()
     if hubUnloaded then return end
     if savedMouseBehavior==nil then savedMouseBehavior=UserInputService.MouseBehavior;savedMouseIcon=UserInputService.MouseIconEnabled end
+    if introSavedBehavior then savedMouseBehavior=introSavedBehavior;savedMouseIcon=introSavedIcon;introSavedBehavior,introSavedIcon=nil,nil end
     self.Closed=false;panel.Visible=true
     unlockMenuCursor()
     if not cursorBound then
@@ -123,6 +131,11 @@ function hubWindow:Open()
     end
     releaseVacuum()
     if objectiveCleanup then pcall(objectiveCleanup) end
+    RunService:UnbindFromRenderStep(introCursorBind)
+    if introMouseDown then
+        introMouseDown=false
+        pcall(function() VirtualInputManager:SendMouseButtonEvent(introClickPoint.X,introClickPoint.Y,0,false,game,0) end)
+    end
 end
 local cleanup
 cleanup=function()
@@ -131,6 +144,14 @@ cleanup=function()
     hubWindow:Close()
     releaseVacuum()
     if objectiveCleanup then pcall(objectiveCleanup) end
+    RunService:UnbindFromRenderStep(introCursorBind)
+    if introMouseDown then
+        introMouseDown=false
+        pcall(function() VirtualInputManager:SendMouseButtonEvent(introClickPoint.X,introClickPoint.Y,0,false,game,0) end)
+    end
+    if introSavedBehavior then UserInputService.MouseBehavior=introSavedBehavior end
+    if introSavedIcon~=nil then UserInputService.MouseIconEnabled=introSavedIcon end
+    introSavedBehavior,introSavedIcon=nil,nil
     if hubRestoreAction then pcall(hubRestoreAction) end
     for _,name in ipairs({"BeyyCH2StandaloneLever_","BeyyCH2StandaloneColour_"}) do
         pcall(function() RunService:UnbindFromRenderStep(name..tostring(LocalPlayer.UserId)) end)
@@ -1859,16 +1880,137 @@ return solved]===]
         })
 
 
+        autoPuzzleReady=function()
+            if hubUnloaded or sharedFarmPuzzleBusy() or objectiveBusy() then return false end
+            local char=LocalPlayer.Character
+            local root=char and char:FindFirstChild("HumanoidRootPart")
+            local folder=leverFolder()
+            if not root or not Workspace.CurrentCamera or not folder then return false end
+            for index=1,3 do
+                local lever=folder:FindFirstChild("Lever"..index)
+                local pose=CAPTURED_LEVER_POSES[index]
+                local target=lever and pose and lever:FindFirstChild(pose.ClickPartName,true)
+                if not target or not target:IsA("BasePart") then return false end
+            end
+            return true
+        end
+        startAutomaticPuzzles=function()
+            if not autoPuzzleReady() then return false end
+            task.spawn(runAllPuzzles)
+            return true
+        end
+
+end
+statusRow("Startup")
+do
+local started=false
+local skipButtons=setmetatable({}, {__mode="k"})
+local playerGui=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+local nextScan,nextSkip=0,0
+local neutralSince
+local function indexSkip(item)
+    if not item:IsA("GuiButton") then return end
+    local marked=item.Name:lower():find("skip",1,true)~=nil
+    if item:IsA("TextButton") then marked=marked or item.Text:lower():find("skip",1,true)~=nil end
+    if not marked then
+        for _,child in ipairs(item:GetChildren()) do
+            if child:IsA("TextLabel") and child.Text:lower():find("skip",1,true) then marked=true;break end
+        end
+    end
+    if marked then skipButtons[item]=true end
+end
+local function visibleSkip()
+    for button in pairs(skipButtons) do
+        if not button.Parent then skipButtons[button]=nil
+        else
+            local visible=true
+            local parent=button
+            while parent and parent~=playerGui do
+                local name=parent.Name:lower()
+                -- Only click pre-start skip UI, excluding end/results controls.
+                if name:find("ending",1,true) or name:find("results",1,true) then visible=false;break end
+                if parent:IsA("GuiObject") and not parent.Visible then visible=false;break end
+                if parent:IsA("ScreenGui") and not parent.Enabled then visible=false;break end
+                parent=parent.Parent
+            end
+            if parent==playerGui and visible and button.AbsoluteSize.X>0 and button.AbsoluteSize.Y>0 then return button end
+        end
+    end
+end
+local function clickSkip(button)
+    releaseVacuum()
+    local oldBehavior,oldIcon=UserInputService.MouseBehavior,UserInputService.MouseIconEnabled
+    introSavedBehavior,introSavedIcon=oldBehavior,oldIcon
+    local ok,err=pcall(function()
+        RunService:BindToRenderStep(introCursorBind,Enum.RenderPriority.Last.Value+3001,function()
+            if not hubUnloaded then UserInputService.MouseBehavior=Enum.MouseBehavior.Default;UserInputService.MouseIconEnabled=true end
+        end)
+        UserInputService.MouseBehavior=Enum.MouseBehavior.Default
+        UserInputService.MouseIconEnabled=true
+        local inset=GuiService:GetGuiInset()
+        local screen=button:FindFirstAncestorOfClass("ScreenGui")
+        if screen and screen.IgnoreGuiInset then inset=Vector2.zero end
+        local center=button.AbsolutePosition+button.AbsoluteSize/2+inset
+        introClickPoint=center
+        VirtualInputManager:SendMouseMoveEvent(center.X,center.Y,game)
+        task.wait(0.025)
+        if hubUnloaded or not button.Parent then return end
+        VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,true,game,0)
+        introMouseDown=true
+        task.wait(0.06)
+    end)
+    if introMouseDown then
+        introMouseDown=false
+        pcall(function() VirtualInputManager:SendMouseButtonEvent(introClickPoint.X,introClickPoint.Y,0,false,game,0) end)
+    end
+    RunService:UnbindFromRenderStep(introCursorBind)
+    if not hubUnloaded then
+        if hubWindow.Closed then UserInputService.MouseBehavior=oldBehavior;UserInputService.MouseIconEnabled=oldIcon
+        else unlockMenuCursor() end
+    end
+    introSavedBehavior,introSavedIcon=nil,nil
+    if not ok then updateStatus("Startup","Skip attempt failed: "..tostring(err)) end
+end
+if playerGui then connect(playerGui.DescendantAdded,indexSkip) end
+startupTick=function()
+    if started then return false end
+    if hubUnloaded then return true end
+    if sharedFarmPuzzleBusy() then started=true;updateStatus("Startup","Puzzle solver started manually");return false end
+    if not hubWindow.Closed then hubWindow:Close() end
+    local now=os.clock()
+    if now>=nextScan then
+        nextScan=now+0.5
+        if playerGui then for _,item in ipairs(playerGui:GetDescendants()) do indexSkip(item) end end
+    end
+    local intro=LocalPlayer:GetAttribute("IntroCutsceneFinished")
+    local skip=intro~=true and visibleSkip() or nil
+    if skip then
+        neutralSince=nil
+        updateStatus("Startup","Attempting intro Skip")
+        if now>=nextSkip then nextSkip=now+0.5;clickSkip(skip) end
+        return true
+    end
+    local blocked=LocalPlayer:GetAttribute("CutsceneActive")==true or LocalPlayer:GetAttribute("NeedleInputLocked")==true
+    if intro==false or blocked then
+        neutralSince=nil
+        updateStatus("Startup","Waiting for intro to finish / controls to unlock")
+        return true
+    end
+    -- With no intro attribute, require a short neutral interval to avoid racing its initial replication.
+    neutralSince=neutralSince or now
+    if intro==nil and now-neutralSince<0.25 then return true end
+    if autoPuzzleReady() then
+        if startAutomaticPuzzles() then started=true;updateStatus("Startup","Intro ready • puzzle sequence launched") end
+    else
+        updateStatus("Startup","Waiting for character, camera and three lever targets")
+    end
+    return not started
+end
+
 end
 row("TextLabel",{BackgroundTransparency=1,Text="Key objective",TextSize=12})
-for _,entry in ipairs({{"AutoPickupNeedle","Auto Pick Up Key"},{"AutoHandInNeedle","Auto Turn In Key"}}) do
-    local key,label=entry[1],entry[2]
-    local item
-    item=button(label..": OFF",function()
-        objectiveState[key]=not objectiveState[key]
-        item.Text=label..": "..(objectiveState[key] and "ON" or "OFF")
-    end)
-end
+row("TextLabel",{BackgroundTransparency=1,Text="Auto Pick Up Key: ALWAYS ON",TextSize=12})
+row("TextLabel",{BackgroundTransparency=1,Text="Auto Turn In Key: ALWAYS ON",TextSize=12})
 statusRow("Key")
 do
 local sharedFarmState=objectiveState
@@ -2262,6 +2404,14 @@ task.spawn(function()
         local keyEnabled=objectiveState.AutoPickupNeedle or objectiveState.AutoHandInNeedle
         task.wait((enabled or keyEnabled) and 0.08 or 0.5)
         if hubUnloaded then break end
+        local startupWaiting=startupTick()
+        if hubUnloaded then break end
+        if startupWaiting then
+            releaseVacuum()
+            vacuumStage="idle";throwAt=nil
+            updateStatus("Tools","Waiting for intro / puzzle startup")
+            continue
+        end
         if keyEnabled and os.clock()>=nextObjective then
             objectiveTick()
             nextObjective=os.clock()+0.35

@@ -88,8 +88,21 @@ local function releaseVacuum()
 end
 local hubWindow={Closed=false}
 local savedMouseBehavior,savedMouseIcon
+local cursorBind="BeyyCH2StandaloneCursor_"..tostring(LocalPlayer.UserId)
+local cursorBound=false
+local function unlockMenuCursor()
+    if hubUnloaded or hubWindow.Closed then return end
+    if UserInputService.MouseBehavior~=Enum.MouseBehavior.Default then
+        UserInputService.MouseBehavior=Enum.MouseBehavior.Default
+    end
+    if not UserInputService.MouseIconEnabled then UserInputService.MouseIconEnabled=true end
+end
 function hubWindow:Close()
     self.Closed=true;panel.Visible=false
+    if cursorBound then
+        RunService:UnbindFromRenderStep(cursorBind)
+        cursorBound=false
+    end
     if savedMouseBehavior then UserInputService.MouseBehavior=savedMouseBehavior end
     if savedMouseIcon~=nil then UserInputService.MouseIconEnabled=savedMouseIcon end
     savedMouseBehavior,savedMouseIcon=nil,nil
@@ -98,8 +111,11 @@ function hubWindow:Open()
     if hubUnloaded then return end
     if savedMouseBehavior==nil then savedMouseBehavior=UserInputService.MouseBehavior;savedMouseIcon=UserInputService.MouseIconEnabled end
     self.Closed=false;panel.Visible=true
-    UserInputService.MouseBehavior=Enum.MouseBehavior.Default
-    UserInputService.MouseIconEnabled=true
+    unlockMenuCursor()
+    if not cursorBound then
+        RunService:BindToRenderStep(cursorBind,Enum.RenderPriority.Last.Value+3000,unlockMenuCursor)
+        cursorBound=true
+    end
     releaseVacuum()
 end
 local cleanup

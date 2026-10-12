@@ -395,16 +395,46 @@ do
             or LocalPlayer:GetAttribute("HintViewerOpen")==true
     end
     local function exposedNeedle()
-        local folder=Workspace:FindFirstChild("NeedleObjectiveServer")
-        folder=folder and folder:FindFirstChild("Needle")
-        if not folder then return nil end
-        for _,item in ipairs(folder:GetDescendants()) do
-            if item:IsA("BasePart") and item:GetAttribute("IsNeedleObjective")==true
-                and item:GetAttribute("HIDDEN_WITHIN")==nil
-                and type(item:GetAttribute("HayId"))=="number" then
-                return item
+        local server=Workspace:FindFirstChild("NeedleObjectiveServer")
+        if not server then return nil,"Target search: Workspace.NeedleObjectiveServer is missing (not replicated or a different objective layout)" end
+        local preferred=server:FindFirstChild("Needle")
+        local seen={}
+        local parts,marked,hidden,invalid=0,0,0,0
+        local samples={}
+        local function inspect(item)
+            if seen[item] then return nil end
+            seen[item]=true
+            if not item:IsA("BasePart") then return nil end
+            parts+=1
+            local marker=item:GetAttribute("IsNeedleObjective")
+            local hiding=item:GetAttribute("HIDDEN_WITHIN")
+            local id=item:GetAttribute("HayId")
+            if #samples<3 then
+                table.insert(samples,item.Name..": marker="..tostring(marker)..", hidden="..tostring(hiding)..", HayId="..tostring(id).." ("..type(id)..")")
+            end
+            if marker==true then
+                marked+=1
+                if hiding~=nil then hidden+=1
+                elseif type(id)~="number" then invalid+=1
+                else return item end
             end
         end
+        -- GetDescendants excludes the root itself: Needle may be the actual key part.
+        if preferred then
+            local found=inspect(preferred)
+            if found then return found end
+            for _,item in ipairs(preferred:GetDescendants()) do
+                found=inspect(item)
+                if found then return found end
+            end
+        end
+        -- Keep the same attribute requirements, but allow marked objectives elsewhere in this container.
+        for _,item in ipairs(server:GetDescendants()) do
+            local found=inspect(item)
+            if found then return found end
+        end
+        return nil,string.format("Target search: %d parts, %d objective markers, %d hidden, %d missing/nonnumeric IDs. %s",
+            parts,marked,hidden,invalid,table.concat(samples," | "))
     end
     local needleBusy=false
     local function needlePriority()
@@ -658,11 +688,11 @@ do
             if blocked then
                 setPickupStatus(blocked)
             else
-                local needle=exposedNeedle()
+                local needle,targetReason=exposedNeedle()
                 local root=farmRoot()
                 local camera=Workspace.CurrentCamera
                 if not needle then
-                    setPickupStatus("Waiting for an exposed objective with a numeric HayId")
+                    setPickupStatus(targetReason or "No eligible objective found")
                 elseif not root or not camera then
                     setPickupStatus("Waiting for the character and camera")
                 else

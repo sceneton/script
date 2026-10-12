@@ -1,4 +1,4 @@
--- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.3.0
+-- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.3.1
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local Workspace=game:GetService("Workspace")
@@ -143,6 +143,29 @@ local introReady=false
 local sceneBlocked=false
 local autoPuzzleReady=function() return false end
 local startAutomaticPuzzles=function() end
+local puzzleEnabled=true
+local puzzleGeneration=0
+local setPuzzleEnabled=function() end
+local resetPuzzleStartup=function() end
+local puzzleConfigPath="BeyyHub/ch2_standalone_puzzles.txt"
+local puzzleConfigStatus="Puzzle toggle auto-saves • default ON"
+if type(writefile)~="function" then puzzleConfigStatus="Session only • file saving unavailable" end
+if type(readfile)=="function" then
+    local ok,value=pcall(readfile,puzzleConfigPath)
+    if ok and (value=="0" or value=="1") then
+        puzzleEnabled=value=="1"
+        puzzleConfigStatus="Restored puzzle toggle: "..(puzzleEnabled and "ON" or "OFF")
+    end
+end
+local function savePuzzleToggle()
+    if type(writefile)~="function" then updateStatus("Config","Session only • file saving unavailable") return end
+    if type(makefolder)=="function" then
+        pcall(function() if type(isfolder)~="function" or not isfolder("BeyyHub") then makefolder("BeyyHub") end end)
+    end
+    local ok=pcall(writefile,puzzleConfigPath,puzzleEnabled and "1" or "0")
+    updateStatus("Config",ok and "Saved puzzle toggle: "..(puzzleEnabled and "ON" or "OFF") or "Save failed • session setting still applied")
+end
+
 local introMouseDown=false
 local introClickPoint=Vector2.zero
 local introSavedBehavior,introSavedIcon
@@ -261,6 +284,8 @@ statusRow("Levers")
 statusRow("Number")
 statusRow("Colour")
 statusRow("Picture")
+statusRow("Config")
+updateStatus("Config",puzzleConfigStatus)
 local function stopTools()
     for _,key in ipairs({"TNT","Pitchfork","Drone","Vacuum"}) do toolState[key]=false end
     releaseVacuum()
@@ -1780,6 +1805,7 @@ return solved]===]
             return not hubUnloaded and not allPuzzlesCancel and hubWindow.Closed
         end
         local function runAllPuzzles()
+            if not puzzleEnabled then return end
             if allPuzzlesRunning then allStatus("Already running"); return end
             if not introReady or sceneBlocked then allStatus("Waiting for intro/scene completion before solving") return end
             if objectiveBusy() then allStatus("Key interaction is active; retry after it finishes") return end
@@ -1895,16 +1921,9 @@ return solved]===]
                 pcall(function() hubWindow:Open() end)
             end
         end
-        puzzleTab:Button({
-            Title = "Auto Solve Puzzles",
-            Desc = "Levers, Number+Picture during 6s cutscene, then Colour+Picture; verify completion.",
-            Callback = function()
-                if not allPuzzlesRunning then task.spawn(runAllPuzzles) end
-            end,
-        })
 
         autoPuzzleReady=function()
-            if hubUnloaded or not introReady or sceneBlocked or sharedFarmPuzzleBusy() or objectiveBusy() then return false end
+            if hubUnloaded or not puzzleEnabled or sharedFarmPuzzleBusy() or objectiveBusy() then return false end
             local char=LocalPlayer.Character
             local root=char and char:FindFirstChild("HumanoidRootPart")
             local folder=leverFolder()
@@ -1919,9 +1938,25 @@ return solved]===]
         end
         startAutomaticPuzzles=function()
             if not autoPuzzleReady() then return false end
-            task.spawn(runAllPuzzles)
+            local generation=puzzleGeneration
+            task.spawn(function()
+                if not hubUnloaded and puzzleEnabled and generation==puzzleGeneration then runAllPuzzles() end
+            end)
             return true
         end
+        local puzzleToggle
+        setPuzzleEnabled=function(value)
+            puzzleEnabled=value==true
+            puzzleGeneration+=1
+            resetPuzzleStartup()
+            if not puzzleEnabled then
+                allPuzzlesCancel=true;leverCancelled=true;colourCancel=true;pictureCancelled=true
+                allStatus("Puzzle solver OFF • cancelling active work")
+            end
+            if puzzleToggle then puzzleToggle.Text="Auto Solve Puzzles: "..(puzzleEnabled and "ON" or "OFF") end
+            savePuzzleToggle()
+        end
+        puzzleToggle=button("Auto Solve Puzzles: "..(puzzleEnabled and "ON" or "OFF"),function() setPuzzleEnabled(not puzzleEnabled) end)
 
 end
 statusRow("Startup")
@@ -1931,6 +1966,7 @@ reportTeleport=function(message) updateStatus("Teleport",message) end
 reportTeleport(teleportStatus)
 do
 local started=false
+resetPuzzleStartup=function() started=false end
 local skipButtons=setmetatable({}, {__mode="k"})
 local playerGui=LocalPlayer:FindFirstChildOfClass("PlayerGui")
 local nextScan,nextSkip=0,0
@@ -2047,8 +2083,8 @@ startupTick=function()
         return true
     end
     if started then updateStatus("Cutscene","No intro/outro skip pending");return false end
-    if sharedFarmPuzzleBusy() then started=true;updateStatus("Startup","Puzzle solver started manually");return false end
-    if not hubWindow.Closed then hubWindow:Close() end
+    if sharedFarmPuzzleBusy() then updateStatus("Startup","Waiting for active puzzle workers to finish");return false end
+    if not hubWindow.Closed and (puzzleEnabled or not introReady) then hubWindow:Close() end
     local intro=LocalPlayer:GetAttribute("IntroCutsceneFinished")
     local skip=visibleSkip("intro")
     if skip then
@@ -2070,6 +2106,7 @@ startupTick=function()
     if intro==nil and now-neutralSince<0.25 then return true end
     introReady=true
     updateStatus("Cutscene","Intro clear • controls ready")
+    if not puzzleEnabled then updateStatus("Startup","Puzzle solver OFF • saved setting");return false end
     if autoPuzzleReady() then
         if startAutomaticPuzzles() then started=true;updateStatus("Startup","Intro ready • puzzle sequence launched") end
     else

@@ -5,6 +5,7 @@ local VERSION = "103.00"
 local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/main"
 local CACHE_FOLDER = "BeyyHub"
 local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_tabs3_"
+local REVISION_FILE = CACHE_FOLDER .. "/github_revision.txt"
 
 local MODULES = {
     [77108422251420] = {file="lobby.lua", name="Lobby"},
@@ -32,12 +33,34 @@ pcall(function()
     end
 end)
 
-local moduleCache = CACHE_PREFIX .. target.file
-local source = nil
 local function fetchFresh(url)
     return game:HttpGet(url .. "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000)))
 end
-local url = BASE_RAW_URL .. "/" .. target.file
+local function readCache(path)
+    if type(readfile) ~= "function" then return nil end
+    local ok, value = pcall(readfile, path)
+    return ok and type(value) == "string" and value or nil
+end
+local function validRevision(value)
+    return type(value) == "string" and #value == 40 and value:match("^%x+$") ~= nil
+end
+local previousRevision = readCache(REVISION_FILE)
+if not validRevision(previousRevision) then previousRevision = nil end
+local revision
+local checked, response = pcall(function()
+    local raw = fetchFresh("https://api.github.com/repos/sceneton/script/commits/main")
+    return game:GetService("HttpService"):JSONDecode(raw)
+end)
+if checked and type(response) == "table" and validRevision(response.sha) then revision = response.sha end
+local selectedRevision = revision or previousRevision
+if selectedRevision then CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_" .. selectedRevision .. "_" end
+local downloadBase = selectedRevision and ("https://raw.githubusercontent.com/sceneton/script/" .. selectedRevision) or BASE_RAW_URL
+if not revision then
+    warn("[BeyyHub] Could not check the latest GitHub revision; this run may use an older release")
+end
+local moduleCache = CACHE_PREFIX .. target.file
+local source = nil
+local url = downloadBase .. "/" .. target.file
 local onlineOK, onlineSource = pcall(fetchFresh, url)
 if onlineOK and valid(onlineSource, target.name) then
     source = onlineSource
@@ -54,12 +77,31 @@ if not source then
     return
 end
 
+-- Invalidate old script caches only after the selected revision has a valid module.
+-- Revision-specific paths also prevent stale reuse when deletion is unsupported.
+if revision then
+    if revision ~= previousRevision then
+        if type(delfile) == "function" then
+            local oldPrefixes = {"v103_00_", "v103_00_ui1_", "v103_00_rot2_", "v103_00_tabs3_"}
+            if previousRevision then table.insert(oldPrefixes, "v103_00_" .. previousRevision .. "_") end
+            for _, prefix in ipairs(oldPrefixes) do
+                for _, file in ipairs({"loader.lua", "lobby.lua", "chapter1.lua", "chapter2.lua", "chapter3.lua"}) do
+                    pcall(delfile, CACHE_FOLDER .. "/" .. prefix .. file)
+                end
+            end
+        end
+        print("[BeyyHub] GitHub update detected: " .. revision:sub(1, 7) .. "; old script caches invalidated")
+    end
+    if type(writefile) == "function" then pcall(writefile, REVISION_FILE, revision) end
+end
+print("[BeyyHub] Loading " .. target.name .. " | revision " .. (selectedRevision and selectedRevision:sub(1, 7) or "unverified"))
+
 -- Keep the tiny router available offline for queued teleport reloads.
 -- Only the module for the current place is downloaded and executed.
 local loaderCache = CACHE_PREFIX .. "loader.lua"
 local loaderURL = BASE_RAW_URL .. "/loader.lua"
 if type(writefile) == "function" then
-        local ok, data = pcall(fetchFresh, loaderURL)
+        local ok, data = pcall(fetchFresh, downloadBase .. "/loader.lua")
         if ok and type(data) == "string" and #data > 1500
             and data:find("-- beyy v103.00 | GitHub PlaceId router", 1, true)
             and loadstring(data) then
@@ -85,7 +127,15 @@ if queue then
                 and loadstring(value)
         end
         local ok, value = pcall(function()
-            return game:HttpGet(remoteUrl .. "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000)))
+            local nonce = "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
+            local checked, info = pcall(function()
+                return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.github.com/repos/sceneton/script/commits/main" .. nonce))
+            end)
+            if checked and type(info) == "table" and type(info.sha) == "string"
+                and #info.sha == 40 and info.sha:match("^%%x+$") then
+                remoteUrl = "https://raw.githubusercontent.com/sceneton/script/" .. info.sha .. "/loader.lua"
+            end
+            return game:HttpGet(remoteUrl .. nonce)
         end)
         if ok and validLoader(value) then body = value end
         if not body and type(readfile) == "function" then

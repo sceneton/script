@@ -397,7 +397,8 @@ do
     local function exposedNeedle()
         local server=Workspace:FindFirstChild("NeedleObjectiveServer")
         if not server then return nil,"Target search: Workspace.NeedleObjectiveServer is missing (not replicated or a different objective layout)" end
-        local preferred=server:FindFirstChild("Needle")
+        local keyPart=server:FindFirstChild("Key")
+        local preferred=keyPart or server:FindFirstChild("Needle")
         local seen={}
         local parts,marked,hidden,invalid=0,0,0,0
         local samples={}
@@ -412,14 +413,15 @@ do
             if #samples<3 then
                 table.insert(samples,item.Name..": marker="..tostring(marker)..", hidden="..tostring(hiding)..", HayId="..tostring(id).." ("..type(id)..")")
             end
-            if marker==true then
+            -- The confirmed Chapter 2 Key part need not carry Chapter 1's marker.
+            if marker==true or item==keyPart then
                 marked+=1
                 if hiding~=nil then hidden+=1
                 elseif type(id)~="number" then invalid+=1
                 else return item end
             end
         end
-        -- GetDescendants excludes the root itself: Needle may be the actual key part.
+        -- Prefer the confirmed direct Key part and inspect the root itself.
         if preferred then
             local found=inspect(preferred)
             if found then return found end

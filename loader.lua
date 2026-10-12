@@ -2,10 +2,10 @@
 -- Upload this file and the four chapter modules to the same public GitHub repository.
 -- Change only BASE_RAW_URL to your repository's RAW URL.
 local VERSION = "103.00"
-local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/main"
+local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/feature/native-integrated-hub"
 local CACHE_FOLDER = "BeyyHub"
-local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_tabs3_"
-local REVISION_FILE = CACHE_FOLDER .. "/github_revision.txt"
+local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_native_tabs3_"
+local REVISION_FILE = CACHE_FOLDER .. "/native_github_revision.txt"
 
 local MODULES = {
     [77108422251420] = {file="lobby.lua", name="Lobby"},
@@ -48,12 +48,12 @@ local previousRevision = readCache(REVISION_FILE)
 if not validRevision(previousRevision) then previousRevision = nil end
 local revision
 local checked, response = pcall(function()
-    local raw = fetchFresh("https://api.github.com/repos/sceneton/script/commits/main")
+    local raw = fetchFresh("https://api.github.com/repos/sceneton/script/commits/feature%2Fnative-integrated-hub")
     return game:GetService("HttpService"):JSONDecode(raw)
 end)
 if checked and type(response) == "table" and validRevision(response.sha) then revision = response.sha end
 local selectedRevision = revision or previousRevision
-if selectedRevision then CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_" .. selectedRevision .. "_" end
+if selectedRevision then CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_native_" .. selectedRevision .. "_" end
 local downloadBase = selectedRevision and ("https://raw.githubusercontent.com/sceneton/script/" .. selectedRevision) or BASE_RAW_URL
 if not revision then
     warn("[BeyyHub] Could not check the latest GitHub revision; this run may use an older release")
@@ -82,8 +82,8 @@ end
 if revision then
     if revision ~= previousRevision then
         if type(delfile) == "function" then
-            local oldPrefixes = {"v103_00_", "v103_00_ui1_", "v103_00_rot2_", "v103_00_tabs3_"}
-            if previousRevision then table.insert(oldPrefixes, "v103_00_" .. previousRevision .. "_") end
+            local oldPrefixes = {"v103_00_native_", "v103_00_native_ui1_", "v103_00_native_rot2_", "v103_00_native_tabs3_"}
+            if previousRevision then table.insert(oldPrefixes, "v103_00_native_" .. previousRevision .. "_") end
             for _, prefix in ipairs(oldPrefixes) do
                 for _, file in ipairs({"loader.lua", "lobby.lua", "chapter1.lua", "chapter2.lua", "chapter3.lua"}) do
                     pcall(delfile, CACHE_FOLDER .. "/" .. prefix .. file)
@@ -129,7 +129,7 @@ if queue then
         local ok, value = pcall(function()
             local nonce = "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
             local checked, info = pcall(function()
-                return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.github.com/repos/sceneton/script/commits/main" .. nonce))
+                return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.github.com/repos/sceneton/script/commits/feature%%2Fnative-integrated-hub" .. nonce))
             end)
             if checked and type(info) == "table" and type(info.sha) == "string"
                 and #info.sha == 40 and info.sha:match("^%%x+$") then

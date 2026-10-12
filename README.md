@@ -24,7 +24,7 @@ The router validates module length, version and module markers, and compilation 
 
 Only the selected gameplay module is fetched. On the first run the router may additionally fetch itself for teleport caching. Modules load WindUI separately from its upstream latest release, with a local cache.
 
-When filesystem functions exist, v103.00 modules and the router are cached under BeyyHub/v103_00_tabs3_*.lua. Each run requests a fresh module from GitHub with a unique query parameter, validates it and updates its cache. A validated local cache is used only when the online response is unavailable or invalid. WindUI uses BeyyHub/windui.lua.
+The loader checks GitHub's latest main-branch commit and downloads the current module and router using that exact SHA. Script caches use BeyyHub/v103_00_<commit SHA>_*.lua. After validating a module from a changed revision, it deletes known legacy script caches and the previous revision's five Lua cache files when delfile is available. Revision-specific names prevent stale reuse even without deletion support. Saved config JSON files and WindUI's own cache are not deleted.
 
 Teleport reload is queued when a supported queue function exists; otherwise rerun the loader after changing places. The queued payload requests a fresh router first and falls back to a validated cached router. These environment-provided HTTP, loadstring, filesystem and teleport functions are not a standard Roblox LocalScript interface.
 
@@ -45,3 +45,7 @@ Chapter 1 uses the v101.57 reference four-band sweep at 48 degrees per second: 2
 Every module includes an optional Unskippable Cutscene Bypass under Overview & Settings, saved in named configs. It uses the reference camera/movement controller with generalized CutsceneActive detection and Chapter2ReleaseActive support. It yields to explicit unfinished intros, visible Skip/results UI, the hub menu, and active needle/puzzle automation. Scenes without these replicated attributes cannot be identified automatically. This changes local camera, controls and cutscene overlays only; server timers and progression are unchanged. Turning it off or unloading cleans up its callbacks and restores the camera/HUD. Live compatibility with individual chapter scenes is not yet verified.
 
 Rerun the normal online loader to select the new v103_00_tabs3_ script cache. Saved configs are retained.
+
+## GitHub revision detection
+
+The last validated revision is saved in BeyyHub/github_revision.txt. Console messages report detected updates and the module's loaded revision. If the revision check fails (including network errors or GitHub rate limits), the loader warns that it may use an older release. A failed new-module download cannot fall back to a module from a different detected revision. Teleport reloads also resolve the current commit before fetching the router.

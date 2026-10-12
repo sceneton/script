@@ -216,6 +216,7 @@ do
         Callback = function() pcall(_G.__BEYY_HUB_CLEANUP) end,
     })
 
+    local Registry = {}
     local sharedFarmPuzzleBusy = function() return false end
     local sharedFarmDefaults = {
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
@@ -266,16 +267,18 @@ do
     local shopTab = inventorySection:Tab({ Title = "Shop Items", Icon = "shopping-cart" })
     local upgradesTab = inventorySection:Tab({ Title = "Upgrades", Icon = "trending-up" })
     local function farmToggle(tab, key, title, desc)
-        return tab:Toggle({
+        local element = tab:Toggle({
             Title=title, Desc=desc, Value=sharedFarmState[key],
             Callback=function(enabled)
                 sharedFarmState[key] = enabled == true
                 saveSharedFarmSettings()
             end,
         })
+        Registry[key] = element
+        return element
     end
     local function farmSlider(tab, key, title, low, high, step, desc)
-        return tab:Slider({
+        local element = tab:Slider({
             Title=title, Desc=desc, Step=step,
             Value={Min=low, Max=high, Default=sharedFarmState[key]},
             Callback=function(value)
@@ -283,6 +286,8 @@ do
                 saveSharedFarmSettings()
             end,
         })
+        Registry[key] = element
+        return element
     end
     collectingTab:Section({ Title="Resource Collecting" })
     farmToggle(collectingTab,"AutoPickHay","Auto Pick Hay")
@@ -309,7 +314,7 @@ do
     farmToggle(needleTab,"AutoHandInNeedle","Auto Hand In Needle")
     farmSlider(needleTab,"NeedleInterval","Needle Scan Interval (s)",0.2,3,0.1)
     shopTab:Section({ Title="Purchasing" })
-    shopTab:Dropdown({
+    Registry.BuyToolsList = shopTab:Dropdown({
         Title="Buy Tools Selection",
         Values={"Pitchfork","TNT","Drone","Infinite Bag","Capacity Bag"},
         Value=sharedFarmState.BuyToolsList, Multi=true, AllowNone=true,
@@ -805,11 +810,11 @@ do
         end
         local lobbyState = { AutoFarmWins = readAutoFarmPreference(), ArcadeFarm = false,
             ClassRoller = false, ClassTarget = "The Chosen One", ClassRollInterval = 1.1 }
-        local lobbyTab = hubWindow:Tab({ Title = "Lobby", Icon = "house" })
+        local lobbyTab = overviewTab
         local lobbyToolsTab = hubWindow:Tab({ Title = "Lobby Tools", Icon = "zap" })
         lobbyTab:Section({ Title = "Auto round creation" })
         lobbyTab:Paragraph({ Title = "Chapter 1 farming", Desc = "The lobby creates a Chapter 1 round if Auto Farm Wins is enabled. Farming and Inventory settings are accessible here." })
-        lobbyTab:Toggle({
+        Registry.AutoFarmWins = lobbyTab:Toggle({
             Title = "Auto Farm Wins (shared)", Value = lobbyState.AutoFarmWins,
             Desc = "Used by the lobby round creator and by Chapter 1 after teleport.",
             Callback = function(enabled)
@@ -820,15 +825,15 @@ do
             end,
         })
         lobbyToolsTab:Section({ Title = "Lobby utilities" })
-        lobbyToolsTab:Toggle({ Title = "Arcade Gem Farm", Value = false,
+        Registry.ArcadeFarm = lobbyToolsTab:Toggle({ Title = "Arcade Gem Farm", Value = false,
             Callback = function(enabled) lobbyState.ArcadeFarm = enabled end })
-        lobbyToolsTab:Toggle({ Title = "Auto Class Roller", Value = false,
+        Registry.ClassRoller = lobbyToolsTab:Toggle({ Title = "Auto Class Roller", Value = false,
             Callback = function(enabled) lobbyState.ClassRoller = enabled end })
-        lobbyToolsTab:Dropdown({
+        Registry.ClassTarget = lobbyToolsTab:Dropdown({
             Title = "Target Class", Values = { "The Chosen One", "Ultimate Farmer", "Hoover", "Drone Specialist", "Prospector" },
             Value = "The Chosen One", Callback = function(value) lobbyState.ClassTarget = value end,
         })
-        lobbyToolsTab:Slider({ Title = "Class Roll Interval (s)", Step = 0.1,
+        Registry.ClassRollInterval = lobbyToolsTab:Slider({ Title = "Class Roll Interval (s)", Step = 0.1,
             Value = { Min = 0.5, Max = 3, Default = 1.1 },
             Callback = function(value) lobbyState.ClassRollInterval = tonumber(value) or 1.1 end })
 
@@ -1040,6 +1045,146 @@ end
                 end
             end
         end)
+
+    do
+        local SettingsTab = overviewTab
+        local ConfigManager = hubWindow.ConfigManager
+        local function Header(tab, title) tab:Section({ Title = title }) end
+        local function Notify(title, content, duration, icon)
+            pcall(function() hubWindUI:Notify({ Title=title, Content=content, Duration=duration or 3, Icon=icon }) end)
+        end
+    Header(SettingsTab, "Config")
+    local saveConfigName = "default"
+    local selectedConfigName = nil
+    local configDropdown = nil
+    local EMPTY_CONFIG = "(No saved configs)"
+    local function buildConfig(name)
+        local cfg = ConfigManager:CreateConfig(name)
+        for key, el in pairs(Registry) do cfg:Register(key, el) end
+        -- Preserve settings belonging to other chapters when saving a shared config.
+        local originalSave = cfg.Save
+        function cfg:Save()
+            local previous
+            local raw = safeRead(self.Path)
+            if raw then
+                local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+                if not ok or type(data) ~= "table" then error("Existing config is unreadable; choose a new name") end
+                previous = data
+            end
+            local saved = originalSave(self)
+            if previous then
+                for key, value in pairs(previous.__elements or previous) do
+                    if saved.__elements[key] == nil then saved.__elements[key] = value end
+                end
+                if previous.__custom then saved.__custom = previous.__custom end
+                if previous.__autoload ~= nil then saved.__autoload = previous.__autoload end
+                writefile(self.Path, game:GetService("HttpService"):JSONEncode(saved))
+            end
+            return saved
+        end
+        return cfg
+    end
+    local function getConfigNames()
+        local ok, names = pcall(function() return ConfigManager:AllConfigs() end)
+        if not ok or type(names) ~= "table" then
+            warn("[Config] Unable to list saved configs: ".. tostring(names))
+            return {}
+        end
+        local result, seen = {}, {}
+        for _, name in ipairs(names) do
+            if type(name) == "string" and #name > 0 and not seen[name] then
+                seen[name] = true
+                table.insert(result, name)
+            end
+        end
+        table.sort(result, function(a, b) return a:lower() < b:lower() end)
+        return result
+    end
+    local function containsConfig(list, name)
+        for _, entry in ipairs(list) do if entry == name then return true end end
+        return false
+    end
+    local function refreshConfigDropdown(preferredName)
+        local names = getConfigNames()
+        local chosen = nil
+        if preferredName and containsConfig(names, preferredName) then
+            chosen = preferredName
+        elseif selectedConfigName and containsConfig(names, selectedConfigName) then
+            chosen = selectedConfigName
+        elseif containsConfig(names, "default") then
+            chosen = "default"
+        else
+            chosen = names[1]
+        end
+        selectedConfigName = chosen
+        if configDropdown then
+            local values = #names > 0 and names or { EMPTY_CONFIG }
+            local ok, err = pcall(function()
+                configDropdown:Refresh(values)
+                configDropdown:Select(chosen or EMPTY_CONFIG)
+            end)
+            if not ok then warn("[Config] Dropdown refresh failed: ".. tostring(err)) end
+        end
+        return #names
+    end
+    if ConfigManager then
+        local saved = getConfigNames()
+        local initialConfig = containsConfig(saved, "default") and "default" or saved[1]
+        selectedConfigName = initialConfig
+        configDropdown = SettingsTab:Dropdown({
+            Title = "Select Config to Load",
+            Desc = "Choose from your saved config files",
+            Values = #saved > 0 and saved or { EMPTY_CONFIG },
+            Value = initialConfig or EMPTY_CONFIG,
+            AllowNone = false,
+            Callback = function(value)
+                selectedConfigName = (type(value) == "string" and value ~= EMPTY_CONFIG) and value or nil
+            end,
+        })
+        SettingsTab:Button({
+            Title = "Refresh Config List",
+            Callback = function()
+                local count = refreshConfigDropdown()
+                Notify("Config", "Found ".. tostring(count).. " saved config(s)", 3, "refresh-cw")
+            end,
+        })
+        SettingsTab:Button({
+            Title = "Load Selected Config",
+            Callback = function()
+                local name = selectedConfigName
+                if not name or not containsConfig(getConfigNames(), name) then
+                    Notify("Config", "Select an existing config first", 3, "x")
+                    return
+                end
+                local ok, loaded, err = pcall(function() return buildConfig(name):Load() end)
+                local success = ok and loaded ~= false and loaded ~= nil
+                Notify("Config", success and ("Loaded: ".. name) or ("Failed: ".. tostring(ok and err or loaded)), 3, success and "check" or "x")
+            end,
+        })
+        SettingsTab:Input({
+            Title = "Save Config As", Value = saveConfigName, Placeholder = "default",
+            Callback = function(value)
+                if type(value) == "string" and value:match("%S") then saveConfigName = value end
+            end,
+        })
+        SettingsTab:Button({
+            Title = "Save Config",
+            Callback = function()
+                local name = saveConfigName
+                if not name or not name:match("^[%w_%-%s]+$") then
+                    Notify("Config", "Use letters, numbers, spaces, _ or -", 3, "x")
+                    return
+                end
+                local ok, savedData = pcall(function() return buildConfig(name):Save() end)
+                local success = ok and savedData ~= false and savedData ~= nil
+                if success then refreshConfigDropdown(name) end
+                Notify("Config", success and ("Saved: ".. name) or ("Failed: ".. tostring(savedData)), 3, success and "check" or "x")
+            end,
+        })
+    else
+        SettingsTab:Paragraph({ Title = "Configs unavailable", Desc = "Saving configs requires filesystem support in your environment." })
+    end
+    end
 
     task.defer(function()
         if not hubUnloaded then hideNonFarmMenu() end

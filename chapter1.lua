@@ -1452,7 +1452,7 @@ do
     end)
 end
 
-local MainTab = Window:Tab({ Title = "Main", Icon = "house" })
+local MainTab = Window:Tab({ Title = "Overview & Settings", Icon = "house" })
 local FarmingSection = Window:Section({ Title = "Farming", Icon = "wheat", Opened = true })
 local CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
 local SellingTab = FarmingSection:Tab({ Title = "Selling", Icon = "coins" })
@@ -1462,7 +1462,7 @@ local InventorySection = Window:Section({ Title = "Inventory", Icon = "backpack"
 local ShopTab = InventorySection:Tab({ Title = "Shop Items", Icon = "shopping-cart" })
 local UpgradesTab = InventorySection:Tab({ Title = "Upgrades", Icon = "trending-up" })
 local ExploitTab = Window:Tab({ Title = "Exploit", Icon = "zap" })
-local SettingsTab = Window:Tab({ Title = "Settings", Icon = "settings" })
+local SettingsTab = MainTab
 
 do
     Header(MainTab, "Dashboard")
@@ -1628,6 +1628,27 @@ do
     local function buildConfig(name)
         local cfg = ConfigManager:CreateConfig(name)
         for key, el in pairs(Registry) do cfg:Register(key, el) end
+        -- Preserve settings belonging to other chapters when saving a shared config.
+        local originalSave = cfg.Save
+        function cfg:Save()
+            local previous
+            local raw = safeRead(self.Path)
+            if raw then
+                local ok, data = pcall(function() return game:GetService("HttpService"):JSONDecode(raw) end)
+                if not ok or type(data) ~= "table" then error("Existing config is unreadable; choose a new name") end
+                previous = data
+            end
+            local saved = originalSave(self)
+            if previous then
+                for key, value in pairs(previous.__elements or previous) do
+                    if saved.__elements[key] == nil then saved.__elements[key] = value end
+                end
+                if previous.__custom then saved.__custom = previous.__custom end
+                if previous.__autoload ~= nil then saved.__autoload = previous.__autoload end
+                writefile(self.Path, game:GetService("HttpService"):JSONEncode(saved))
+            end
+            return saved
+        end
         return cfg
     end
     local function getConfigNames()

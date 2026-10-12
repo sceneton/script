@@ -4,7 +4,7 @@
 local VERSION = "103.00"
 local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/main"
 local CACHE_FOLDER = "BeyyHub"
-local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_"
+local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_ui1_"
 
 local MODULES = {
     [77108422251420] = {file="lobby.lua", name="Lobby"},

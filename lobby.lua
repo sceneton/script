@@ -179,6 +179,29 @@ local function createNativeUI()
         local function connect(signal,fn) local c=signal:Connect(fn); table.insert(w.Connections,c); return c end
         connect(gui:GetPropertyChangedSignal("AbsoluteSize"),fit); fit()
         local title=label(root,options.Title or "Beyy Hub",30); title.Position=UDim2.fromOffset(10,0); title.Size=UDim2.new(1,-48,0,30)
+        title.Active=true
+        local dragInput,dragX,dragY,dragPosition
+        connect(title.InputBegan,function(event)
+            if w.Closed or dragInput then return end
+            if event.UserInputType==Enum.UserInputType.MouseButton1 or event.UserInputType==Enum.UserInputType.Touch then
+                dragInput=event; dragX=event.Position.X; dragY=event.Position.Y; dragPosition=root.Position
+            end
+        end)
+        connect(input.InputChanged,function(event)
+            if not dragInput or w.Closed then return end
+            local mouse=dragInput.UserInputType==Enum.UserInputType.MouseButton1
+            if (mouse and event.UserInputType~=Enum.UserInputType.MouseMovement) or (not mouse and event~=dragInput) then return end
+            local viewport=gui.AbsoluteSize
+            local halfWidth,halfHeight=320*scale.Scale,240*scale.Scale
+            local x=dragPosition.X.Scale*viewport.X+dragPosition.X.Offset+event.Position.X-dragX
+            local y=dragPosition.Y.Scale*viewport.Y+dragPosition.Y.Offset+event.Position.Y-dragY
+            x=math.clamp(x,halfWidth,math.max(halfWidth,viewport.X-halfWidth))
+            y=math.clamp(y,halfHeight,math.max(halfHeight,viewport.Y-halfHeight))
+            root.Position=UDim2.new(dragPosition.X.Scale,x-dragPosition.X.Scale*viewport.X,dragPosition.Y.Scale,y-dragPosition.Y.Scale*viewport.Y)
+        end)
+        connect(input.InputEnded,function(event)
+            if event==dragInput or (dragInput and dragInput.UserInputType==Enum.UserInputType.MouseButton1 and event.UserInputType==Enum.UserInputType.MouseButton1) then dragInput=nil end
+        end)
         local close=button(root,"X",UDim2.fromOffset(28,24),UDim2.new(1,-34,0,3))
         local sidebar=node("ScrollingFrame",root,{Position=UDim2.fromOffset(0,34),Size=UDim2.new(0,180,1,-72),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y})
         layout(sidebar)
@@ -199,7 +222,7 @@ local function createNativeUI()
             input.MouseBehavior=previousBehavior; input.MouseIconEnabled=previousIcon
         end
         function w:Open() if self.Destroyed then return end; self.Closed=false; gui.Enabled=true; releaseCursor() end
-        function w:Close() self.Closed=true; gui.Enabled=false; self.Capture=nil; restoreCursor() end
+        function w:Close() self.Closed=true; gui.Enabled=false; self.Capture=nil; dragInput=nil; restoreCursor() end
         function w:SetToggleKey(key) self.ToggleKey=typeof(key)=="EnumItem" and key or Enum.KeyCode[tostring(key)] or Enum.KeyCode.RightControl end
         function w:EditOpenButton() end
         function w:Destroy()

@@ -34,24 +34,24 @@ end)
 
 local moduleCache = CACHE_PREFIX .. target.file
 local source = nil
-local useCache = type(readfile) == "function"
-if useCache then
+local function fetchFresh(url)
+    return game:HttpGet(url .. "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000)))
+end
+local url = BASE_RAW_URL .. "/" .. target.file
+local onlineOK, onlineSource = pcall(fetchFresh, url)
+if onlineOK and valid(onlineSource, target.name) then
+    source = onlineSource
+    if type(writefile) == "function" then pcall(writefile, moduleCache, source) end
+end
+-- Cached modules are an offline fallback, never preferred over a valid update.
+if not source and type(readfile) == "function" then
     local ok, result = pcall(readfile, moduleCache)
     if ok and valid(result, target.name) then source = result end
 end
 
 if not source then
-    local url = BASE_RAW_URL .. "/" .. target.file
-    local ok, result = pcall(function() return game:HttpGet(url) end)
-    if ok and valid(result, target.name) then
-        source = result
-        if type(writefile) == "function" then
-            pcall(writefile, moduleCache, result)
-        end
-    else
-        warn("[BeyyHub] Could not load " .. target.name .. " from " .. url .. "; check raw URL/public repository")
-        return
-    end
+    warn("[BeyyHub] Could not load " .. target.name .. " online or from a valid cache")
+    return
 end
 
 -- Keep the tiny router available offline for queued teleport reloads.
@@ -59,21 +59,12 @@ end
 local loaderCache = CACHE_PREFIX .. "loader.lua"
 local loaderURL = BASE_RAW_URL .. "/loader.lua"
 if type(writefile) == "function" then
-    local cached = nil
-    if type(readfile) == "function" then
-        local ok, data = pcall(readfile, loaderCache)
-        if ok and type(data) == "string" and data:find("-- beyy v103.00 | GitHub PlaceId router", 1, true) then
-            cached = data
-        end
-    end
-    if not cached then
-        local ok, data = pcall(function() return game:HttpGet(loaderURL) end)
+        local ok, data = pcall(fetchFresh, loaderURL)
         if ok and type(data) == "string" and #data > 1500
             and data:find("-- beyy v103.00 | GitHub PlaceId router", 1, true)
             and loadstring(data) then
             pcall(writefile, loaderCache, data)
         end
-    end
 end
 
 local getEnv = (type(getgenv) == "function" and getgenv) or function() return _G end
@@ -88,13 +79,18 @@ if queue then
         local cachePath = %q
         local remoteUrl = %q
         local body
-        if type(readfile) == "function" then
-            local ok, value = pcall(readfile, cachePath)
-            if ok and type(value) == "string" and #value > 1500 then body = value end
+        local function validLoader(value)
+            return type(value) == "string" and #value > 1500
+                and value:find("-- beyy v103.00 | GitHub PlaceId router", 1, true)
+                and loadstring(value)
         end
-        if not body then
-            local ok, value = pcall(function() return game:HttpGet(remoteUrl) end)
-            if ok and type(value) == "string" and #value > 1500 then body = value end
+        local ok, value = pcall(function()
+            return game:HttpGet(remoteUrl .. "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000)))
+        end)
+        if ok and validLoader(value) then body = value end
+        if not body and type(readfile) == "function" then
+            local cachedOK, cached = pcall(readfile, cachePath)
+            if cachedOK and validLoader(cached) then body = cached end
         end
         if body then
             local fn, compileError = loadstring(body)

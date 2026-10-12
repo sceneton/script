@@ -3472,24 +3472,59 @@ task.spawn(function()
     end
 end)
 
+local KILLS_PER_CYCLE  = 6
+local CYCLES_PER_YIELD = 10
+local YIELD_DURATION   = 0.001
+
+local function fastLeave()
+    local sg = LocalPlayer.PlayerGui:FindFirstChild("ArcadeScreen")
+    if sg then sg.Enabled = false end
+
+    pcall(function()
+        LocalPlayer:SetAttribute("ArcadePlaying", nil)
+        LocalPlayer:SetAttribute("NeedleInputLocked", nil)
+    end)
+
+    local char = LocalPlayer.Character
+    if char then
+        local hum = char:FindFirstChildOfClass("Humanoid")
+        if hum then
+            hum.WalkSpeed = 16
+            hum.JumpPower = 50
+        end
+    end
+
+    local cam = workspace.CurrentCamera
+    if cam then cam.CameraType = Enum.CameraType.Custom end
+    pcall(function() ArcadeSession:FireServer("quit", 0, 0) end)
+end
+
+local function arcadeCycle()
+    pcall(function() fireproximityprompt(ArcadePrompt) end)
+    for i = 1, KILLS_PER_CYCLE do
+        pcall(function() ArcadeReport:FireServer("kills", 40, 0) end)
+    end
+    fastLeave()
+end
+
 task.spawn(function()
+    local cycles = 0
     while not Unloaded do
-        task.wait(0.005)
         if IN_GAME then
+
             if State.ArcadeFarm then
                 State.ArcadeFarm = false
                 Notify("Arcade", "Lobby only.", 3, "x")
             end
+            task.wait(0.1)
         elseif State.ArcadeFarm and ArcadePrompt and ArcadeReport then
-            pcall(function()
-                fireproximityprompt(ArcadePrompt)
-                for _ = 1, 20 do
-                    ArcadeReport:FireServer("kills", 40, 0)
-                end
-                if ArcadeSession then
-                    ArcadeSession:FireServer("quit", 0, 0)
-                end
-            end)
+            cycles = cycles + 1
+            arcadeCycle()
+            if cycles % CYCLES_PER_YIELD == 0 then
+                task.wait(YIELD_DURATION)
+            end
+        else
+            task.wait(0.1)
         end
     end
 end)

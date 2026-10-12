@@ -384,7 +384,7 @@ end
             pcall(function() hubWindow:Close() end)
         end
     end
-    task.delay(0.25, hideNonFarmMenu)
+    hideNonFarmMenu()
 
     if BEYY_CHAPTER == "Chapter2" or BEYY_CHAPTER == "Chapter3" then
         hubCursorCleanup = function() hubWindow:Close() end

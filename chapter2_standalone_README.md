@@ -35,7 +35,7 @@ This script closes an already-running Beyy hub before taking camera/mouse contro
 
 ## Minimal config
 
-Only the puzzle toggle is saved, automatically, in `BeyyHub/ch2_standalone_puzzles.txt`. Its entire contents are one byte: `1` for ON or `0` for OFF. The saved value is read on execution, including teleport reloads. A missing or invalid file defaults to ON. No named presets, Save/Load buttons, UI library or extra config settings are used. If filesystem saving is unsupported or a write fails, the Config status reports it and the toggle still applies for the current session.
+Only the puzzle toggle is saved, automatically, in `BeyyHub/ch2_standalone_puzzles.txt`. Its entire contents are one byte: `1` for ON or `0` for OFF. The saved value is read on execution, including teleport reloads. A missing or invalid file defaults to OFF. An existing saved ON value is restored. No named presets, Save/Load buttons, UI library or extra config settings are used. If filesystem saving is unsupported or a write fails, the Config status reports it and the toggle still applies for the current session.
 
 ## Teleport reload
 

@@ -1,4 +1,4 @@
--- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.3.1
+-- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.4.1
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
 local Workspace=game:GetService("Workspace")
@@ -171,6 +171,11 @@ local introClickPoint=Vector2.zero
 local introSavedBehavior,introSavedIcon
 local introCursorBind="BeyyCH2StandaloneIntroCursor_"..tostring(LocalPlayer.UserId)
 local toolState={TNT=true,Pitchfork=false,Drone=true,Vacuum=false,Slot=5}
+local upgradesEnabled=true
+local upgradeTick=function() end
+local cutsceneBypassEnabled=true
+local cutsceneBypassTick=function() end
+local cutsceneBypassCleanup=function() end
 local vacuumHeld=false
 local vacuumPoint=Vector2.zero
 local vacuumEquipKey
@@ -228,6 +233,7 @@ cleanup=function()
     if hubUnloaded then return end
     hubUnloaded=true
     detachTeleport()
+    cutsceneBypassCleanup()
     hubWindow:Close()
     releaseVacuum()
     if objectiveCleanup then pcall(objectiveCleanup) end
@@ -2116,6 +2122,161 @@ startupTick=function()
 end
 
 end
+local bypassToggle
+bypassToggle=button("Unskippable Scene Bypass: ON",function()
+    cutsceneBypassEnabled=not cutsceneBypassEnabled
+    bypassToggle.Text="Unskippable Scene Bypass: "..(cutsceneBypassEnabled and "ON" or "OFF")
+    if not cutsceneBypassEnabled then cutsceneBypassCleanup() end
+end)
+statusRow("Bypass")
+do
+local bindName="BeyyCH2StandaloneUnskippable_"..LocalPlayer.UserId
+local active=false
+local camera,humanoid,root
+local savedType,savedSubject,savedCF,savedRotate,savedMouse,savedIcon
+local walkSpeed,jumpPower=16,50
+local yaw,pitch,distance=0,-0.15,0.6
+local normalYaw,normalPitch,normalDistance
+local controls
+local hiddenParts={}
+local masked={}
+local nextMask=0
+local function yieldToInteraction()
+    return hubUnloaded or not cutsceneBypassEnabled or not hubWindow.Closed or sceneBlocked
+        or sharedFarmPuzzleBusy() or objectiveBusy()
+end
+local function flaggedScene()
+    return LocalPlayer:GetAttribute("IntroCutsceneFinished")==true
+        and (LocalPlayer:GetAttribute("CutsceneActive")==true or LocalPlayer:GetAttribute("Chapter2ReleaseActive")==true)
+end
+local function restore()
+    if not active then return end
+    active=false
+    RunService:UnbindFromRenderStep(bindName)
+    pcall(function()
+        if camera and camera.Parent then
+            camera.CameraType=flaggedScene() and savedType or Enum.CameraType.Custom
+            camera.CameraSubject=(humanoid and humanoid.Parent and humanoid) or savedSubject
+            if flaggedScene() then camera.CFrame=savedCF end
+        end
+        if humanoid and humanoid.Parent then humanoid.AutoRotate=savedRotate end
+        if savedMouse then UserInputService.MouseBehavior=hubWindow.Closed and savedMouse or Enum.MouseBehavior.Default end
+        if savedIcon~=nil then
+            if hubWindow.Closed then UserInputService.MouseIconEnabled=savedIcon else UserInputService.MouseIconEnabled=true end
+        end
+    end)
+    for part,value in pairs(hiddenParts) do pcall(function() if part.Parent then part.LocalTransparencyModifier=value end end) end
+    for item,props in pairs(masked) do pcall(function() if item.Parent then for key,value in pairs(props) do item[key]=value end end end) end
+    hiddenParts={};masked={}
+end
+cutsceneBypassCleanup=restore
+local function maskOverlays()
+    local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    if not pg then return end
+    local function mask(item,key)
+        local value=item[key]
+        if type(value)~="number" or value>=1 then return end
+        local saved=masked[item]
+        if not saved then saved={};masked[item]=saved end
+        if saved[key]==nil then saved[key]=value end
+        item[key]=1
+    end
+    for _,gui in ipairs(pg:GetChildren()) do
+        local name=gui.Name:lower()
+        if gui:IsA("ScreenGui") and not name:find("intro",1,true) and not name:find("ending",1,true)
+            and not name:find("needle",1,true) and not name:find("results",1,true)
+            and (name:find("cutscene",1,true) or name:find("cinematic",1,true) or name:find("chapter2release",1,true)) then
+            for _,item in ipairs(gui:GetDescendants()) do
+                if item:IsA("GuiObject") then
+                    mask(item,"BackgroundTransparency")
+                    if item:IsA("TextLabel") or item:IsA("TextButton") then mask(item,"TextTransparency");mask(item,"TextStrokeTransparency") end
+                    if item:IsA("ImageLabel") or item:IsA("ImageButton") then mask(item,"ImageTransparency") end
+                elseif item:IsA("UIStroke") then mask(item,"Transparency") end
+            end
+        end
+    end
+end
+local function render()
+    if not active or yieldToInteraction() or not flaggedScene() then return end
+    if Workspace.CurrentCamera~=camera or not root.Parent or not humanoid.Parent then return end
+    local ok,err=pcall(function()
+        if humanoid.WalkSpeed<=0 then humanoid.WalkSpeed=walkSpeed end
+        if humanoid.JumpPower<=0 then humanoid.JumpPower=jumpPower end
+        humanoid.PlatformStand=false;humanoid.Sit=false
+        if controls and controls.enabled==false then controls:Enable() end
+        if UserInputService:GetFocusedTextBox() then return end
+        UserInputService.MouseBehavior=Enum.MouseBehavior.LockCenter
+        local delta=UserInputService:GetMouseDelta()
+        yaw-=delta.X*0.004
+        pitch=math.clamp(pitch-delta.Y*0.004,-1,0.85)
+        local look=Vector3.new(math.sin(yaw)*math.cos(pitch),math.sin(pitch),math.cos(yaw)*math.cos(pitch))
+        local character=LocalPlayer.Character
+        local head=character and character:FindFirstChild("Head")
+        local eye=head and head.Position or root.Position+Vector3.new(0,1.6,0)
+        if distance<2.5 and head then
+            if hiddenParts[head]==nil then hiddenParts[head]=head.LocalTransparencyModifier end
+            head.LocalTransparencyModifier=1
+        end
+        local position=distance<2.5 and eye or eye-look*distance
+        camera.CameraType=Enum.CameraType.Scriptable
+        camera.CameraSubject=humanoid
+        camera.CFrame=CFrame.lookAt(position,position+look*8,Vector3.yAxis)
+        local function down(key) return UserInputService:IsKeyDown(key) end
+        local x=(down(Enum.KeyCode.D) and 1 or 0)-(down(Enum.KeyCode.A) and 1 or 0)
+        local z=(down(Enum.KeyCode.W) and 1 or 0)-(down(Enum.KeyCode.S) and 1 or 0)
+        if x~=0 or z~=0 then
+            local forward=Vector3.new(math.sin(yaw),0,math.cos(yaw))
+            local motion=forward*z+Vector3.new(-forward.Z,0,forward.X)*x
+            if motion.Magnitude>1 then motion=motion.Unit end
+            humanoid:Move(motion,false)
+        end
+        if down(Enum.KeyCode.Space) then humanoid.Jump=true end
+    end)
+    if not ok then updateStatus("Bypass","Control override failed: "..tostring(err)) end
+end
+cutsceneBypassTick=function()
+    if active and (Workspace.CurrentCamera~=camera or not root.Parent or not humanoid.Parent) then restore() end
+    if yieldToInteraction() or not flaggedScene() then
+        restore()
+        updateStatus("Bypass",cutsceneBypassEnabled and "Waiting for an unskippable scene" or "OFF")
+        local char=LocalPlayer.Character
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local cam=Workspace.CurrentCamera
+        local rt=char and char:FindFirstChild("HumanoidRootPart")
+        if not flaggedScene() and hum then
+            if hum.WalkSpeed>0 then walkSpeed=hum.WalkSpeed end
+            if hum.JumpPower>0 then jumpPower=hum.JumpPower end
+            if cam and rt and cam.CameraType==Enum.CameraType.Custom then
+                local look=cam.CFrame.LookVector
+                normalYaw=math.atan2(look.X,look.Z);normalPitch=math.asin(math.clamp(look.Y,-0.97,0.97))
+                local head=char:FindFirstChild("Head")
+                normalDistance=(cam.CFrame.Position-(head and head.Position or rt.Position+Vector3.new(0,1.6,0))).Magnitude
+            end
+        end
+        return
+    end
+    if not active then
+        local char=LocalPlayer.Character
+        root=char and char:FindFirstChild("HumanoidRootPart")
+        humanoid=char and char:FindFirstChildOfClass("Humanoid")
+        camera=Workspace.CurrentCamera
+        if not root or not humanoid or not camera then return end
+        savedType,savedSubject,savedCF=camera.CameraType,camera.CameraSubject,camera.CFrame
+        savedRotate=humanoid.AutoRotate;savedMouse=UserInputService.MouseBehavior;savedIcon=UserInputService.MouseIconEnabled
+        yaw=normalYaw or math.atan2(root.CFrame.LookVector.X,root.CFrame.LookVector.Z)
+        pitch=normalPitch or -0.15;distance=math.clamp(normalDistance or 0.6,0,22)
+        local ps=LocalPlayer:FindFirstChild("PlayerScripts")
+        local pm=ps and ps:FindFirstChild("PlayerModule")
+        if pm then local ok,value=pcall(require,pm);if ok then local got,c=pcall(function() return value:GetControls() end);if got then controls=c end end end
+        active=true
+        RunService:BindToRenderStep(bindName,Enum.RenderPriority.Last.Value+2000,render)
+    end
+    local now=os.clock()
+    if now>=nextMask then nextMask=now+0.5;pcall(maskOverlays) end
+    updateStatus("Bypass","Local camera/movement active • server timer still applies")
+end
+
+end
 row("TextLabel",{BackgroundTransparency=1,Text="Key objective",TextSize=12})
 row("TextLabel",{BackgroundTransparency=1,Text="Auto Pick Up Key: ALWAYS ON",TextSize=12})
 row("TextLabel",{BackgroundTransparency=1,Text="Auto Turn In Key: ALWAYS ON",TextSize=12})
@@ -2442,6 +2603,75 @@ slotButton=button("Vacuum slot: 5 (click to cycle)",function()
 end)
 statusRow("Tools")
 statusRow("Drone")
+local upgradeToggle
+upgradeToggle=button("Auto Selected Upgrades: ON",function()
+    upgradesEnabled=not upgradesEnabled
+    upgradeToggle.Text="Auto Selected Upgrades: "..(upgradesEnabled and "ON" or "OFF")
+end)
+row("TextLabel",{BackgroundTransparency=1,Text="Vacuum: power + cooling • TNT: speed + power",TextSize=11})
+statusRow("Upgrades")
+do
+local selectedTracks={"VacuumPower","VacuumCooling","TntCooldown","TntPower"}
+local trackLabels={VacuumPower="Vacuum power",VacuumCooling="Vacuum cooling",TntCooldown="TNT speed",TntPower="TNT power"}
+local config,configModule
+local pending={}
+local nextCheck=0
+local cursor=1
+upgradeTick=function()
+    if hubUnloaded then return end
+    if not upgradesEnabled then updateStatus("Upgrades","OFF") return end
+    local now=os.clock()
+    if now<nextCheck then return end
+    nextCheck=now+0.75
+    local folder=ReplicatedStorage:FindFirstChild("NeedleHaystack")
+    local module=folder and folder:FindFirstChild("Config")
+    local buy=folder and folder:FindFirstChild("BuyUpgrade")
+    if not module or not buy or not buy:IsA("RemoteEvent") then updateStatus("Upgrades","Waiting for upgrade config/remote") return end
+    if configModule~=module or not config then
+        local ok,result=pcall(require,module)
+        if not ok or type(result)~="table" or type(result.UPGRADE_TRACKS)~="table" then updateStatus("Upgrades","Upgrade config unavailable") return end
+        config,configModule=result,module
+    end
+    local stats=LocalPlayer:FindFirstChild("leaderstats")
+    local cashValue=stats and stats:FindFirstChild("Cash")
+    local cash=cashValue and tonumber(cashValue.Value) or 0
+    local complete,waiting,missing=0,false,false
+    for offset=0,#selectedTracks-1 do
+        local index=(cursor+offset-1)%#selectedTracks+1
+        local name=selectedTracks[index]
+        local track=config.UPGRADE_TRACKS[name]
+        local levels=track and track.Levels
+        if type(levels)~="table" then missing=true
+        else
+            local level=tonumber(LocalPlayer:GetAttribute("HayUpgrade"..name)) or 1
+            if level>=#levels then complete+=1;pending[name]=nil
+            else
+                local request=pending[name]
+                if request and level~=request.level then pending[name]=nil;request=nil end
+                if request and now-request.at<3 then waiting=true
+                else
+                    local nextLevel=levels[level+1]
+                    local cost=nextLevel and tonumber(nextLevel.Cost)
+                    if cost and cost>=0 and cash>=cost then
+                        local ok=pcall(buy.FireServer,buy,name)
+                        if ok then
+                            pending[name]={level=level,at=now}
+                            cursor=index%#selectedTracks+1
+                            updateStatus("Upgrades",trackLabels[name].." → L"..(level+1).." ($"..cost..") • awaiting confirmation")
+                        else updateStatus("Upgrades","Purchase request failed; will retry") end
+                        return
+                    end
+                end
+            end
+        end
+    end
+    updateStatus("Upgrades",complete==#selectedTracks and "Selected tracks are maxed"
+        or waiting and "Waiting for upgrade confirmation"
+        or missing and "Some selected upgrade tracks are unavailable"
+        or "Waiting for enough cash")
+end
+
+end
 button("Stop tools",function()
     stopTools()
     for key,item in pairs(toggleButtons) do item.Text=key..": OFF" end
@@ -2538,6 +2768,8 @@ task.spawn(function()
         task.wait((enabled or keyEnabled) and 0.08 or 0.5)
         if hubUnloaded then break end
         tryDeployDrone()
+        upgradeTick()
+        cutsceneBypassTick()
         local startupWaiting=startupTick()
         if hubUnloaded then break end
         if startupWaiting then

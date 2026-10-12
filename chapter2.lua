@@ -663,8 +663,11 @@ do
                     end
                     local ok,err=xpcall(function()
                         local id=needle:GetAttribute("HayId")
-                        local spot=needle.Position+Vector3.new(2,2.5,0)
+                        -- Land beside the needle while keeping the character clear of the ground.
+                        local spot=needle.Position+Vector3.new(1,2.5,0)
                         root.CFrame=CFrame.lookAt(spot,needle.Position)
+                        root.AssemblyLinearVelocity=Vector3.zero
+                        root.AssemblyAngularVelocity=Vector3.zero
                         camera.CameraType=Enum.CameraType.Scriptable
                         local cameraSpot=spot+Vector3.new(0,0,0.5)
                         camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)

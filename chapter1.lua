@@ -131,7 +131,7 @@ local function createPitchforkSelector(allowModels, preferHovered, options)
             if not alive or folder~=scanFolder or not scanFolder.Parent then return nil end
             local obj=slots[index]
             if obj and obj.Parent==scanFolder then
-                local part=obj:IsA("BasePart") and obj or (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart",options.Recursive~=false))
+                local part=obj:IsA("BasePart") and obj or ((obj:IsA("Model") and obj.PrimaryPart) or obj:FindFirstChildWhichIsA("BasePart",options.Recursive~=false))
                 if part then
                     local id=targetId(part,obj)
                     if id then

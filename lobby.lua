@@ -198,6 +198,7 @@ do
     end
 
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
+    local lobbyToolsTab = hubWindow:Tab({ Title = "Lobby Tools", Icon = "zap" })
     overviewTab:Section({ Title = "Detected chapter" })
     overviewTab:Paragraph({
         Title = BEYY_CHAPTER .. " (Place ID " .. tostring(game.PlaceId) .. ")",
@@ -811,7 +812,6 @@ do
         local lobbyState = { AutoFarmWins = readAutoFarmPreference(), ArcadeFarm = false,
             ClassRoller = false, ClassTarget = "The Chosen One", ClassRollInterval = 1.1 }
         local lobbyTab = overviewTab
-        local lobbyToolsTab = hubWindow:Tab({ Title = "Lobby Tools", Icon = "zap" })
         lobbyTab:Section({ Title = "Auto round creation" })
         lobbyTab:Paragraph({ Title = "Chapter 1 farming", Desc = "The lobby creates a Chapter 1 round if Auto Farm Wins is enabled. Farming and Inventory settings are accessible here." })
         Registry.AutoFarmWins = lobbyTab:Toggle({

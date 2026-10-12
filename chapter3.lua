@@ -61,7 +61,15 @@ end
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
 -- Pitchfork-only targeting: maintain child slots and budget large searches.
-local function createPitchforkSelector(allowModels, preferHovered)
+local function createPitchforkSelector(allowModels, preferHovered, options)
+    options=options or {}
+    local folderName=options.FolderName or "HaystackClient"
+    local idName=options.IdName or "HayId"
+    local range=options.Range or 30
+    local function targetId(part,obj)
+        if options.ObjectId then return obj end
+        return part:GetAttribute(idName) or (allowModels and not options.PartIdOnly and obj:GetAttribute(idName))
+    end
     local alive, folder = true, nil
     local slots, positions, freeSlots, connections = {}, {}, {}, {}
     local slotCount = 0
@@ -72,7 +80,7 @@ local function createPitchforkSelector(allowModels, preferHovered)
         slotCount=0; lastTarget=nil; lastTargetTime=nil
     end
     local function add(obj)
-        if positions[obj] or not (obj:IsA("BasePart") or (allowModels and obj:IsA("Model"))) then return end
+        if positions[obj] or not (obj:IsA("BasePart") or (allowModels and (obj:IsA("Model") or options.AllowContainers))) then return end
         local index=table.remove(freeSlots)
         if not index then slotCount+=1; index=slotCount end
         slots[index]=obj; positions[obj]=index
@@ -102,7 +110,7 @@ local function createPitchforkSelector(allowModels, preferHovered)
     end
     local function selectTarget(isAllowed, cacheSeconds)
         if not alive or not isAllowed() then return nil end
-        local current=Workspace:FindFirstChild("HaystackClient")
+        local current=Workspace:FindFirstChild(folderName)
         watchFolder(current)
         if not alive or not isAllowed() then return nil end
         local character=LocalPlayer.Character
@@ -111,10 +119,10 @@ local function createPitchforkSelector(allowModels, preferHovered)
         local hovered=preferHovered and LocalPlayer:GetAttribute("HoveredHayId") or nil
         if lastTarget and lastTarget.Parent and lastTarget:IsDescendantOf(folder)
             and os.clock()-(lastTargetTime or 0)<(cacheSeconds or 0)
-            and lastTarget:GetAttribute("HayId") then return lastTarget,lastTarget:GetAttribute("HayId") end
+            and not options.ObjectId and lastTarget:GetAttribute(idName) then return lastTarget,lastTarget:GetAttribute(idName) end
         local best,bestId,hoveredPart,hoveredId=nil,nil,nil,nil
         local bestObject,hoveredObject
-        local bestDistance=30*30
+        local bestDistance=range*range
         local sliceStarted=os.clock()
         local origin=root.Position
         local scanFolder=folder
@@ -123,9 +131,9 @@ local function createPitchforkSelector(allowModels, preferHovered)
             if not alive or folder~=scanFolder or not scanFolder.Parent then return nil end
             local obj=slots[index]
             if obj and obj.Parent==scanFolder then
-                local part=obj:IsA("BasePart") and obj or (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart",true))
+                local part=obj:IsA("BasePart") and obj or (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart",options.Recursive~=false))
                 if part then
-                    local id=part:GetAttribute("HayId") or (allowModels and obj:GetAttribute("HayId"))
+                    local id=targetId(part,obj)
                     if id then
                         if hovered and id==hovered then hoveredPart,hoveredId,hoveredObject=part,id,obj end
                         local delta=part.Position-origin
@@ -144,17 +152,30 @@ local function createPitchforkSelector(allowModels, preferHovered)
         best,bestId=hoveredPart or best,hoveredId or bestId
         bestObject=hoveredObject or bestObject
         if not best or not best.Parent or not best:IsDescendantOf(scanFolder) then return nil end
-        if not alive or not isAllowed() or Workspace:FindFirstChild("HaystackClient")~=scanFolder
+        if not alive or not isAllowed() or Workspace:FindFirstChild(folderName)~=scanFolder
             or LocalPlayer.Character~=character then return nil end
         -- Recheck range after any yield; hovered selection keeps Chapter 1's rules.
         local delta=best.Position-root.Position
-        if not hoveredPart and delta:Dot(delta)>=30*30 then return nil end
+        if not hoveredPart and delta:Dot(delta)>=range*range then return nil end
         lastTarget,lastTargetTime=best,os.clock()
-        local currentId=best:GetAttribute("HayId") or (allowModels and bestObject and bestObject:GetAttribute("HayId"))
+        local currentId=targetId(best,bestObject)
         if not currentId then lastTarget=nil; return nil end
-        return best,currentId
+        return options.ReturnObject and bestObject or best,currentId
     end
     return selectTarget,stop
+end
+local function budgetedFolderChildren(folder,isAllowed,descendants)
+    local children=descendants and folder:GetDescendants() or folder:GetChildren()
+    local index,started=0,os.clock()
+    return function()
+        if not folder.Parent or not isAllowed() then return nil end
+        index+=1
+        local obj=children[index]
+        if not obj then return nil end
+        if index%32==0 and os.clock()-started>=0.002 then task.wait(); started=os.clock() end
+        if not folder.Parent or not isAllowed() then return nil end
+        return index,obj
+    end
 end
 
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
@@ -798,21 +819,20 @@ end
         end
         return sharedFarmState.AutoPickupNeedle and exposedNeedle()~=nil
     end
+    local collectSelectors={}
+    local previousCollectCleanup=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        for _,entry in pairs(collectSelectors) do entry.Stop() end
+        if previousCollectCleanup then previousCollectCleanup() end
+    end
     local function closestInFolder(folderName,idName,limit)
-        local folder=Workspace:FindFirstChild(folderName)
-        local root=farmRoot()
-        if not folder or not root then return nil,nil end
-        local best,bestId,dist=nil,nil,limit
-        for _,obj in ipairs(folder:GetChildren()) do
-            local part=obj:IsA("BasePart") and obj or (obj:IsA("Model") and (obj.PrimaryPart or obj:FindFirstChildWhichIsA("BasePart",true)))
-            if part then
-                local id=part:GetAttribute(idName) or obj:GetAttribute(idName)
-                if idName=="Dropped" then id=obj end
-                local d=(part.Position-root.Position).Magnitude
-                if id and d<dist then best,bestId,dist=part,id,d end
-            end
+        local key=folderName..":"..idName
+        local entry=collectSelectors[key]
+        if not entry then
+            local selectTarget,stop=createPitchforkSelector(true,false,{FolderName=folderName,IdName=idName,Range=limit,ObjectId=idName=="Dropped"})
+            entry={Select=selectTarget,Stop=stop};collectSelectors[key]=entry
         end
-        return best,bestId
+        return entry.Select(function() return not hubUnloaded and not farmBlocked() and not needlePriority() end)
     end
     local function bagFull()
         return (tonumber(LocalPlayer:GetAttribute("HayHeld")) or 0)
@@ -825,13 +845,13 @@ end
                 and needleFolder and not farmBlocked() and not needlePriority() then
                 if (sharedFarmState.AutoPickHay or (sharedFarmState.AutoFindNeedle and not exposedNeedle())) and not bagFull() then
                     local hay,id=closestInFolder("HaystackClient","HayId",30)
-                    if id then
+                    if id and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) and not farmBlocked() and not needlePriority() then
                         local nearby={}
                         local radius=tonumber(LocalPlayer:GetAttribute("HayGrabRadius")) or 0
                         if radius>0 and hay then
                             local folder=Workspace:FindFirstChild("HaystackClient")
                             if folder then
-                                for _,other in ipairs(folder:GetChildren()) do
+                                for _,other in budgetedFolderChildren(folder,function() return not hubUnloaded and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) end) do
                                     if other~=hay and other:IsA("BasePart")
                                         and other:GetAttribute("HayId")
                                         and (other.Position-hay.Position).Magnitude<=radius+1 then
@@ -841,16 +861,16 @@ end
                                 end
                             end
                         end
-                        sendFarmRemote("PickHay",id,nearby)
+                        if hay and hay.Parent and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) and not farmBlocked() and not needlePriority() then sendFarmRemote("PickHay",id,nearby) end
                     end
                 end
                 if sharedFarmState.AutoCollectDroppedHay and not bagFull() then
                     local _,d=closestInFolder("DroppedHay","Dropped",28)
-                    if d then sendFarmRemote("PickDroppedHay",d) end
+                    if d and sharedFarmState.AutoCollectDroppedHay and not farmBlocked() and not needlePriority() then sendFarmRemote("PickDroppedHay",d) end
                 end
                 if sharedFarmState.AutoCollectGems then
                     local _,id=closestInFolder("GemsClient","GemId",35)
-                    if id then sendFarmRemote("CollectGem",id) end
+                    if id and sharedFarmState.AutoCollectGems and not farmBlocked() and not needlePriority() then sendFarmRemote("CollectGem",id) end
                 end
             end
         end

@@ -528,11 +528,11 @@ local function closeMenuOnStartup()
         warn("[BeyyHub] Startup close failed: " .. tostring(err))
         return false
     end
-    print("[BeyyHub] Entire menu minimized after startup pause (RightControl to reopen)")
+    print("[BeyyHub] Entire menu minimized immediately (RightControl to reopen)")
     return true
 end
 
-task.delay(0.25, closeMenuOnStartup)
+closeMenuOnStartup()
 local menuCursorCleanup = function() Window:Destroy() end
 local previousMenuCleanup = _G.__BEYY_HUB_CLEANUP
 _G.__BEYY_HUB_CLEANUP = function()

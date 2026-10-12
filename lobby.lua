@@ -197,6 +197,7 @@ do
         hubCursorCleanup = installMenuCursorRelease(hubWindow, function() return not hubUnloaded end)
     end
 
+    local Registry = {}
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     local lobbyToolsTab = hubWindow:Tab({ Title = "Lobby Tools", Icon = "zap" })
     overviewTab:Section({ Title = "Detected chapter" })
@@ -205,7 +206,7 @@ do
         Desc = "Farming and Inventory are available in every chapter. Right Ctrl opens or closes the menu.",
     })
     overviewTab:Section({ Title = "Shared menu" })
-    overviewTab:Keybind({
+    Registry.MenuKeybind = overviewTab:Keybind({
         Title = "Menu keybind", Value = "RightControl",
         Callback = function(value)
             local key = typeof(value) == "EnumItem" and value or Enum.KeyCode[value]
@@ -217,7 +218,6 @@ do
         Callback = function() pcall(_G.__BEYY_HUB_CLEANUP) end,
     })
 
-    local Registry = {}
     local sharedFarmPuzzleBusy = function() return false end
     local sharedFarmDefaults = {
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
@@ -1820,7 +1820,16 @@ end
             pcall(function() hubWindUI:Notify({ Title=title, Content=content, Duration=duration or 3, Icon=icon }) end)
         end
     Header(SettingsTab, "Config")
-    local saveConfigName = "default"
+    SettingsTab:Paragraph({ Title = "Shared configs", Desc = "The last successfully loaded or saved config loads on startup in every chapter. If none is remembered, default is used when available." })
+    local activeConfigPath = CACHE_FOLDER .. "/active_config.txt"
+    local rememberedConfig = safeRead(activeConfigPath)
+    if type(rememberedConfig) ~= "string" or not rememberedConfig:match("^[%w_%-%s]+$") then rememberedConfig = nil end
+    local function rememberConfig(name)
+        if not safeWrite(activeConfigPath, name) then
+            Notify("Config", "Loaded/saved, but could not remember the startup config", 4, "x")
+        end
+    end
+    local saveConfigName = rememberedConfig or "default"
     local selectedConfigName = nil
     local configDropdown = nil
     local EMPTY_CONFIG = "(No saved configs)"
@@ -1895,7 +1904,9 @@ end
     end
     if ConfigManager then
         local saved = getConfigNames()
-        local initialConfig = containsConfig(saved, "default") and "default" or saved[1]
+        local startupConfig = rememberedConfig and containsConfig(saved, rememberedConfig) and rememberedConfig
+            or (containsConfig(saved, "default") and "default" or nil)
+        local initialConfig = startupConfig or saved[1]
         selectedConfigName = initialConfig
         configDropdown = SettingsTab:Dropdown({
             Title = "Select Config to Load",
@@ -1924,6 +1935,7 @@ end
                 end
                 local ok, loaded, err = pcall(function() return buildConfig(name):Load() end)
                 local success = ok and loaded ~= false and loaded ~= nil
+                if success then rememberConfig(name) end
                 Notify("Config", success and ("Loaded: ".. name) or ("Failed: ".. tostring(ok and err or loaded)), 3, success and "check" or "x")
             end,
         })
@@ -1943,10 +1955,17 @@ end
                 end
                 local ok, savedData = pcall(function() return buildConfig(name):Save() end)
                 local success = ok and savedData ~= false and savedData ~= nil
-                if success then refreshConfigDropdown(name) end
+                if success then refreshConfigDropdown(name); rememberConfig(name) end
                 Notify("Config", success and ("Saved: ".. name) or ("Failed: ".. tostring(savedData)), 3, success and "check" or "x")
             end,
         })
+        task.defer(function()
+            if hubUnloaded or not startupConfig then return end
+            local ok, loaded, err = pcall(function() return buildConfig(startupConfig):Load() end)
+            local success = ok and loaded ~= false and loaded ~= nil
+            Notify("Config", success and ("Auto-loaded: " .. startupConfig)
+                or ("Auto-load failed: " .. tostring(ok and err or loaded)), 3, success and "check" or "x")
+        end)
     else
         SettingsTab:Paragraph({ Title = "Configs unavailable", Desc = "Saving configs requires filesystem support in your environment." })
     end

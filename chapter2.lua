@@ -677,7 +677,39 @@ do
                     local mouseDown=false
                     local moved=false
                     local cameraCaptured=false
+                    local collected=false
+                    local ownershipConnection
+                    local filteredParts={}
+                    local function captureOwnership()
+                        collected=collected or LocalPlayer:GetAttribute("NeedleOwned")==true
+                        return collected
+                    end
+                    local function filterNearbyHay()
+                        -- Match Chapter 1's local click-obstruction workaround, with full restoration.
+                        local count=0
+                        for _,folderName in ipairs({"HaystackClient","HaystackCollision"}) do
+                            local folder=Workspace:FindFirstChild(folderName)
+                            if folder then
+                                for _,part in ipairs(folder:GetDescendants()) do
+                                    if count>=400 then break end
+                                    if part:IsA("BasePart") and part~=needle
+                                        and part:GetAttribute("IsNeedleObjective")~=true
+                                        and not filteredParts[part] and part.CanQuery
+                                        and (part.Position-needle.Position).Magnitude<=8+math.min(part.Size.Magnitude*0.5,4) then
+                                        local saved={query=part.CanQuery,collide=part.CanCollide}
+                                        filteredParts[part]=saved
+                                        pcall(function() part.CanCollide=false; part.CanQuery=false end)
+                                        count+=1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    local cleaned=false
                     local function clear()
+                        if cleaned then return end
+                        cleaned=true
+                        captureOwnership()
                         if mouseDown then
                             mouseDown=false
                             local center=camera.ViewportSize/2
@@ -692,11 +724,19 @@ do
                                 camera.CFrame=previousCameraCF
                             end)
                         end
-                        if moved and root and root.Parent then pcall(function() root.CFrame=previousRoot end) end
+                        if ownershipConnection then ownershipConnection:Disconnect() end
+                        for part,saved in pairs(filteredParts) do
+                            pcall(function()
+                                if part.Parent then part.CanCollide=saved.collide; part.CanQuery=saved.query end
+                            end)
+                        end
+                        -- Keep a confirmed pickup beside the objective for the hand-in routine.
+                        if moved and not collected and root and root.Parent then pcall(function() root.CFrame=previousRoot end) end
                         pcall(function() LocalPlayer:SetAttribute("HoveredHayId",previousHover) end)
                         needleBusy=false
                     end
                     local ok,err=xpcall(function()
+                        ownershipConnection=LocalPlayer:GetAttributeChangedSignal("NeedleOwned"):Connect(captureOwnership)
                         -- Puzzle automation may reopen the hub. Hide it before sending gameplay clicks.
                         if hubWindow.Closed~=true then
                             setPickupStatus("Closing the menu for key pickup")
@@ -717,45 +757,72 @@ do
                         cameraCaptured=true
                         setPickupStatus("Teleporting beside the key / needle")
                         local id=needle:GetAttribute("HayId")
-                        -- Land beside the needle while keeping the character clear of the ground.
-                        local spot=needle.Position+Vector3.new(1,2.5,0)
-                        root.CFrame=CFrame.lookAt(spot,needle.Position)
-                        moved=true
-                        root.AssemblyLinearVelocity=Vector3.zero
-                        root.AssemblyAngularVelocity=Vector3.zero
-                        camera.CameraType=Enum.CameraType.Scriptable
-                        local cameraSpot=spot+Vector3.new(0,0,0.5)
-                        camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
+                        local character=LocalPlayer.Character
+                        if not character or not character.Parent then return end
+                        local rootToPivot=root.CFrame:ToObjectSpace(character:GetPivot())
+                        local look=camera.CFrame.LookVector
+                        local forward=Vector3.new(look.X,0,look.Z)
+                        if forward.Magnitude<0.05 then forward=Vector3.new(0,0,-1) end
+                        forward=forward.Unit
+                        local spot=needle.Position-forward*2+Vector3.new(0,2.5,0)
+                        local function placeNearObjective()
+                            local facing=Vector3.new(needle.Position.X,spot.Y,needle.Position.Z)
+                            character:PivotTo(CFrame.lookAt(spot,facing)*rootToPivot)
+                            moved=true
+                            root.AssemblyLinearVelocity=Vector3.zero
+                            root.AssemblyAngularVelocity=Vector3.zero
+                        end
+                        local cameraSpot=spot-forward*3.5+Vector3.new(0,3.5,0)
+                        local function aim()
+                            if hubUnloaded or collected or not needle.Parent or Workspace.CurrentCamera~=camera then return end
+                            camera.CameraType=Enum.CameraType.Scriptable
+                            camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
+                            LocalPlayer:SetAttribute("HoveredHayId",id)
+                        end
+                        placeNearObjective()
+                        aim()
                         RunService:BindToRenderStep(renderName,Enum.RenderPriority.Last.Value+30,function()
-                            if needle.Parent then
-                                camera.CameraType=Enum.CameraType.Scriptable
-                                camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
-                                LocalPlayer:SetAttribute("HoveredHayId",id)
-                            end
+                            aim()
                         end)
                         bound=true
-                        task.wait(0.1)
+                        RunService.RenderStepped:Wait()
+                        filterNearbyHay()
+                        RunService.RenderStepped:Wait()
                         setPickupStatus("Clicking the objective; waiting for ownership confirmation")
-                        for _=1,8 do
+                        for attempt=1,12 do
+                            if captureOwnership() then break end
                             if hubUnloaded or farmBlocked() or not sharedFarmState.AutoPickupNeedle
-                                or not needle.Parent or LocalPlayer:GetAttribute("NeedleOwned")==true then break end
+                                or not needle.Parent or not root.Parent or not character.Parent then break end
+                            if Workspace.CurrentCamera~=camera then error("Camera replaced during pickup; retrying") end
+                            if (root.Position-spot).Magnitude>0.75 then placeNearObjective() end
+                            aim()
                             local center=camera.ViewportSize/2
-                            LocalPlayer:SetAttribute("HoveredHayId",id)
                             VirtualInputManager:SendMouseMoveEvent(center.X,center.Y,game)
-                            task.wait(0.025)
+                            RunService.RenderStepped:Wait()
+                            aim()
+                            local projected,onScreen=camera:WorldToViewportPoint(needle.Position)
+                            if not onScreen or (Vector2.new(projected.X,projected.Y)-center).Magnitude>15 then
+                                error("Objective is not centred under the mouse; retrying")
+                            end
+                            if LocalPlayer:GetAttribute("HoveredHayId")~=id then error("Objective hover was lost; retrying") end
                             VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,true,game,0)
                             mouseDown=true
                             task.wait(0.1)
                             VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0)
                             mouseDown=false
-                            task.wait(0.1)
+                            local deadline=os.clock()+0.4
+                            repeat
+                                if captureOwnership() then break end
+                                task.wait(0.025)
+                            until hubUnloaded or not sharedFarmState.AutoPickupNeedle or os.clock()>=deadline
+                            if attempt==4 or attempt==8 then filterNearbyHay() end
                         end
                     end,function(e) return tostring(e) end)
                     clear()
                     if not ok then
                         setPickupStatus("Pickup error: "..tostring(err))
                         warn("[BeyyHub] Chapter 2 key pickup: "..tostring(err))
-                    elseif LocalPlayer:GetAttribute("NeedleOwned")==true then
+                    elseif collected then
                         setPickupStatus("Key / needle collected")
                     else
                         setPickupStatus("Pickup not confirmed; retrying on the next scan")

@@ -384,7 +384,7 @@ end
             pcall(function() hubWindow:Close() end)
         end
     end
-    hideNonFarmMenu()
+    task.delay(0.25, hideNonFarmMenu)
 
     if BEYY_CHAPTER == "Chapter2" or BEYY_CHAPTER == "Chapter3" then
         hubCursorCleanup = function() hubWindow:Close() end
@@ -3741,8 +3741,5 @@ end
     end
     end
 
-    task.defer(function()
-        if not hubUnloaded then hideNonFarmMenu() end
-    end)
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end

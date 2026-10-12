@@ -1,4 +1,4 @@
--- Beyy Chapter 2 standalone | Native GUI, puzzles and tools | 1.0.0
+-- Beyy Chapter 2 standalone | Native GUI, puzzles, tools and key | 1.1.0
 if game.PlaceId ~= 83445806734780 then warn("[Beyy CH2] Join Chapter 2 before running this script") return end
 local Players=game:GetService("Players")
 local ReplicatedStorage=game:GetService("ReplicatedStorage")
@@ -60,6 +60,7 @@ local function statusRow(name)
     statuses[name]=label
 end
 local function updateStatus(name,message)
+    if hubUnloaded then return end
     local label=statuses[name]
     local text=name..": "..tostring(message)
     if label and label.Text~=text then label.Text=text end
@@ -72,6 +73,10 @@ local function button(title,callback)
     return item
 end
 local sharedFarmPuzzleBusy=function() return false end
+local objectiveState={AutoPickupNeedle=false,AutoHandInNeedle=false}
+local objectiveBusy=function() return false end
+local objectiveTick=function() end
+local objectiveCleanup
 local toolState={TNT=false,Pitchfork=false,Drone=false,Vacuum=false,Slot=5}
 local vacuumHeld=false
 local vacuumPoint=Vector2.zero
@@ -117,6 +122,7 @@ function hubWindow:Open()
         cursorBound=true
     end
     releaseVacuum()
+    if objectiveCleanup then pcall(objectiveCleanup) end
 end
 local cleanup
 cleanup=function()
@@ -124,6 +130,7 @@ cleanup=function()
     hubUnloaded=true
     hubWindow:Close()
     releaseVacuum()
+    if objectiveCleanup then pcall(objectiveCleanup) end
     if hubRestoreAction then pcall(hubRestoreAction) end
     for _,name in ipairs({"BeyyCH2StandaloneLever_","BeyyCH2StandaloneColour_"}) do
         pcall(function() RunService:UnbindFromRenderStep(name..tostring(LocalPlayer.UserId)) end)
@@ -300,6 +307,7 @@ do
         end
         local function runColourPuzzle()
             if hubUnloaded or colourRunning then return end
+            if objectiveBusy() then colourStatus("Key interaction is active; retry after it finishes") return end
             if puzzleControllerBusy then colourStatus("Another puzzle controller is active; wait for it to finish") return end
             colourRunning = true
             releaseVacuum()
@@ -633,6 +641,7 @@ do
 
         local function runLevers()
             if leverRunning or hubUnloaded then return end
+            if objectiveBusy() then status("Key interaction is active; retry after it finishes") return end
             if puzzleControllerBusy then status("Another puzzle controller is active; wait for it to finish") return end
             puzzleControllerBusy = true
             leverRunning = true
@@ -1698,6 +1707,7 @@ return solved]===]
         end
         local function runAllPuzzles()
             if allPuzzlesRunning then allStatus("Already running"); return end
+            if objectiveBusy() then allStatus("Key interaction is active; retry after it finishes") return end
             if hubUnloaded or puzzleControllerBusy or leverRunning or colourRunning then
                 allStatus("Cannot start while another puzzle controller is active")
                 return
@@ -1826,7 +1836,7 @@ return solved]===]
             Title = "Auto Number Puzzle (only)",
             Desc = "Run the integrated note finder and four-digit keypad submission without levers or colour puzzle.",
             Callback = function()
-                if allPuzzlesRunning or puzzleControllerBusy or hubUnloaded then
+                if allPuzzlesRunning or puzzleControllerBusy or hubUnloaded or objectiveBusy() then
                     allStatus("Another puzzle controller is active")
                     return
                 end
@@ -1848,6 +1858,317 @@ return solved]===]
             end,
         })
 
+
+end
+row("TextLabel",{BackgroundTransparency=1,Text="Key objective",TextSize=12})
+for _,entry in ipairs({{"AutoPickupNeedle","Auto Pick Up Key"},{"AutoHandInNeedle","Auto Turn In Key"}}) do
+    local key,label=entry[1],entry[2]
+    local item
+    item=button(label..": OFF",function()
+        objectiveState[key]=not objectiveState[key]
+        item.Text=label..": "..(objectiveState[key] and "ON" or "OFF")
+    end)
+end
+statusRow("Key")
+do
+local sharedFarmState=objectiveState
+local needleFolder=ReplicatedStorage:FindFirstChild("NeedleHaystack")
+local needleBusy,handInBusy=false,false
+objectiveBusy=function() return needleBusy or handInBusy end
+local function setPickupStatus(message) updateStatus("Key",message) end
+local releaseSharedVacuum=releaseVacuum
+local function farmRoot()
+    local character=LocalPlayer.Character
+    return character and character:FindFirstChild("HumanoidRootPart")
+end
+local function farmBlocked()
+    return hubUnloaded or sharedFarmPuzzleBusy() or not hubWindow.Closed
+        or LocalPlayer:GetAttribute("CutsceneActive")==true
+        or LocalPlayer:GetAttribute("NeedleInputLocked")==true
+        or LocalPlayer:GetAttribute("HintViewerOpen")==true
+end
+    local function exposedNeedle()
+        local server=Workspace:FindFirstChild("NeedleObjectiveServer")
+        if not server then return nil,"Target search: Workspace.NeedleObjectiveServer is missing (not replicated or a different objective layout)" end
+        local keyPart=server:FindFirstChild("Key")
+        local preferred=keyPart or server:FindFirstChild("Needle")
+        local seen={}
+        local parts,marked,hidden,invalid=0,0,0,0
+        local samples={}
+        local function inspect(item)
+            if seen[item] then return nil end
+            seen[item]=true
+            if not item:IsA("BasePart") then return nil end
+            parts+=1
+            local marker=item:GetAttribute("IsNeedleObjective")
+            local hiding=item:GetAttribute("HIDDEN_WITHIN")
+            local id=item:GetAttribute("HayId")
+            if #samples<3 then
+                table.insert(samples,item.Name..": marker="..tostring(marker)..", hidden="..tostring(hiding)..", HayId="..tostring(id).." ("..type(id)..")")
+            end
+            -- The confirmed Chapter 2 Key part need not carry Chapter 1's marker.
+            if marker==true or item==keyPart then
+                marked+=1
+                if hiding~=nil then hidden+=1
+                elseif type(id)~="number" then invalid+=1
+                else return item end
+            end
+        end
+        -- Prefer the confirmed direct Key part and inspect the root itself.
+        if preferred then
+            local found=inspect(preferred)
+            if found then return found end
+            for _,item in ipairs(preferred:GetDescendants()) do
+                found=inspect(item)
+                if found then return found end
+            end
+        end
+        -- Keep the same attribute requirements, but allow marked objectives elsewhere in this container.
+        for _,item in ipairs(server:GetDescendants()) do
+            local found=inspect(item)
+            if found then return found end
+        end
+        return nil,string.format("Target search: %d parts, %d objective markers, %d hidden, %d missing/nonnumeric IDs. %s",
+            parts,marked,hidden,invalid,table.concat(samples," | "))
+    end
+
+    local function pickupBlockReason()
+        if hubUnloaded then return "Hub unloaded" end
+        if not sharedFarmState.AutoPickupNeedle then return "Auto pickup is off" end
+        if LocalPlayer:GetAttribute("NeedleOwned")==true then return "Key / needle collected" end
+        if not needleFolder then return "Waiting for NeedleHaystack to replicate" end
+        if sharedFarmPuzzleBusy() then return "Waiting for puzzle automation to release control" end
+        if LocalPlayer:GetAttribute("CutsceneActive")==true then return "Waiting for CutsceneActive to clear (visual bypass does not clear this flag)" end
+        if LocalPlayer:GetAttribute("NeedleInputLocked")==true then return "Waiting for NeedleInputLocked to clear" end
+        if LocalPlayer:GetAttribute("HintViewerOpen")==true then return "Close the hint viewer to pick up the key" end
+        if needleBusy then return "Pickup in progress" end
+        return nil
+    end
+    local function pickupScan()
+            needleFolder = needleFolder or ReplicatedStorage:FindFirstChild("NeedleHaystack")
+            local blocked = pickupBlockReason()
+            if blocked then
+                setPickupStatus(blocked)
+            else
+                local needle,targetReason=exposedNeedle()
+                local root=farmRoot()
+                local camera=Workspace.CurrentCamera
+                if not needle then
+                    setPickupStatus(targetReason or "No eligible objective found")
+                elseif not root or not camera then
+                    setPickupStatus("Waiting for the character and camera")
+                else
+                    needleBusy=true
+                    releaseSharedVacuum()
+                    local previousRoot=root.CFrame
+                    local previousCameraType=camera.CameraType
+                    local previousCameraCF=camera.CFrame
+                    local previousHover=LocalPlayer:GetAttribute("HoveredHayId")
+                    local renderName="BeyyCH2StandaloneKeyAim_"..tostring(LocalPlayer.UserId)
+                    local bound=false
+                    local mouseDown=false
+                    local moved=false
+                    local cameraCaptured=false
+                    local collected=false
+                    local ownershipConnection
+                    local filteredParts={}
+                    local function captureOwnership()
+                        collected=collected or LocalPlayer:GetAttribute("NeedleOwned")==true
+                        return collected
+                    end
+                    local function filterNearbyHay()
+                        -- Match Chapter 1's local click-obstruction workaround, with full restoration.
+                        local count=0
+                        for _,folderName in ipairs({"HaystackClient","HaystackCollision"}) do
+                            local folder=Workspace:FindFirstChild(folderName)
+                            if folder then
+                                for _,part in ipairs(folder:GetDescendants()) do
+                                    if count>=400 then break end
+                                    if part:IsA("BasePart") and part~=needle
+                                        and part:GetAttribute("IsNeedleObjective")~=true
+                                        and not filteredParts[part] and part.CanQuery
+                                        and (part.Position-needle.Position).Magnitude<=8+math.min(part.Size.Magnitude*0.5,4) then
+                                        local saved={query=part.CanQuery,collide=part.CanCollide}
+                                        filteredParts[part]=saved
+                                        pcall(function() part.CanCollide=false; part.CanQuery=false end)
+                                        count+=1
+                                    end
+                                end
+                            end
+                        end
+                    end
+                    local cleaned=false
+                    local function clear()
+                        if cleaned then return end
+                        cleaned=true
+                        objectiveCleanup=nil
+                        captureOwnership()
+                        if mouseDown then
+                            mouseDown=false
+                            local center=camera.ViewportSize/2
+                            pcall(function()
+                                VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0)
+                            end)
+                        end
+                        if bound then pcall(function() RunService:UnbindFromRenderStep(renderName) end) end
+                        if cameraCaptured and camera then
+                            pcall(function()
+                                camera.CameraType=previousCameraType
+                                camera.CFrame=previousCameraCF
+                            end)
+                        end
+                        if ownershipConnection then ownershipConnection:Disconnect() end
+                        for part,saved in pairs(filteredParts) do
+                            pcall(function()
+                                if part.Parent then part.CanCollide=saved.collide; part.CanQuery=saved.query end
+                            end)
+                        end
+                        -- Keep a confirmed pickup beside the objective for the hand-in routine.
+                        if moved and not collected and root and root.Parent then pcall(function() root.CFrame=previousRoot end) end
+                        pcall(function() LocalPlayer:SetAttribute("HoveredHayId",previousHover) end)
+                        needleBusy=false
+                    end
+                    objectiveCleanup=clear
+                    local ok,err=xpcall(function()
+                        ownershipConnection=LocalPlayer:GetAttributeChangedSignal("NeedleOwned"):Connect(captureOwnership)
+                        -- Puzzle automation may reopen the hub. Hide it before sending gameplay clicks.
+                        if hubWindow.Closed~=true then
+                            setPickupStatus("Closing the menu for key pickup")
+                            hubWindow:Close()
+                        end
+                        local menuDeadline=os.clock()+1
+                        repeat
+                            RunService.RenderStepped:Wait()
+                        until hubWindow.Closed==true or hubUnloaded or os.clock()>=menuDeadline
+                        if hubWindow.Closed~=true then error("Menu did not close; pickup will retry") end
+                        -- Give the cutscene controller time to release its camera before capturing it.
+                        task.wait(0.15)
+                        if cleaned or hubUnloaded or farmBlocked() or not sharedFarmState.AutoPickupNeedle
+                            or not needle.Parent or not root.Parent then return end
+                        if Workspace.CurrentCamera~=camera then error("Camera changed; pickup will retry") end
+                        previousCameraType=camera.CameraType
+                        previousCameraCF=camera.CFrame
+                        cameraCaptured=true
+                        setPickupStatus("Teleporting beside the key / needle")
+                        local id=needle:GetAttribute("HayId")
+                        local character=LocalPlayer.Character
+                        if not character or not character.Parent then return end
+                        local rootToPivot=root.CFrame:ToObjectSpace(character:GetPivot())
+                        local look=camera.CFrame.LookVector
+                        local forward=Vector3.new(look.X,0,look.Z)
+                        if forward.Magnitude<0.05 then forward=Vector3.new(0,0,-1) end
+                        forward=forward.Unit
+                        local spot=needle.Position-forward*2+Vector3.new(0,2.5,0)
+                        local function placeNearObjective()
+                            local facing=Vector3.new(needle.Position.X,spot.Y,needle.Position.Z)
+                            character:PivotTo(CFrame.lookAt(spot,facing)*rootToPivot)
+                            moved=true
+                            root.AssemblyLinearVelocity=Vector3.zero
+                            root.AssemblyAngularVelocity=Vector3.zero
+                        end
+                        local cameraSpot=spot-forward*3.5+Vector3.new(0,3.5,0)
+                        local function aim()
+                            if cleaned or hubUnloaded or collected or not needle.Parent or Workspace.CurrentCamera~=camera then return end
+                            camera.CameraType=Enum.CameraType.Scriptable
+                            camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
+                            LocalPlayer:SetAttribute("HoveredHayId",id)
+                        end
+                        placeNearObjective()
+                        aim()
+                        RunService:BindToRenderStep(renderName,Enum.RenderPriority.Last.Value+30,function()
+                            aim()
+                        end)
+                        bound=true
+                        RunService.RenderStepped:Wait()
+                        filterNearbyHay()
+                        RunService.RenderStepped:Wait()
+                        setPickupStatus("Clicking the objective; waiting for ownership confirmation")
+                        for attempt=1,12 do
+                            if cleaned or captureOwnership() then break end
+                            if hubUnloaded or farmBlocked() or not sharedFarmState.AutoPickupNeedle
+                                or not needle.Parent or not root.Parent or not character.Parent then break end
+                            if Workspace.CurrentCamera~=camera then error("Camera replaced during pickup; retrying") end
+                            if (root.Position-spot).Magnitude>0.75 then placeNearObjective() end
+                            aim()
+                            local center=camera.ViewportSize/2
+                            VirtualInputManager:SendMouseMoveEvent(center.X,center.Y,game)
+                            RunService.RenderStepped:Wait()
+                            aim()
+                            local projected,onScreen=camera:WorldToViewportPoint(needle.Position)
+                            if not onScreen or (Vector2.new(projected.X,projected.Y)-center).Magnitude>15 then
+                                error("Objective is not centred under the mouse; retrying")
+                            end
+                            if LocalPlayer:GetAttribute("HoveredHayId")~=id then error("Objective hover was lost; retrying") end
+                            VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,true,game,0)
+                            mouseDown=true
+                            task.wait(0.1)
+                            if cleaned then return end
+                            VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0)
+                            mouseDown=false
+                            local deadline=os.clock()+0.4
+                            repeat
+                                if captureOwnership() then break end
+                                task.wait(0.025)
+                            until hubUnloaded or not sharedFarmState.AutoPickupNeedle or os.clock()>=deadline
+                            if attempt==4 or attempt==8 then filterNearbyHay() end
+                        end
+                    end,function(e) return tostring(e) end)
+                    clear()
+                    if not ok then
+                        setPickupStatus("Pickup error: "..tostring(err))
+                        warn("[BeyyHub] Chapter 2 key pickup: "..tostring(err))
+                    elseif collected then
+                        setPickupStatus("Key / needle collected")
+                    else
+                        setPickupStatus("Pickup not confirmed; retrying on the next scan")
+                    end
+                end
+            end
+    end
+
+local function turnInScan()
+    local root=farmRoot()
+    if not root then setPickupStatus("Waiting for character") return end
+    local laser=Workspace:FindFirstChild("Laser")
+    if not laser or not laser:IsA("Model") then setPickupStatus("Waiting for Workspace.Laser turn-in location") return end
+    local folder=ReplicatedStorage:FindFirstChild("NeedleHaystack")
+    local remote=folder and folder:FindFirstChild("NeedleHandIn")
+    if not remote or not remote:IsA("RemoteEvent") then setPickupStatus("Waiting for NeedleHandIn remote") return end
+    handInBusy=true
+    releaseVacuum()
+    local ok,err=pcall(function()
+        setPickupStatus("Moving below Laser to turn in the key")
+        local destination=laser:GetPivot().Position-Vector3.new(0,2.5,0)
+        root.CFrame=CFrame.new(destination)*root.CFrame.Rotation
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        task.wait(0.2)
+        if farmBlocked() or not objectiveState.AutoHandInNeedle or LocalPlayer:GetAttribute("NeedleOwned")~=true then return end
+        remote:FireServer()
+        local deadline=os.clock()+1.5
+        while not farmBlocked() and objectiveState.AutoHandInNeedle and LocalPlayer:GetAttribute("NeedleOwned")==true and os.clock()<deadline do task.wait(0.05) end
+        if not hubUnloaded then
+            setPickupStatus(LocalPlayer:GetAttribute("NeedleOwned")==true and "Turn-in unconfirmed; will retry" or "Key turned in")
+        end
+    end)
+    handInBusy=false
+    if not ok then setPickupStatus("Turn-in error: "..tostring(err)) end
+end
+objectiveTick=function()
+    if hubUnloaded then return end
+    if sharedFarmPuzzleBusy() then setPickupStatus("Waiting for puzzle automation") return end
+    if not hubWindow.Closed then setPickupStatus("Close the GUI with Right Ctrl to allow key automation") return end
+    if LocalPlayer:GetAttribute("CutsceneActive")==true then setPickupStatus("Waiting for cutscene to finish") return end
+    if LocalPlayer:GetAttribute("NeedleInputLocked")==true then setPickupStatus("Waiting for input lock to clear") return end
+    if LocalPlayer:GetAttribute("HintViewerOpen")==true then setPickupStatus("Close the hint viewer") return end
+    if LocalPlayer:GetAttribute("NeedleOwned")==true then
+        if objectiveState.AutoHandInNeedle then turnInScan() else setPickupStatus("Key collected • enable Auto Turn In Key to submit it") end
+    elseif objectiveState.AutoPickupNeedle then
+        pickupScan()
+    else
+        setPickupStatus("Waiting to own a key before turn-in")
+    end
+end
 
 end
 row("TextLabel",{BackgroundTransparency=1,Text="Automatic tools • pause during puzzles / cutscenes",TextSize=12})
@@ -1888,6 +2209,8 @@ local function send(name,...)
     return pcall(item.FireServer,item,...)
 end
 local function toolBlockReason()
+    if objectiveBusy() then return "Paused: key interaction owns controls" end
+    if objectiveState.AutoHandInNeedle and LocalPlayer:GetAttribute("NeedleOwned")==true then return "Paused: key turn-in pending" end
     if sharedFarmPuzzleBusy() then return "Paused: puzzle solver owns controls" end
     if not hubWindow.Closed then return "Paused: close GUI with Right Ctrl" end
     if LocalPlayer:GetAttribute("CutsceneActive")==true or LocalPlayer:GetAttribute("Chapter2ReleaseActive")==true then return "Paused: cutscene" end
@@ -1933,9 +2256,16 @@ task.spawn(function()
     local stageAt,startedAt=0,0
     local cooling=false
     local coolingUntil=0
+    local nextObjective=0
     while not hubUnloaded do
         local enabled=toolState.TNT or toolState.Pitchfork or toolState.Drone or toolState.Vacuum
-        task.wait(enabled and 0.08 or 0.5)
+        local keyEnabled=objectiveState.AutoPickupNeedle or objectiveState.AutoHandInNeedle
+        task.wait((enabled or keyEnabled) and 0.08 or 0.5)
+        if hubUnloaded then break end
+        if keyEnabled and os.clock()>=nextObjective then
+            objectiveTick()
+            nextObjective=os.clock()+0.35
+        end
         if hubUnloaded then break end
         local reason
         if enabled then reason=toolBlockReason() else reason="All tools off" end

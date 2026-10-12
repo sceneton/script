@@ -1641,13 +1641,13 @@ end
 do
     Header(ExploitTab, "Lobby Exploits")
 
-    ExploitTab:Toggle({
+    Registry.ArcadeFarm = ExploitTab:Toggle({
         Title = "Arcade Gem Farm",
         Value = false,
         Callback = function(v) State.ArcadeFarm = v end,
     })
 
-    ExploitTab:Toggle({
+    Registry.ClassRoller = ExploitTab:Toggle({
         Title = "Auto Class Roller",
         Value = false,
         Callback = function(v) State.ClassRoller = v end,
@@ -2389,7 +2389,7 @@ end
 
 do
     Header(SettingsTab, "Menu")
-    SettingsTab:Keybind({
+    Registry.MenuKeybind = SettingsTab:Keybind({
         Title = "Menu keybind", Value = "RightControl",
         Callback = function(v)
             pcall(function()
@@ -2404,7 +2404,16 @@ do
     })
 
     Header(SettingsTab, "Config")
-    local saveConfigName = "default"
+    SettingsTab:Paragraph({ Title = "Shared configs", Desc = "The last successfully loaded or saved config loads on startup in every chapter. If none is remembered, default is used when available." })
+    local activeConfigPath = CACHE_FOLDER .. "/active_config.txt"
+    local rememberedConfig = safeRead(activeConfigPath)
+    if type(rememberedConfig) ~= "string" or not rememberedConfig:match("^[%w_%-%s]+$") then rememberedConfig = nil end
+    local function rememberConfig(name)
+        if not safeWrite(activeConfigPath, name) then
+            Notify("Config", "Loaded/saved, but could not remember the startup config", 4, "x")
+        end
+    end
+    local saveConfigName = rememberedConfig or "default"
     local selectedConfigName = nil
     local configDropdown = nil
     local EMPTY_CONFIG = "(No saved configs)"
@@ -2479,7 +2488,9 @@ do
     end
     if ConfigManager then
         local saved = getConfigNames()
-        local initialConfig = containsConfig(saved, "default") and "default" or saved[1]
+        local startupConfig = rememberedConfig and containsConfig(saved, rememberedConfig) and rememberedConfig
+            or (containsConfig(saved, "default") and "default" or nil)
+        local initialConfig = startupConfig or saved[1]
         selectedConfigName = initialConfig
         configDropdown = SettingsTab:Dropdown({
             Title = "Select Config to Load",
@@ -2508,6 +2519,7 @@ do
                 end
                 local ok, loaded, err = pcall(function() return buildConfig(name):Load() end)
                 local success = ok and loaded ~= false and loaded ~= nil
+                if success then rememberConfig(name) end
                 Notify("Config", success and ("Loaded: ".. name) or ("Failed: ".. tostring(ok and err or loaded)), 3, success and "check" or "x")
             end,
         })
@@ -2527,22 +2539,22 @@ do
                 end
                 local ok, savedData = pcall(function() return buildConfig(name):Save() end)
                 local success = ok and savedData ~= false and savedData ~= nil
-                if success then refreshConfigDropdown(name) end
+                if success then refreshConfigDropdown(name); rememberConfig(name) end
                 Notify("Config", success and ("Saved: ".. name) or ("Failed: ".. tostring(savedData)), 3, success and "check" or "x")
             end,
         })
         task.defer(function()
-            if Unloaded then return end
-            local ok, loaded, err = pcall(function() return buildConfig("default"):Load() end)
+            if Unloaded or not startupConfig then return end
+            local ok, loaded, err = pcall(function() return buildConfig(startupConfig):Load() end)
             if ok and loaded ~= false and loaded ~= nil then
-                print("[Needle] Default config loaded; waiting for saved toggle callbacks")
+                print("[Config] Startup config loaded; waiting for saved toggle callbacks")
                 task.spawn(function()
 
                     task.wait(0.75)
                     if Unloaded then return end
                     local persistedAFK
                     local readOK, configData = pcall(function()
-                        local raw = readfile("WindUI/BeyyHub/config/default.json")
+                        local raw = readfile("WindUI/BeyyHub/config/" .. startupConfig .. ".json")
                         return game:GetService("HttpService"):JSONDecode(raw)
                     end)
                     if readOK and type(configData) == "table" then
@@ -2569,8 +2581,8 @@ do
                         .. " (saved=".. tostring(persistedAFK) .. ")")
 
                 end)
-            elseif containsConfig(getConfigNames(), "default") then
-                warn("[Needle] Default config auto-load failed: ".. tostring(ok and err or loaded))
+            elseif containsConfig(getConfigNames(), startupConfig) then
+                warn("[Config] Startup config auto-load failed: ".. tostring(ok and err or loaded))
             end
         end)
     end

@@ -955,11 +955,56 @@ end
             or LocalPlayer:GetAttribute("CutsceneActive")==true
             or LocalPlayer:GetAttribute("HintViewerOpen")==true
     end
+local function createObjectiveIndex()
+    local current, items, positions, connections = nil, {}, {}, {}
+    local function stop()
+        for _,connection in ipairs(connections) do connection:Disconnect() end
+        current, items, positions, connections = nil, {}, {}, {}
+    end
+    local function add(item)
+        if item:IsA("BasePart") and not positions[item] then
+            items[#items+1]=item; positions[item]=#items
+        end
+    end
+    local function remove(item)
+        local index=positions[item]
+        if not index then return end
+        local last=items[#items]
+        items[index]=last; positions[last]=index
+        items[#items]=nil; positions[item]=nil
+    end
+    local function get(folder)
+        if folder~=current then
+            stop(); current=folder
+            if folder then
+                connections[1]=folder.DescendantAdded:Connect(add)
+                connections[2]=folder.DescendantRemoving:Connect(remove)
+                for _,item in ipairs(folder:GetDescendants()) do add(item) end
+            end
+        end
+        return items
+    end
+    return get,stop
+end
+
+local indexedObjectives, stopObjectiveIndex = createObjectiveIndex()
+local previousObjectiveCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    stopObjectiveIndex()
+    if previousObjectiveCleanup then pcall(previousObjectiveCleanup) end
+end
+local indexedPreferred, stopPreferredIndex = createObjectiveIndex()
+local previousPreferredCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    stopPreferredIndex()
+    if previousPreferredCleanup then pcall(previousPreferredCleanup) end
+end
     local function exposedNeedle()
         local server=Workspace:FindFirstChild("NeedleObjectiveServer")
-        if not server then return nil,"Target search: Workspace.NeedleObjectiveServer is missing (not replicated or a different objective layout)" end
+        if not server then indexedObjectives(nil); indexedPreferred(nil); return nil,"Target search: Workspace.NeedleObjectiveServer is missing (not replicated or a different objective layout)" end
         local keyPart=server:FindFirstChild("Key")
         local preferred=keyPart or server:FindFirstChild("Needle")
+        if not preferred then indexedPreferred(nil) end
         local seen={}
         local parts,marked,hidden,invalid=0,0,0,0
         local samples={}
@@ -986,13 +1031,13 @@ end
         if preferred then
             local found=inspect(preferred)
             if found then return found end
-            for _,item in ipairs(preferred:GetDescendants()) do
+            for _,item in ipairs(indexedPreferred(preferred)) do
                 found=inspect(item)
                 if found then return found end
             end
         end
         -- Keep the same attribute requirements, but allow marked objectives elsewhere in this container.
-        for _,item in ipairs(server:GetDescendants()) do
+        for _,item in ipairs(indexedObjectives(server)) do
             local found=inspect(item)
             if found then return found end
         end

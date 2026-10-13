@@ -2272,7 +2272,7 @@ end
                 local noRangeLogged = false
                 local maxUntil = os.clock() + 160
 
-                local acknowledgementTimeout = 2.25
+                local acknowledgementTimeout = 1.5
                 local function closeEnough()
                     local c = LocalPlayer.Character
                     local root = c and c:FindFirstChild("HumanoidRootPart")

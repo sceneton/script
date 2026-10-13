@@ -1253,6 +1253,8 @@ local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
     { name = "base", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
     { name = "base-second-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-third-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-fourth-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
     { name = "base-transition", radius = 20.0, standoff = 2.1, cameraLift = 5.0, focusYOffset = 0.7 },
     { name = "lower-middle", radius = 18.0, standoff = 2.0, cameraLift = 5.0, focusYOffset = -0.1 },
     { name = "middle-transition", radius = 16.0, standoff = 1.95, cameraLift = 5.1, focusYOffset = -0.8 },
@@ -1350,7 +1352,7 @@ local function measureAfkBandSurfaces(center)
     end
     if floorY == math.huge then floorY = center.Y - 4 end
     if highestY == -math.huge then highestY = center.Y + 8 end
-    local fractions = {0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
+    local fractions = {0.12, 0.12, 0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
     local surfaces = {}
     for i, samples in ipairs(radialTops) do
         local baseline = floorY + (highestY - floorY) * fractions[i]

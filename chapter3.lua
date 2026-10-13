@@ -382,6 +382,25 @@ local function watchVacuumFocus(onTransition)
     }
 end
 
+local function createVacuumHeatWatchdog()
+    local running,lastHeat,lastProgress=false,nil,0
+    local watchdog={}
+    function watchdog.Start(heat)
+        running=true;lastHeat=heat;lastProgress=os.clock()
+    end
+    function watchdog.Stop() running=false;lastHeat=nil end
+    function watchdog.Check(heat)
+        if not running or type(heat)~="number" or heat~=heat then return nil end
+        local previous=lastHeat
+        if previous==nil or heat>previous+0.0002 then lastProgress=os.clock() end
+        lastHeat=heat
+        if previous and heat<previous-0.001 then return "cooling" end
+        if os.clock()-lastProgress>=4 then return "stalled" end
+        return nil
+    end
+    return watchdog
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -1029,12 +1048,15 @@ end
             end
         end
     end)
+    local vacuumWatchdog=createVacuumHeatWatchdog()
+    local lastVacuumRecoveryWarning=-math.huge
     local vacuumHeld=false
     local vacuumPoint=Vector2.zero
     local vacuumStart=0
     local vacuumCooldown=0
     local vacuumCooling=false
     local function releaseSharedVacuum()
+        vacuumWatchdog.Stop()
         if vacuumHeld then
             vacuumHeld=false
             pcall(function()
@@ -1083,11 +1105,20 @@ end
                     local heat=hud and hud:FindFirstChild("Overheat")
                     local fill=heat and heat:FindFirstChild("Fill")
                     local level=fill and fill:IsA("GuiObject") and fill.Size.Y.Scale or nil
+                    local recovery=vacuumHeld and vacuumWatchdog.Check(level)
                     if level and level>=0.999 then
                         releaseSharedVacuum()
                         vacuumCooling=true
                     elseif vacuumCooling and (not level or level>0.001) then
                         releaseSharedVacuum()
+                    elseif recovery then
+                        releaseSharedVacuum()
+                        vacuumCooling=level~=nil and level>0.001
+                        vacuumCooldown=math.max(vacuumCooldown,os.clock()+0.25)
+                        if recovery=="stalled" and os.clock()-lastVacuumRecoveryWarning>=10 then
+                            lastVacuumRecoveryWarning=os.clock()
+                            warn("[Vacuum] Heat stalled; stale VIM hold released; fresh press pending")
+                        end
                     elseif not vacuumHeld then
                         vacuumCooling=false
                         local focusGeneration=vacuumFocus.Generation()
@@ -1108,12 +1139,18 @@ end
                         end
                         if vacuumFocus.Ready() and focusGeneration==vacuumFocus.Generation() and not farmBlocked() and hubWindow.Closed and not needlePriority() then
                             vacuumPoint=point
+                            pcall(function() VirtualInputManager:SendMouseButtonEvent(point.X,point.Y,0,false,game,0) end)
+                            task.wait(0.05)
+                            if vacuumFocus.Ready() and focusGeneration==vacuumFocus.Generation() and sharedFarmState.AutoUseVacuum
+                                and not farmBlocked() and hubWindow.Closed and not needlePriority() then
                             local pressed=pcall(function()
                                 VirtualInputManager:SendMouseButtonEvent(point.X,point.Y,0,true,game,0)
                             end)
                             if pressed then
                                 vacuumHeld=true; vacuumStart=os.clock()
+                                vacuumWatchdog.Start(level)
                                 if focusGeneration~=vacuumFocus.Generation() then releaseSharedVacuum() end
+                            end
                             end
                         end
                     elseif not level and os.clock()-vacuumStart>=30 then

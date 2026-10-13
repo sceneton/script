@@ -3267,10 +3267,16 @@ return solved]===]
                     else
                         local ready,reason=chapter2AutoPuzzleReady(LocalPlayer,Workspace,earlyIntroPending)
                         if ready and not allPuzzlesRunning and not puzzleControllerBusy and not leverRunning and not colourRunning then
-                            autoStartWaiting=false
-                            allStatus("Intro confirmed; starting full puzzle sequence")
-                            runAllPuzzles()
-                            return
+                            allStatus("Intro confirmed; waiting 0.05s before the first lever")
+                            task.wait(0.05)
+                            local stillReady=chapter2AutoPuzzleReady(LocalPlayer,Workspace,earlyIntroPending)
+                            if stillReady and not hubUnloaded and autoSolveOnJoin and not autoStartCancelled and not autoRunClaimed
+                                and not allPuzzlesRunning and not puzzleControllerBusy and not leverRunning and not colourRunning then
+                                autoStartWaiting=false
+                                allStatus("Intro confirmed; starting full puzzle sequence")
+                                runAllPuzzles()
+                                return
+                            end
                         end
                         if not ready then allStatus(reason) else allStatus("Waiting for active puzzle controller") end
                     end

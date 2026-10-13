@@ -315,6 +315,49 @@ task.spawn(function()
     stopEarlyIntro()
 end)
 
+local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
+    local pending
+    local function nextVacuum()
+        local config=getConfig()
+        local tracks=config and config.UPGRADE_TRACKS
+        if not tracks then return nil end
+        local best
+        for _,entry in ipairs({{Flag="UpgVacPower",Name="VacuumPower"},{Flag="UpgVacCooling",Name="VacuumCooling"}}) do
+            if state[entry.Flag] then
+                local track=tracks[entry.Name]
+                local level=getLevel(entry.Name)
+                local nextLevel=track and track.Levels and track.Levels[level+1]
+                local cost=nextLevel and tonumber(nextLevel.Cost or 0)
+                if cost and cost>=0 and cost<math.huge and (not best or cost<best.Cost) then
+                    best={Name=entry.Name,Level=level,Cost=cost}
+                end
+            end
+        end
+        return best
+    end
+    local function awaiting()
+        if pending and (getLevel(pending.Name)~=pending.Level or os.clock()>=pending.Until) then pending=nil end
+        return pending~=nil
+    end
+    local priority={}
+    function priority.Reserve()
+        if awaiting() then return true end
+        local target=nextVacuum()
+        return target~=nil and (tonumber(getCash()) or 0)>=target.Cost*0.75
+    end
+    function priority.Purchase()
+        if awaiting() then return false end
+        local target=nextVacuum()
+        if not target or (tonumber(getCash()) or 0)<target.Cost then return false end
+        if send(target.Name) then
+            pending={Name=target.Name,Level=target.Level,Until=os.clock()+2}
+            return true
+        end
+        return false
+    end
+    return priority
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -1168,8 +1211,13 @@ end
         local value=ls and ls:FindFirstChild("Cash")
         return value and tonumber(value.Value) or 0
     end
+    local vacuumUpgradePriority=createVacuumUpgradePriority(sharedFarmState,function() return sharedGameConfig end,cash,
+        function(name) return tonumber(LocalPlayer:GetAttribute("HayUpgrade"..name)) or 1 end,
+        function(name) return sendFarmRemote("BuyUpgrade",name) end)
     local function tryTrack(name)
         if not sharedGameConfig then return end
+        if name=="VacuumPower" or name=="VacuumCooling" then vacuumUpgradePriority.Purchase(); return end
+        if vacuumUpgradePriority.Reserve() then return end
         local track=sharedGameConfig.UPGRADE_TRACKS and sharedGameConfig.UPGRADE_TRACKS[name]
         if not track then return end
         local level=tonumber(LocalPlayer:GetAttribute("HayUpgrade"..name)) or 1
@@ -1194,7 +1242,7 @@ end
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.5,tonumber(sharedFarmState.BuyInterval) or 1))
-            if needleFolder and sharedFarmState.AutoBuyTools and BEYY_CHAPTER~="Lobby" then
+            if needleFolder and sharedFarmState.AutoBuyTools and BEYY_CHAPTER~="Lobby" and not vacuumUpgradePriority.Reserve() then
                 local selected=sharedFarmState.BuyToolsList or {}
                 local choices={}
                 for k,value in pairs(selected) do
@@ -1205,6 +1253,7 @@ end
                     end
                 end
                 for _,name in ipairs(choices) do
+                    if vacuumUpgradePriority.Reserve() then break end
                     if name=="Pitchfork" and not owned("PitchforkOwned") then
                         sendFarmRemote("BuyShopItem","Pitchfork")
                     elseif name=="TNT" and not owned("TntOwned") then
@@ -1243,6 +1292,7 @@ end
         while not hubUnloaded do
             task.wait(3)
             if needleFolder and BEYY_CHAPTER~="Lobby" then
+                vacuumUpgradePriority.Purchase()
                 for key,name in pairs(tracks) do
                     if sharedFarmState[key] then tryTrack(name) end
                 end

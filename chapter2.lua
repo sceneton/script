@@ -401,6 +401,21 @@ local function createVacuumHeatWatchdog()
     return watchdog
 end
 
+local function chapter2AutoPuzzleReady(player,workspace,skipPending)
+    if player:GetAttribute("IntroCutsceneFinished")~=true then return false,"Waiting for intro skip confirmation" end
+    if skipPending or player:GetAttribute("CutsceneActive")==true then return false,"Waiting for intro cutscene to close" end
+    if player:GetAttribute("NeedleInputLocked")==true then return false,"Waiting for intro input lock to clear" end
+    local character=player.Character
+    if not character or not character:FindFirstChild("HumanoidRootPart") then return false,"Waiting for character" end
+    if not workspace.CurrentCamera then return false,"Waiting for camera" end
+    local puzzles=workspace:FindFirstChild("Puzzles")
+    local puzzle=puzzles and puzzles:FindFirstChild("LeverPuzzle")
+    local levers=puzzle and puzzle:FindFirstChild("Levers")
+    if not levers then return false,"Waiting for lever puzzle" end
+    for i=1,3 do if not levers:FindFirstChild("Lever"..i) then return false,"Waiting for Lever "..i end end
+    return true
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -735,6 +750,7 @@ end
         hubCursorCleanup = function() hubWindow:Close() end
     end
 
+    local chapter2ConfigReady=false
     local Registry = {}
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
@@ -2409,9 +2425,15 @@ end
         local allPuzzlesRunning = false
         sharedFarmPuzzleBusy = function() return allPuzzlesRunning or puzzleControllerBusy end
         local allPuzzlesCancel = false
+        local autoSolveOnJoin=true
+        local autoRunClaimed=false
+        local autoStartWaiting=false
+        local autoStartCancelled=false
         local allPuzzlesStage = "Idle"
+        local allPuzzlesStatus=puzzleTab:Paragraph({Title="Auto Puzzle Status",Desc="Waiting for startup"})
         local function allStatus(message)
             allPuzzlesStage = message
+            allPuzzlesStatus:SetDesc(message)
         end
         local isNumberStageCancelled = function()
             return hubUnloaded or allPuzzlesCancel
@@ -3040,7 +3062,8 @@ return solved]===]
 
         local function stopAllPuzzles()
             if not allPuzzlesRunning then
-                allStatus("No complete puzzle sequence is running")
+                autoStartCancelled=true
+                allStatus("Automatic startup cancelled; manual solve remains available")
                 return
             end
             allPuzzlesCancel = true
@@ -3125,6 +3148,7 @@ return solved]===]
                 allStatus("Cannot start while another puzzle controller is active")
                 return
             end
+            autoRunClaimed=true
             allPuzzlesRunning = true
             allPuzzlesCancel = false
             pictureCancelled = false
@@ -3232,6 +3256,40 @@ return solved]===]
                 pcall(function() hubWindow:Open() end)
             end
         end
+        local function queueAutoStart()
+            if autoStartWaiting or autoRunClaimed or hubUnloaded then return end
+            autoStartWaiting=true
+            task.spawn(function()
+                local deadline=os.clock()+120
+                while not hubUnloaded and not autoRunClaimed and not autoStartCancelled and autoSolveOnJoin and os.clock()<deadline do
+                    if not chapter2ConfigReady then
+                        allStatus("Waiting for saved config before automatic startup")
+                    else
+                        local ready,reason=chapter2AutoPuzzleReady(LocalPlayer,Workspace,earlyIntroPending)
+                        if ready and not allPuzzlesRunning and not puzzleControllerBusy and not leverRunning and not colourRunning then
+                            autoStartWaiting=false
+                            allStatus("Intro confirmed; starting full puzzle sequence")
+                            runAllPuzzles()
+                            return
+                        end
+                        if not ready then allStatus(reason) else allStatus("Waiting for active puzzle controller") end
+                    end
+                    task.wait(0.1)
+                end
+                autoStartWaiting=false
+                if not hubUnloaded and not autoRunClaimed then
+                    allStatus(not autoSolveOnJoin and "Automatic startup disabled" or (autoStartCancelled and "Automatic startup cancelled" or "Startup timed out; intro or assets not ready"))
+                end
+            end)
+        end
+        Registry.Chapter2AutoSolveOnJoin=puzzleTab:Toggle({
+            Title="Auto Solve Puzzles on Join",Value=true,
+            Callback=function(value)
+                autoSolveOnJoin=value==true
+                if autoSolveOnJoin then autoStartCancelled=false;queueAutoStart() end
+            end,
+        })
+        queueAutoStart()
         puzzleTab:Button({
             Title = "Auto Solve Puzzles",
             Desc = "Levers, Number+Picture during 6s cutscene, then Colour+Picture; verify completion.",
@@ -4142,13 +4200,15 @@ end
             end,
         })
         task.defer(function()
-            if hubUnloaded or not startupConfig then return end
+            if hubUnloaded or not startupConfig then chapter2ConfigReady=true; return end
             local ok, loaded, err = pcall(function() return buildConfig(startupConfig):Load() end)
             local success = ok and loaded ~= false and loaded ~= nil
             Notify("Config", success and ("Auto-loaded: " .. startupConfig)
                 or ("Auto-load failed: " .. tostring(ok and err or loaded)), 3, success and "check" or "x")
+            chapter2ConfigReady=true
         end)
     else
+        chapter2ConfigReady=true
         SettingsTab:Paragraph({ Title = "Configs unavailable", Desc = "Saving configs requires filesystem support in your environment." })
     end
     end

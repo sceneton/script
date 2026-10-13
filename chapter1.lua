@@ -1257,6 +1257,7 @@ local function vacuumRequested()
 end
 
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
+local afkOrbitTelemetry={}
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
     { name = "base", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
@@ -1420,6 +1421,31 @@ local function enterNeedleCamera()
     end
     print("[Camera] Needle exposed; AFK overhead view OFF (normal camera)")
 end
+function afkOrbitTelemetry.CanAdvance()
+    if not afkVacuumOrbitEnabled() then return true,"Running" end
+    local root=getHRP()
+    if not root or not root.Parent or not afkCameraAnchor or not afkSweepRadius or not afkSweepSurfaceY then
+        return false,"Waiting for character and orbit position"
+    end
+    local band=afkCurrentBand()
+    local radius=afkSweepRadius-(band.characterInset or 0)
+    local wanted=Vector3.new(afkCameraAnchor.X+math.cos(afkOrbitAngle)*radius,
+        afkSweepSurfaceY+3.25,afkCameraAnchor.Z+math.sin(afkOrbitAngle)*radius)
+    if (root.Position-wanted).Magnitude>3 then return false,"Waiting for character to reach this ring" end
+    return true,"Running"
+end
+function afkOrbitTelemetry.Update(allowed,reason)
+    local band=afkCurrentBand()
+    local text=string.format("%s | %s | route %d/%d",reason,band.name,(afkOrbitLap % #AFK_ORBIT_BANDS)+1,#AFK_ORBIT_BANDS)
+    if text~=afkOrbitTelemetry.LastText then
+        afkOrbitTelemetry.LastText=text
+        if afkOrbitTelemetry.Element then afkOrbitTelemetry.Element:SetDesc(text) end
+        if afkOrbitTelemetry.Paused~=not allowed then
+            print("[AFK Orbit] "..text)
+        end
+        afkOrbitTelemetry.Paused=not allowed
+    end
+end
 local function bindAfkCameraView()
     local ok, err = pcall(function()
         RunService:BindToRenderStep(AFK_CAMERA_BIND, Enum.RenderPriority.Last.Value + 10, function(dt)
@@ -1427,7 +1453,9 @@ local function bindAfkCameraView()
             local current = Workspace.CurrentCamera
             if not current or not afkCameraAnchor then return end
             local delta = math.max(0, math.min(dt, 0.25))
-            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * delta
+            local advance,reason=afkOrbitTelemetry.CanAdvance()
+            afkOrbitTelemetry.Update(advance,reason)
+            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * (advance and delta or 0)
             if nextAngle >= 2 * math.pi then
                 afkOrbitLap += 1
                 local nextBand = afkCurrentBand()
@@ -1495,7 +1523,7 @@ local function startAfkCamera()
     afkOrbitRadius = estimateAfkOrbitRadius(center)
     afkBandSurfaceHeights, afkCameraPileTopY = measureAfkBandSurfaces(center)
     afkSweepRadius = afkCurrentBand().radius + afkCurrentBand().standoff
-    afkSweepSurfaceY = afkBandSurfaceHeights[1]
+    afkSweepSurfaceY = afkBandSurfaceHeights[(afkOrbitLap % #AFK_ORBIT_BANDS)+1]
     afkSweepFocusOffsetY = afkCurrentBand().focusYOffset
     afkPreviousCamera = cam
     afkPreviousType = cam.CameraType
@@ -2182,6 +2210,7 @@ local SettingsTab = MainTab
 
 do
     Header(MainTab, "Dashboard")
+    afkOrbitTelemetry.Element=MainTab:Paragraph({Title="Orbit Status",Desc="Waiting for auto farm"})
     replayStatus=MainTab:Paragraph({Title="Replay Status",Desc=replayStatusText})
     installAntiIdle(MainTab, Registry, function() return not Unloaded end)
     Info(MainTab, "Game: ".. (IN_GAME and "Chapter 1 (FARMHOUSE)" or "Lobby"))

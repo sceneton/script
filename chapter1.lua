@@ -63,9 +63,10 @@ print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 local function installAntiIdle(tab, registry, isRunning)
     local enabled, alive, warned = true, true, false
     local virtualUser
+    local status = tab:Paragraph({Title="Anti AFK Status",Desc="Enabled; waiting for idle signal"})
     registry.AntiAFK = tab:Toggle({
         Title = "Anti AFK Kick", Value = true,
-        Callback = function(value) enabled = value == true end,
+        Callback = function(value) enabled = value == true; status:SetDesc(enabled and "Enabled; waiting for idle signal" or "Disabled") end,
     })
     local idleConnection = LocalPlayer.Idled:Connect(function()
         if not alive or not enabled or not isRunning() then return end
@@ -75,7 +76,23 @@ local function installAntiIdle(tab, registry, isRunning)
             virtualUser:CaptureController()
             virtualUser:ClickButton2(Vector2.zero, camera and camera.CFrame or CFrame.new())
         end)
-        if not ok and not warned then
+        local method = "VirtualUser"
+        if not ok then
+            method = "VirtualInputManager"
+            local pressed=false
+            ok,err=pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(0,0,1,true,game,0)
+                pressed=true
+            end)
+            if pressed then
+                local released,releaseErr=pcall(function() VirtualInputManager:SendMouseButtonEvent(0,0,1,false,game,0) end)
+                if not released then ok=false;err=releaseErr end
+            end
+        end
+        status:SetDesc(ok and ("Idle input sent via "..method) or ("Idle input failed: "..tostring(err)))
+        if ok then
+            print("[BeyyHub] Anti AFK idle input sent via "..method)
+        elseif not warned then
             warned = true
             warn("[BeyyHub] Anti AFK input unavailable: " .. tostring(err))
         end
@@ -936,27 +953,42 @@ local function roundEndingVisible()
     local results = ending and ending:FindFirstChild("ReturnToLobby")
     return guiReallyVisible(results)
 end
+local function resolveNeedleHayId(part)
+    local server=Workspace:FindFirstChild("NeedleObjectiveServer")
+    local node=part
+    while node and node~=server do
+        local id=node:GetAttribute("HayId")
+        if type(id)=="number" then return id end
+        node=node.Parent
+    end
+    return nil
+end
+local needlePickupStatus
+local function setNeedlePickupStatus(text)
+    if needlePickupStatus then needlePickupStatus:SetDesc(text) end
+end
 local lastUnusableNeedleLogAt = -math.huge
 local function findExposedNeedlePart()
     if not IN_GAME then return nil end
     local server = Workspace:FindFirstChild("NeedleObjectiveServer")
     local folder = server and server:FindFirstChild("Needle")
     if not folder then return nil end
-    local invalidCount, invalidIdType = 0, nil
+    local invalidCount, invalidIdType, physicalCandidate = 0, nil, nil
     for _, part in ipairs(folder:GetDescendants()) do
         if part:IsA("BasePart") and part:GetAttribute("IsNeedleObjective") == true
             and part:GetAttribute("HIDDEN_WITHIN") == nil then
-            local id = part:GetAttribute("HayId")
+            local id = resolveNeedleHayId(part)
             if type(id) == "number" then return part end
+            if part.CanQuery and part.Transparency<0.98 and part.LocalTransparencyModifier<0.98 then physicalCandidate=physicalCandidate or part end
             invalidCount += 1
             invalidIdType = type(id)
         end
     end
     if invalidCount > 0 and State.AutoPickupNeedle and os.clock() - lastUnusableNeedleLogAt >= 30 then
         lastUnusableNeedleLogAt = os.clock()
-        warn(string.format("[Needle] %d exposed marker(s) have unusable HayId (%s); waiting for valid objective, not attempting pickup", invalidCount, tostring(invalidIdType)))
+        warn(string.format("[Needle] %d exposed marker(s) have unusable HayId (%s); using verified physical-click fallback when the objective is visible", invalidCount, tostring(invalidIdType)))
     end
-    return nil
+    return physicalCandidate
 end
 local function needleHasPriority()
     if Unloaded or not IN_GAME then return false end
@@ -1982,6 +2014,7 @@ do
     AddToggle(NeedleTab, "AutoFindNeedle", "Auto Find Needle", false)
     AddToggle(NeedleTab, "AutoPickupNeedle", "Auto Pick Up Needle", false)
     AddToggle(NeedleTab, "AutoHandInNeedle", "Auto Hand In Needle", false)
+    needlePickupStatus = NeedleTab:Paragraph({Title="Needle Pickup Status",Desc="Waiting for an exposed needle"})
     AddSlider(NeedleTab, "NeedleInterval", "Needle Scan Interval (s)", 0.2, 3, 1, 0.1)
 end
 
@@ -3471,7 +3504,7 @@ do
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         local cam = Workspace.CurrentCamera
-        local needleId = needle:GetAttribute("HayId")
+        local needleId = resolveNeedleHayId(needle)
         if not char or not char.Parent or not root or not root.Parent then
             reportPrerequisite("character or HumanoidRootPart unavailable")
             busy = false
@@ -3484,13 +3517,8 @@ do
             needlePickupActive = false
             return false
         end
-        if type(needleId) ~= "number" then
-            reportPrerequisite("needle HayId invalid (type=" .. type(needleId) .. "); refreshing target")
-            trackedNeedle = nil
-            busy = false
-            needlePickupActive = false
-            return false
-        end
+        local physicalFallback = type(needleId) ~= "number"
+        setNeedlePickupStatus(physicalFallback and "Attempting normal mouse pickup; no numeric HayId found" or ("Picking up needle ID "..tostring(needleId)))
         local initialPivot = char:GetPivot()
         local originalHover = LocalPlayer:GetAttribute("HoveredHayId")
         local previousPickupCameraType, previousPickupCameraSubject, previousPickupCameraCFrame
@@ -3625,7 +3653,7 @@ do
             captureOwnership()
             success = success or observedOwnership
             pcall(function()
-                if LocalPlayer:GetAttribute("HoveredHayId") == needleId then
+                if not physicalFallback and LocalPlayer:GetAttribute("HoveredHayId") == needleId then
                     LocalPlayer:SetAttribute("HoveredHayId", originalHover)
                 end
             end)
@@ -3634,6 +3662,7 @@ do
             elseif char.Parent then
                 pcall(function() char:PivotTo(initialPivot) end)
             end
+            setNeedlePickupStatus(success and "Needle collected; waiting for turn-in" or ("Pickup failed: "..tostring(failureReason)))
             local elapsed = os.clock() - started
             if success then
                 print(string.format("[Needle] Picked up HayId=%s in %.2fs (%d clicks)",
@@ -3699,12 +3728,12 @@ do
             local function forceHover()
                 if not Unloaded and State.AutoPickupNeedle and needle.Parent and not observedOwnership then
                     aimAtNeedle()
-                    if LocalPlayer:GetAttribute("HoveredHayId") ~= needleId then
+                    if not physicalFallback and LocalPlayer:GetAttribute("HoveredHayId") ~= needleId then
                         LocalPlayer:SetAttribute("HoveredHayId", needleId)
                     end
                 end
             end
-            LocalPlayer:SetAttribute("HoveredHayId", needleId)
+            if not physicalFallback then LocalPlayer:SetAttribute("HoveredHayId", needleId) end
             aimAtNeedle()
             RunService:BindToRenderStep(renderName, Enum.RenderPriority.Last.Value + 30, forceHover)
             bound = true
@@ -3733,7 +3762,18 @@ do
                 pcall(function() VirtualInputManager:SendMouseMoveEvent(center.X, center.Y, game) end)
                 RunService.RenderStepped:Wait()
                 forceHover()
-                local hoverMatches = LocalPlayer:GetAttribute("HoveredHayId") == needleId
+                local hoverMatches = physicalFallback or LocalPlayer:GetAttribute("HoveredHayId") == needleId
+                if physicalFallback then
+                    local ray=cam:ViewportPointToRay(center.X,center.Y)
+                    local params=RaycastParams.new()
+                    params.FilterType=Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances={char}
+                    local hit=Workspace:Raycast(ray.Origin,ray.Direction*50,params)
+                    if not hit or hit.Instance~=needle then
+                        failureReason="Physical click ray blocked by "..(hit and hit.Instance:GetFullName() or "no target")
+                        break
+                    end
+                end
                 local projectedNeedle, onScreen = cam:WorldToViewportPoint(needle.Position)
                 local screenOffset = onScreen and (Vector2.new(projectedNeedle.X, projectedNeedle.Y) - center).Magnitude or -1
                 if not hoverMatches then failureReason = "HoveredHayId did not stick"; break end
@@ -3774,14 +3814,14 @@ do
                 if not trackedNeedle or not trackedNeedle.Parent
                     or trackedNeedle:GetAttribute("HIDDEN_WITHIN") ~= nil
                     or trackedNeedle:GetAttribute("IsNeedleObjective") ~= true
-                    or type(trackedNeedle:GetAttribute("HayId")) ~= "number" then
+                    then
                     trackedNeedle = findExposedNeedlePart()
                 end
-                if trackedNeedle and trackedNeedle == confirmedNeedlePart
-                    and trackedNeedle:GetAttribute("HayId") == confirmedNeedleId then
+                if confirmedNeedleId~=nil and trackedNeedle and trackedNeedle == confirmedNeedlePart
+                    and resolveNeedleHayId(trackedNeedle) == confirmedNeedleId then
                     continue
                 end
-                if trackedNeedle and not busy and (os.clock() - lastAttempt) >= SETTINGS.RetryDelay then
+                if trackedNeedle and not busy and (os.clock() - lastAttempt) >= (resolveNeedleHayId(trackedNeedle) and SETTINGS.RetryDelay or 5) then
                     lastAttempt = os.clock()
                     local target = trackedNeedle
                     task.spawn(function() tryPickup(target) end)

@@ -4141,8 +4141,10 @@ do
                 horizontalForward = Vector3.new(0, 0, -1)
             end
             horizontalForward = horizontalForward.Unit
-            local targetRootPosition = needle.Position - horizontalForward * SETTINGS.HorizontalOffsetStuds
-                + Vector3.new(0, SETTINGS.HeightAboveNeedle, 0)
+            local pickupHorizontalOffset=physicalFallback and 0.75 or SETTINGS.HorizontalOffsetStuds
+            local pickupHeight=physicalFallback and 2.0 or SETTINGS.HeightAboveNeedle
+            local targetRootPosition = needle.Position - horizontalForward * pickupHorizontalOffset
+                + Vector3.new(0, pickupHeight, 0)
             local intendedDistance = (targetRootPosition - needle.Position).Magnitude
             local correctionLimit = intendedDistance + 0.35
             local retryLimit = intendedDistance + 0.80
@@ -4166,9 +4168,30 @@ do
                 cam.CFrame = CFrame.lookAt(cameraPosition, needle.Position, Vector3.yAxis)
                 expectedPickupCamera=cam.CFrame
             end
-            if physicalFallback then
+            local function selectHandForNeedle()
+                if Unloaded or not State.AutoPickupNeedle or not Window.Closed then return false,"Hand selection cancelled" end
+                local center=cam.ViewportSize/2
+                local releaseOK,releaseError=pcall(function() VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0) end)
+                if not releaseOK then return false,"Could not release vacuum input: "..tostring(releaseError) end
                 local humanoid=char:FindFirstChildOfClass("Humanoid")
-                if humanoid then humanoid:UnequipTools();RunService.RenderStepped:Wait() end
+                if humanoid then humanoid:UnequipTools() end
+                trace.Event("HandSelectionRequested",{Slot=1})
+                local downOK,downError=pcall(function() VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.One,false,game) end)
+                task.wait(0.05)
+                -- Always pair the release, including cancellation while waiting.
+                local upOK,upError=pcall(function() VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.One,false,game) end)
+                if not downOK or not upOK then return false,"Hand hotbar input failed: "..tostring(downOK and upError or downError) end
+                task.wait(0.15)
+                local deadline=os.clock()+0.5
+                while not Unloaded and State.AutoPickupNeedle and Window.Closed and LocalPlayer:GetAttribute("VacuumActive")==true and os.clock()<deadline do task.wait(0.025) end
+                if Unloaded or not State.AutoPickupNeedle or not Window.Closed then return false,"Hand selection cancelled" end
+                trace.Snapshot("after-hand-selection")
+                if LocalPlayer:GetAttribute("VacuumActive")==true then return false,"Vacuum still active after selecting hand slot 1" end
+                return true
+            end
+            if physicalFallback then
+                local handReady,handReason=selectHandForNeedle()
+                if not handReady then failureReason=handReason;return end
             end
             placeNearNeedle()
             trace.Snapshot("after-positioning")

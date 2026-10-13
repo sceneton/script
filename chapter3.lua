@@ -932,11 +932,49 @@ end
             or LocalPlayer:GetAttribute("CutsceneActive")==true
             or LocalPlayer:GetAttribute("HintViewerOpen")==true
     end
+local function createObjectiveIndex()
+    local current, items, positions, connections = nil, {}, {}, {}
+    local function stop()
+        for _,connection in ipairs(connections) do connection:Disconnect() end
+        current, items, positions, connections = nil, {}, {}, {}
+    end
+    local function add(item)
+        if item:IsA("BasePart") and not positions[item] then
+            items[#items+1]=item; positions[item]=#items
+        end
+    end
+    local function remove(item)
+        local index=positions[item]
+        if not index then return end
+        local last=items[#items]
+        items[index]=last; positions[last]=index
+        items[#items]=nil; positions[item]=nil
+    end
+    local function get(folder)
+        if folder~=current then
+            stop(); current=folder
+            if folder then
+                connections[1]=folder.DescendantAdded:Connect(add)
+                connections[2]=folder.DescendantRemoving:Connect(remove)
+                for _,item in ipairs(folder:GetDescendants()) do add(item) end
+            end
+        end
+        return items
+    end
+    return get,stop
+end
+
+local indexedObjectives, stopObjectiveIndex = createObjectiveIndex()
+local previousObjectiveCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    stopObjectiveIndex()
+    if previousObjectiveCleanup then pcall(previousObjectiveCleanup) end
+end
     local function exposedNeedle()
         local folder=Workspace:FindFirstChild("NeedleObjectiveServer")
         folder=folder and folder:FindFirstChild("Needle")
-        if not folder then return nil end
-        for _,item in ipairs(folder:GetDescendants()) do
+        if not folder then indexedObjectives(nil); return nil end
+        for _,item in ipairs(indexedObjectives(folder)) do
             if item:IsA("BasePart") and item:GetAttribute("IsNeedleObjective")==true
                 and item:GetAttribute("HIDDEN_WITHIN")==nil
                 and type(item:GetAttribute("HayId"))=="number" then

@@ -1305,7 +1305,10 @@ end
 
 
         local sharedPath = CACHE_FOLDER .. "/autofarmwins_shared.txt"
+        local recoveryOK,recoveryData=pcall(function() return game:GetService("TeleportService"):GetLocalPlayerTeleportData() end)
+        local timeoutRecovery=recoveryOK and type(recoveryData)=="table" and recoveryData.BeyyHubTimeoutRecovery==true and recoveryData.AutoFarmWins==true and type(recoveryData.Created)=="number" and math.abs(os.time()-recoveryData.Created)<600
         local function readAutoFarmPreference()
+            if timeoutRecovery then return true end
             local shared = safeRead(sharedPath)
             if shared == "true" then return true end
             if shared == "false" then return false end
@@ -2480,6 +2483,7 @@ end
             local success = ok and loaded ~= false and loaded ~= nil
             Notify("Config", success and ("Auto-loaded: " .. startupConfig)
                 or ("Auto-load failed: " .. tostring(ok and err or loaded)), 3, success and "check" or "x")
+            if timeoutRecovery and Registry.AutoFarmWins then Registry.AutoFarmWins:Set(true) end
         end)
     else
         SettingsTab:Paragraph({ Title = "Configs unavailable", Desc = "Saving configs requires filesystem support in your environment." })

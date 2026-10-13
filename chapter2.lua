@@ -1608,9 +1608,9 @@ end
         local COLOUR_RENDER_BIND = "BeyyV103_00ColourAim_" .. tostring(LocalPlayer.UserId)
 
         local COLOUR_CAMERA_SETTLE = 0.12
-        local COLOUR_MOUSE_SETTLE = 0.025
-        local COLOUR_CLICK_HOLD = 0.10
-        local COLOUR_CLICK_GAP = 0.14
+        local COLOUR_MOUSE_SETTLE = 0.0125
+        local COLOUR_CLICK_HOLD = 0.05
+        local COLOUR_CLICK_GAP = 0.07
         local COLOUR_BETWEEN_PEDESTALS = 0.06
         local function colourStatus(_message)
         end
@@ -1848,7 +1848,7 @@ end
                             break
                         end
                         RunService.RenderStepped:Wait()
-                        task.wait(math.max(COLOUR_MOUSE_SETTLE, 0.06))
+                        task.wait(math.max(COLOUR_MOUSE_SETTLE, 0.03))
                         aim()
 
                         aim()
@@ -1867,7 +1867,7 @@ end
                         sent += 1
                         total += 1
 
-                        task.wait(clickIndex < counts[i] and COLOUR_CLICK_GAP or 0.18)
+                        task.wait(clickIndex < counts[i] and COLOUR_CLICK_GAP or 0.09)
                     end
                     pcall(function() RunService:UnbindFromRenderStep(COLOUR_RENDER_BIND) end)
                     colourStatus(string.format("%s pedestal: %d/%d clicks sent", colour, sent, counts[i]))

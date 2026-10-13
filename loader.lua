@@ -165,7 +165,8 @@ if queue then
         else warn("[BeyyHub] No cached or online v103.00 loader after teleport") end
     ]==], loaderCache, loaderURL)
     local ok, err = pcall(queue, payload)
-    if not ok then warn("[BeyyHub] Could not register teleport reload: " .. tostring(err)) end
+    if ok then _G.__BEYY_TELEPORT_RELOAD_JOB=game.JobId
+    else warn("[BeyyHub] Could not register teleport reload: " .. tostring(err)) end
 else
     warn("[BeyyHub] queue_on_teleport unavailable; rerun loader after changing chapters")
 end

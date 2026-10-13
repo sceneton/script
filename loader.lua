@@ -20,11 +20,15 @@ if not target then
     return
 end
 
+local validatedSource, validatedModule, validatedFunction
 local function valid(source, moduleName)
+    if source == validatedSource and moduleName == validatedModule and validatedFunction then return validatedFunction end
     if type(source) ~= "string" or #source < 1500 then return nil end
     if not source:find('local __BEYY_SCRIPT_VERSION = "' .. VERSION .. '"', 1, true) then return nil end
     if not source:find('local __BEYY_MODULE = "' .. moduleName .. '"', 1, true) then return nil end
-    return loadstring(source)
+    local fn, err = loadstring(source)
+    if fn then validatedSource, validatedModule, validatedFunction = source, moduleName, fn end
+    return fn, err
 end
 
 pcall(function()
@@ -166,7 +170,7 @@ else
     warn("[BeyyHub] queue_on_teleport unavailable; rerun loader after changing chapters")
 end
 
-local fn, compileError = loadstring(source)
+local fn, compileError = valid(source, target.name)
 if not fn then error("[BeyyHub] " .. target.name .. " compile error: " .. tostring(compileError)) end
 local ok, err = pcall(fn)
 if not ok then warn("[BeyyHub] " .. target.name .. " error: " .. tostring(err)) end

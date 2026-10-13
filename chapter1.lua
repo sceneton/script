@@ -3863,6 +3863,7 @@ do
             elseif char.Parent then
                 pcall(function() char:PivotTo(initialPivot) end)
             end
+            if physicalFallback and not success then recordNeedleDiagnostic(needle) end
             setNeedlePickupStatus(success and "Needle collected; waiting for turn-in" or ("Pickup failed: "..tostring(failureReason)))
             local elapsed = os.clock() - started
             if success then

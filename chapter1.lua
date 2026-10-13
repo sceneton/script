@@ -1251,16 +1251,16 @@ end
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
-    { name = "base", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-second-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-third-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-fourth-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-lower", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
-    { name = "base-transition", radius = 20.0, standoff = 2.1, cameraLift = 5.0, focusYOffset = 0.7 },
-    { name = "lower-middle", radius = 18.0, standoff = 2.0, cameraLift = 5.0, focusYOffset = -0.1 },
-    { name = "middle-transition", radius = 16.0, standoff = 1.95, cameraLift = 5.1, focusYOffset = -0.8 },
-    { name = "upper-middle", radius = 14.0, standoff = 1.9, cameraLift = 5.2, focusYOffset = -1.5 },
-    { name = "upper-transition", radius = 11.0, standoff = 1.8, cameraLift = 5.6, focusYOffset = -0.75 },
+    { name = "base", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-second-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-third-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-fourth-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-lower", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
+    { name = "base-transition", radius = 20.0, standoff = 2.1, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 0.7 },
+    { name = "lower-middle", radius = 18.0, standoff = 2.0, characterInset = 1.5, cameraLift = 5.0, focusYOffset = -0.1 },
+    { name = "middle-transition", radius = 16.0, standoff = 1.95, characterInset = 1.5, cameraLift = 5.1, focusYOffset = -0.8 },
+    { name = "upper-middle", radius = 14.0, standoff = 1.9, characterInset = 1.5, cameraLift = 5.2, focusYOffset = -1.5 },
+    { name = "upper-transition", radius = 11.0, standoff = 1.8, characterInset = 1.5, cameraLift = 5.6, focusYOffset = -0.75 },
     { name = "peak", radius = 8.0, standoff = 1.7, cameraLift = 6.0, focusYOffset = 0.0 },
     { name = "inner-peak", radius = 5.0, standoff = 1.6, cameraLift = 6.0, focusYOffset = 0.2 },
 }
@@ -1629,6 +1629,7 @@ task.spawn(function()
             local root = getHRP()
             local anchor = afkCameraAnchor
             local radius = afkSweepRadius
+            if radius then radius -= afkCurrentBand().characterInset or 0 end
             local surface = afkSweepSurfaceY
             if character and root and anchor and radius and surface then
                 local radial = Vector3.new(math.cos(afkOrbitAngle), 0, math.sin(afkOrbitAngle))

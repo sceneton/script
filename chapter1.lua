@@ -1046,6 +1046,46 @@ local function roundEndingVisible()
     local results = ending and ending:FindFirstChild("ReturnToLobby")
     return guiReallyVisible(results)
 end
+local lastNeedleDiagnostic=-math.huge
+local function recordNeedleDiagnostic(needle)
+    if os.clock()-lastNeedleDiagnostic<60 then return end
+    lastNeedleDiagnostic=os.clock()
+    task.spawn(function()
+        local ok,err=pcall(function()
+            local function describe(obj)
+                local attributes={}
+                for key,value in pairs(obj:GetAttributes()) do attributes[key]={Type=typeof(value),Value=tostring(value)} end
+                return {Path=obj:GetFullName(),Class=obj.ClassName,Attributes=attributes}
+            end
+            local report={PlayerAttributes=describe(LocalPlayer).Attributes,Target=describe(needle),Parents={},EquippedTools={},ClientCandidates={}}
+            local position=needle.Position
+            local ancestor=needle.Parent
+            for i=1,5 do
+                if not ancestor or ancestor==Workspace then break end
+                report.Parents[#report.Parents+1]=describe(ancestor)
+                ancestor=ancestor.Parent
+            end
+            local character=LocalPlayer.Character
+            if character then for _,obj in ipairs(character:GetChildren()) do if obj:IsA("Tool") then report.EquippedTools[#report.EquippedTools+1]=describe(obj) end end end
+            local folder=Workspace:FindFirstChild("HaystackClient")
+            if folder then
+                for _,part in budgetedFolderChildren(folder,function() return not Unloaded end,true) do
+                    if part:IsA("BasePart") and (part:GetAttribute("IsNeedleObjective")==true or (part.Position-position).Magnitude<=0.5) then
+                        local entry=describe(part);entry.Distance=(part.Position-position).Magnitude
+                        report.ClientCandidates[#report.ClientCandidates+1]=entry
+                        if #report.ClientCandidates>=20 then break end
+                    end
+                end
+            end
+            local json=game:GetService("HttpService"):JSONEncode(report)
+            _G.__BEYY_NEEDLE_DIAGNOSTIC=json
+            if type(writefile)=="function" then pcall(writefile,"BeyyHub/needle_diagnostic.json",json) end
+            warn("[Needle Diagnostic] "..json)
+        end)
+        if not ok then warn("[Needle Diagnostic] Capture failed: "..tostring(err)) end
+    end)
+end
+
 local function resolveNeedleHayId(part)
     local server=Workspace:FindFirstChild("NeedleObjectiveServer")
     local node=part
@@ -3882,6 +3922,10 @@ do
                 if Workspace.CurrentCamera ~= cam then return end
                 cam.CameraType = Enum.CameraType.Scriptable
                 cam.CFrame = CFrame.lookAt(cameraPosition, needle.Position, Vector3.yAxis)
+            end
+            if physicalFallback then
+                local humanoid=char:FindFirstChildOfClass("Humanoid")
+                if humanoid then humanoid:UnequipTools();RunService.RenderStepped:Wait() end
             end
             placeNearNeedle()
             captureOwnership()

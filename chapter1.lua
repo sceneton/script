@@ -368,6 +368,30 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
     return priority
 end
 
+local function watchVacuumFocus(onTransition)
+    local alive,generation,resumeAt=true,0,0
+    local function changed()
+        if not alive then return end
+        generation+=1
+        resumeAt=os.clock()+0.25
+        onTransition()
+    end
+    local connections={}
+    if BEYY_CHAPTER~="Lobby" then
+        connections[1]=UserInputService.WindowFocused:Connect(changed)
+        connections[2]=UserInputService.WindowFocusReleased:Connect(changed)
+    end
+    return {
+        Generation=function() return generation end,
+        Ready=function() return alive and os.clock()>=resumeAt end,
+        Stop=function()
+            alive=false
+            for _,connection in ipairs(connections) do connection:Disconnect() end
+            table.clear(connections)
+        end,
+    }
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -3368,8 +3392,18 @@ do
         vacuumSuctionActive = false
     end
 
+    local vacuumFocus=watchVacuumFocus(function()
+        local interrupted=held
+        releaseVacuum()
+        if interrupted then
+            local _,cooling=getVacuumTimings()
+            coolingPending=true
+            readyAt=math.max(readyAt,os.clock()+cooling+COOLDOWN_SAFETY)
+        end
+    end)
     local previousCleanup = _G.__BEYY_HUB_CLEANUP
     _G.__BEYY_HUB_CLEANUP = function()
+        vacuumFocus.Stop()
         releaseVacuum()
         if previousCleanup then pcall(previousCleanup) end
     end
@@ -3382,7 +3416,7 @@ do
     end
 
     local function canVacuum()
-        return not mustReleaseForPriority()
+        return vacuumFocus.Ready() and not mustReleaseForPriority()
             and (not afkVacuumOrbitEnabled() or afkVacuumTargetReady)
     end
 
@@ -3480,6 +3514,7 @@ do
                         end
                     end
                     if not coolingPending and canVacuum() and not autoUiMouseBusy then
+                        local focusGeneration=vacuumFocus.Generation()
                         cycle += 1
                         vacuumSuctionActive = true
                         autoUiMouseBusy = true
@@ -3512,12 +3547,14 @@ do
                                     previousValue = current
                                 end)
                             end
+                            if not vacuumFocus.Ready() or focusGeneration~=vacuumFocus.Generation() then return end
                             local pressed = pcall(function()
                                 VirtualInputManager:SendMouseMoveEvent(x, y, game)
                                 VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
                             end)
                             if not pressed then return end
                             held = true
+                            if focusGeneration~=vacuumFocus.Generation() then releaseVacuum(); return end
                             didHold = true
                             print(string.format("[Vacuum] Cycle %d: holding Mouse1 to 100%% heat (Runtime L%d)", cycle, runtimeLevel))
 
@@ -3567,7 +3604,7 @@ do
                             end
                         elseif didHold then
 
-                            readyAt = os.clock() + 0.3
+                            readyAt = math.max(readyAt, os.clock() + 0.3)
                             print("[Vacuum] Suction interrupted below 100%; will resume from current heat")
                         else
                             readyAt = os.clock() + 1.0

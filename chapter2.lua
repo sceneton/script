@@ -465,10 +465,9 @@ local function createNativeUI()
         layout(sidebar)
         w.Notice=label(root,"",32); w.Notice.Position=UDim2.new(0,10,1,-34); w.Notice.Size=UDim2.new(1,-20,0,32)
         local bind="BeyyNativeCursor_"..tostring(game:GetService("Players").LocalPlayer.UserId)
-        local previousBehavior,previousIcon,cursorBound
+        local cursorBound
         local function releaseCursor()
             if cursorBound then return end
-            previousBehavior,previousIcon=input.MouseBehavior,input.MouseIconEnabled
             cursorBound=true
             run:BindToRenderStep(bind,Enum.RenderPriority.Last.Value+100,function()
                 input.MouseBehavior=Enum.MouseBehavior.Default; input.MouseIconEnabled=true
@@ -477,7 +476,9 @@ local function createNativeUI()
         local function restoreCursor()
             if not cursorBound then return end
             run:UnbindFromRenderStep(bind); cursorBound=false
-            input.MouseBehavior=previousBehavior; input.MouseIconEnabled=previousIcon
+            -- Release menu ownership; Roblox's camera resumes its current mode.
+            -- A saved lock may belong to an earlier cutscene or camera state.
+            input.MouseBehavior=Enum.MouseBehavior.Default; input.MouseIconEnabled=true
         end
         function w:Open() if self.Destroyed then return end; self.Closed=false; gui.Enabled=true; releaseCursor() end
         function w:Close() self.Closed=true; gui.Enabled=false; self.Capture=nil; dragInput=nil; restoreCursor() end
@@ -3140,6 +3141,7 @@ end
 local function setCutsceneBypassActive(_) end
 local cutsceneBypassStop = nil
 local function launchCutsceneBypass()
+    if BEYY_CHAPTER == "Lobby" then return true end
     if cutsceneBypassStop then return true end
     local ok, result = pcall(function()
 
@@ -3733,12 +3735,15 @@ local function launchCutsceneBypass()
         local function handleCameraInput()
             if not alive or not enabled or not active or not yaw then return end
             pcall(function()
-                if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+                local dragging = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+                local desired = cameraFirstPerson and Enum.MouseBehavior.LockCenter
+                    or (dragging and Enum.MouseBehavior.LockCurrentPosition or Enum.MouseBehavior.Default)
+                if UserInputService.MouseBehavior ~= desired then
+                    UserInputService.MouseBehavior = desired
                 end
             end)
             local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
-            if ok and md then
+            if ok and md and (cameraFirstPerson or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)) then
                 if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
                     yaw = yaw - md.X * 0.004
                     pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)

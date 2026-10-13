@@ -1807,7 +1807,31 @@ do
         if not replayButton then return false end
         local voteText = collectVisibleText(replayButton)
         local count, total = voteText:match("(%d+)%s*/%s*(%d+)")
-        return count ~= nil and tonumber(count) > 0 and tonumber(total) > 0
+        count,total=tonumber(count),tonumber(total)
+        -- The label is a shared count, not a local-player acknowledgement.
+        return count~=nil and total~=nil and total>0 and count>=total
+    end
+    local function activateReplayButton(button)
+        if autoUiMouseBusy or not Window.Closed or needlePickupActive then return false end
+        local x,y=getClickCoords(button)
+        if not x then return false end
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return false end
+        local ok,hits=pcall(function() return pg:GetGuiObjectsAtPosition(x,y) end)
+        if not ok or type(hits)~="table" then return false end
+        local top=hits[1]
+        if not top or (top~=button and not top:IsDescendantOf(button)) then return false end
+        autoUiMouseBusy=true
+        local activated=false
+        local connected,connection=pcall(function()
+            return button.Activated:Connect(function() activated=true end)
+        end)
+        if not connected then autoUiMouseBusy=false; return false end
+        local clicked,result=pcall(vimClick,x,y)
+        if clicked and result then task.wait(0.03) end
+        connection:Disconnect()
+        autoUiMouseBusy=false
+        return clicked and result==true and activated
     end
 
     local function getReplayCooldown()
@@ -1870,7 +1894,7 @@ do
                                 replayFiredForThisEnding = true
                                 if not replayVoteLogged then
                                     replayVoteLogged = true
-                                    print("[AutoUI] Replay vote registered; waiting for next round")
+                                    print("[AutoUI] All Replay votes registered; waiting for next round")
                                 end
                             elseif not replayFiredForThisEnding then
                                 local cooldown = getReplayCooldown()
@@ -1878,7 +1902,11 @@ do
                                     and now - lastReplayClickTime >= cooldown and not autoUiMouseBusy and not needlePickupActive then
                                     replayClickStreak = replayClickStreak + 1
                                     lastReplayClickTime = now
-                                    local clicked = activateButton(replayButton)
+                                    local clicked = activateReplayButton(replayButton)
+                                    if clicked then
+                                        replayFiredForThisEnding = true
+                                        print("[AutoUI] Local Replay click sent; waiting for other players or teleport")
+                                    end
                                     if not clicked then
                                         warn("[AutoUI] Replay input was blocked; retry pending")
                                     end

@@ -839,6 +839,7 @@ local function Info(tab, text)
 end
 
 local SAVE_WHITELIST = {
+    AutoRoundFailsafe = true,
     AutoPickHay = true, AutoCollectDroppedHay = true, AutoCollectGems = true,
     CollectInterval = true,
     AutoSellHay = true, SellThreshold = true, SellOnlyIfFull = true,
@@ -1243,7 +1244,7 @@ function tntTelemetry.SetStatus(text)
 end
 local vacuumSuctionActive = false
 local function farmLoopEnabled()
-    return not Unloaded and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
+    return not Unloaded and not afkOrbitTelemetry.RecoveryPending and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
 end
 
 local function afkFarmModeActive()
@@ -1425,6 +1426,7 @@ local function enterNeedleCamera()
     print("[Camera] Needle exposed; AFK overhead view OFF (normal camera)")
 end
 function afkOrbitTelemetry.CanAdvance()
+    if afkOrbitTelemetry.RecoveryPending then return false,"Returning to lobby" end
     if not afkVacuumOrbitEnabled() then return true,"Running" end
     local root=getHRP()
     if not root or not root.Parent or not afkCameraAnchor or not afkSweepRadius or not afkSweepSurfaceY then
@@ -2213,6 +2215,8 @@ local SettingsTab = MainTab
 
 do
     Header(MainTab, "Dashboard")
+    AddToggle(MainTab,"AutoRoundFailsafe","Restart Stalled Rounds After 5 Minutes",true)
+    afkOrbitTelemetry.TimeoutStatus=MainTab:Paragraph({Title="Round Failsafe Status",Desc="Waiting for round timer"})
     afkOrbitTelemetry.Element=MainTab:Paragraph({Title="Orbit Status",Desc="Waiting for auto farm"})
     replayStatus=MainTab:Paragraph({Title="Replay Status",Desc=replayStatusText})
     installAntiIdle(MainTab, Registry, function() return not Unloaded end)
@@ -3582,7 +3586,7 @@ do
     end
 
     local function mustReleaseForPriority()
-        return Unloaded or not IN_GAME or not vacuumRequested() or not Window.Closed
+        return Unloaded or not IN_GAME or afkOrbitTelemetry.RecoveryPending or not vacuumRequested() or not Window.Closed
             or earlyIntroPending or introSkipPending or needleHasPriority() or roundEndingVisible() or needlePickupActive
             or LocalPlayer:GetAttribute("NeedleInputLocked") == true
             or getHRP() == nil or Workspace.CurrentCamera == nil
@@ -4535,3 +4539,126 @@ pcall(function()
 end)
 
 print("[Needle] Loaded v103.00")
+
+task.spawn(function()
+    local teleport=game:GetService("TeleportService")
+    local active=true
+    local pending=false
+    local pendingSince=0
+    local retryAt=0
+    local timerIncreasing=false
+    local lastTimer
+    local cachedTimer
+    local searchAt=0
+    local clock=_G.__BEYY_ROUND_TIMEOUT_CLOCK
+    if type(clock)~="table" or clock.JobId~=game.JobId or clock.PlaceId~=game.PlaceId then
+        clock={JobId=game.JobId,PlaceId=game.PlaceId};_G.__BEYY_ROUND_TIMEOUT_CLOCK=clock
+    end
+    local function status(text)
+        if afkOrbitTelemetry.TimeoutStatus then afkOrbitTelemetry.TimeoutStatus:SetDesc(text) end
+    end
+    local function parseTimer(text)
+        if type(text)~="string" then return nil end
+        local h,m,s=text:match("^%s*(%d+):(%d%d):(%d%d)%s*$")
+        if h and tonumber(m)<60 and tonumber(s)<60 then return tonumber(h)*3600+tonumber(m)*60+tonumber(s) end
+        m,s=text:match("^%s*(%d+):(%d%d)%s*$")
+        if not m then m,s=text:match("^[Tt]ime%s*:?%s*(%d+):(%d%d)%s*$") end
+        if m and tonumber(s)<60 then return tonumber(m)*60+tonumber(s) end
+        return nil
+    end
+    local function visibleTimer(obj)
+        local current=obj
+        local named=false
+        while current and current~=LocalPlayer:FindFirstChildOfClass("PlayerGui") do
+            local name=current.Name:lower()
+            if name:find("beyynative",1,true) or name:find("ending",1,true) or name:find("results",1,true) or name:find("puzzle",1,true) then return false end
+            if name:find("timer",1,true) or name=="time" then named=true end
+            if current:IsA("GuiObject") and not current.Visible then return false end
+            if current:IsA("ScreenGui") and not current.Enabled then return false end
+            current=current.Parent
+        end
+        local camera=Workspace.CurrentCamera
+        local bottomRight=camera and obj:IsA("GuiObject") and obj.AbsolutePosition.X>=camera.ViewportSize.X*0.65 and obj.AbsolutePosition.Y>=camera.ViewportSize.Y*0.65
+        return named or bottomRight
+    end
+    local function readTimer()
+        if cachedTimer and cachedTimer.Parent and visibleTimer(cachedTimer) then
+            local value=parseTimer(cachedTimer.Text)
+            if value then return value end
+        end
+        cachedTimer=nil
+        if os.clock()<searchAt then return nil end
+        searchAt=os.clock()+5
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return nil end
+        local found
+        for _,obj in ipairs(pg:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and parseTimer(obj.Text) and visibleTimer(obj) then
+                if found then return nil end -- Ambiguous timers use the elapsed-time fallback.
+                found=obj
+            end
+        end
+        cachedTimer=found
+        return found and parseTimer(found.Text) or nil
+    end
+    local function ensureReload()
+        if _G.__BEYY_TELEPORT_RELOAD_JOB==game.JobId then return true end
+        local env=_G
+        if type(getgenv)=="function" then local ok,value=pcall(getgenv);if ok and type(value)=="table" then env=value end end
+        local queue=queue_on_teleport or env.queue_on_teleport or env.queueonteleport or env.queue_on_tp
+        if type(queue)~="function" then return false,"teleport reload is unsupported" end
+        local ok,err=pcall(queue,[==[loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/feature/native-integrated-hub/loader.lua?refresh="..tostring(os.time()).."-"..tostring(math.random(1,1000000000))))()]==])
+        if ok then _G.__BEYY_TELEPORT_RELOAD_JOB=game.JobId end
+        return ok,tostring(err)
+    end
+    local failed=teleport.TeleportInitFailed:Connect(function(player,result,message,placeId)
+        if active and pending and player==LocalPlayer and placeId==BEYY_PLACE_IDS.Lobby then
+            pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15
+            status("Teleport failed; retrying in 15s: "..tostring(message))
+        end
+    end)
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        active=false;failed:Disconnect();afkOrbitTelemetry.RecoveryPending=false
+        if previous then pcall(previous) end
+    end
+    while active and not Unloaded do
+        task.wait(1)
+        if not active or Unloaded then break end
+        if LocalPlayer:GetAttribute("IntroCutsceneFinished")==true and not clock.Started then clock.Started=os.clock() end
+        local timer=readTimer()
+        if timer and lastTimer then
+            if timer>lastTimer then timerIncreasing=true
+            elseif timer<lastTimer then
+                if timerIncreasing and timer<lastTimer-10 then clock.Started=os.clock();retryAt=0 end
+                timerIncreasing=false
+            end
+        end
+        if timer then lastTimer=timer end
+        if timer and timerIncreasing then clock.Started=os.clock()-timer else timer=nil end
+        local elapsed=timer or (clock.Started and os.clock()-clock.Started)
+        if pending then
+            if os.clock()-pendingSince>=30 then
+                pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15
+                status("Teleport has not completed; retrying in 15s")
+            end
+        elseif not State.AutoFarmWins or not State.AutoRoundFailsafe then status("Disabled")
+        elseif not elapsed then status("Waiting for round timer or intro completion")
+        elseif os.clock()<retryAt then -- Keep the failure reason visible during retry cooldown.
+        elseif elapsed<=300 then
+            status(string.format("%s: %d:%02d / 5:00",timer and "Game timer" or "Elapsed since intro",math.floor(elapsed/60),math.floor(elapsed%60)))
+        else
+            local ready,reason=ensureReload()
+            if not ready then status("Cannot restart automatically: "..tostring(reason));retryAt=os.clock()+15
+            else
+                safeWrite(CACHE_FOLDER.."/autofarmwins_shared.txt","true")
+                pending=true;pendingSince=os.clock();afkOrbitTelemetry.RecoveryPending=true
+                status("Round exceeded 5 minutes; returning to lobby")
+                local ok,err=pcall(function()
+                    teleport:Teleport(BEYY_PLACE_IDS.Lobby,LocalPlayer,{BeyyHubTimeoutRecovery=true,AutoFarmWins=true,Created=os.time()})
+                end)
+                if not ok then pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15;status("Teleport error; retrying in 15s: "..tostring(err)) end
+            end
+        end
+    end
+end)

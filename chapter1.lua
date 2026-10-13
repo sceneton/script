@@ -319,6 +319,12 @@ end)
 local selectCollectHay,stopCollectHay=createPitchforkSelector(false,true)
 local selectDroppedHay,stopDroppedHay=createPitchforkSelector(true,false,{FolderName="DroppedHay",ObjectId=true,Range=28,ReturnObject=true,Recursive=false,AllowContainers=true})
 local selectCollectGem,stopCollectGem=createPitchforkSelector(true,false,{FolderName="GemsClient",IdName="GemId",Range=35,Recursive=false,PartIdOnly=true})
+local replayStatus
+local replayStatusText="Waiting for results"
+local function setReplayStatus(text)
+    replayStatusText=text
+    if replayStatus then replayStatus:SetDesc(text) end
+end
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
     local function nextVacuum()
@@ -1859,27 +1865,39 @@ do
         -- The label is a shared count, not a local-player acknowledgement.
         return count~=nil and total~=nil and total>0 and count>=total
     end
+    local function replayCounts(button)
+        local a,b=collectVisibleText(button):match("(%d+)%s*/%s*(%d+)")
+        return tonumber(a),tonumber(b)
+    end
     local function activateReplayButton(button)
-        if autoUiMouseBusy or not Window.Closed or needlePickupActive then return false end
+        if autoUiMouseBusy or not Window.Closed or needlePickupActive then
+            setReplayStatus(not Window.Closed and "Waiting for the hub menu to close" or "Waiting for mouse input to be free")
+            return false
+        end
         local x,y=getClickCoords(button)
-        if not x then return false end
+        if not x then setReplayStatus("Replay target is not visible or has no click area"); return false end
         local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
         if not pg then return false end
-        local ok,hits=pcall(function() return pg:GetGuiObjectsAtPosition(x,y) end)
-        if not ok or type(hits)~="table" then return false end
-        local top=hits[1]
-        if not top or (top~=button and not top:IsDescendantOf(button)) then return false end
+        local before,total=replayCounts(button)
         autoUiMouseBusy=true
-        local activated=false
-        local connected,connection=pcall(function()
-            return button.Activated:Connect(function() activated=true end)
-        end)
-        if not connected then autoUiMouseBusy=false; return false end
+        local method="VIM click"
+        -- Works for frame wrappers too; no signal access or hit-stack gate.
         local clicked,result=pcall(vimClick,x,y)
-        if clicked and result then task.wait(0.03) end
-        connection:Disconnect()
+        setReplayStatus("Attempt "..tostring(replayClickStreak)..": "..method.."; votes "..tostring(before).."/"..tostring(total))
+        local confirmed=false
+        if clicked and result then
+            local deadline=os.clock()+0.8
+            repeat
+                if Unloaded or not isEndingVisible() or not guiReallyVisible(button) then confirmed=not Unloaded; break end
+                local current=replayCounts(button)
+                if before and current and current>before then confirmed=true; break end
+                task.wait(0.05)
+            until os.clock()>=deadline
+        end
         autoUiMouseBusy=false
-        return clicked and result==true and activated
+        if confirmed then setReplayStatus("Replay count advanced or results closed; waiting for the group")
+        else setReplayStatus("No Replay confirmation via "..method.."; retry pending") end
+        return clicked and result==true and confirmed
     end
 
     local function getReplayCooldown()
@@ -1942,6 +1960,7 @@ do
                                 replayFiredForThisEnding = true
                                 if not replayVoteLogged then
                                     replayVoteLogged = true
+                                    setReplayStatus("All Replay votes registered; waiting for teleport")
                                     print("[AutoUI] All Replay votes registered; waiting for next round")
                                 end
                             elseif not replayFiredForThisEnding then
@@ -2027,6 +2046,7 @@ local SettingsTab = MainTab
 
 do
     Header(MainTab, "Dashboard")
+    replayStatus=MainTab:Paragraph({Title="Replay Status",Desc=replayStatusText})
     installAntiIdle(MainTab, Registry, function() return not Unloaded end)
     Info(MainTab, "Game: ".. (IN_GAME and "Chapter 1 (FARMHOUSE)" or "Lobby"))
     Info(MainTab, "Toggle UI: RightControl")

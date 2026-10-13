@@ -319,6 +319,49 @@ end)
 local selectCollectHay,stopCollectHay=createPitchforkSelector(false,true)
 local selectDroppedHay,stopDroppedHay=createPitchforkSelector(true,false,{FolderName="DroppedHay",ObjectId=true,Range=28,ReturnObject=true,Recursive=false,AllowContainers=true})
 local selectCollectGem,stopCollectGem=createPitchforkSelector(true,false,{FolderName="GemsClient",IdName="GemId",Range=35,Recursive=false,PartIdOnly=true})
+local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
+    local pending
+    local function nextVacuum()
+        local config=getConfig()
+        local tracks=config and config.UPGRADE_TRACKS
+        if not tracks then return nil end
+        local best
+        for _,entry in ipairs({{Flag="UpgVacPower",Name="VacuumPower"},{Flag="UpgVacCooling",Name="VacuumCooling"}}) do
+            if state[entry.Flag] then
+                local track=tracks[entry.Name]
+                local level=getLevel(entry.Name)
+                local nextLevel=track and track.Levels and track.Levels[level+1]
+                local cost=nextLevel and tonumber(nextLevel.Cost or 0)
+                if cost and cost>=0 and cost<math.huge and (not best or cost<best.Cost) then
+                    best={Name=entry.Name,Level=level,Cost=cost}
+                end
+            end
+        end
+        return best
+    end
+    local function awaiting()
+        if pending and (getLevel(pending.Name)~=pending.Level or os.clock()>=pending.Until) then pending=nil end
+        return pending~=nil
+    end
+    local priority={}
+    function priority.Reserve()
+        if awaiting() then return true end
+        local target=nextVacuum()
+        return target~=nil and (tonumber(getCash()) or 0)>=target.Cost*0.75
+    end
+    function priority.Purchase()
+        if awaiting() then return false end
+        local target=nextVacuum()
+        if not target or (tonumber(getCash()) or 0)<target.Cost then return false end
+        if send(target.Name) then
+            pending={Name=target.Name,Level=target.Level,Until=os.clock()+2}
+            return true
+        end
+        return false
+    end
+    return priority
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -1014,8 +1057,13 @@ local function trySell()
     end)
 end
 
+local vacuumUpgradePriority=createVacuumUpgradePriority(State,function() return GameConfig end,getCash,
+    function(name) return tonumber(LocalPlayer:GetAttribute("HayUpgrade"..name)) or 1 end,
+    function(name) return pcall(function() BuyUpgrade:FireServer(name) end) end)
 local function tryBuyTrack(trackName)
     if not IN_GAME or not GameConfig then return end
+    if trackName=="VacuumPower" or trackName=="VacuumCooling" then vacuumUpgradePriority.Purchase(); return end
+    if vacuumUpgradePriority.Reserve() then return end
     local track = GameConfig.UPGRADE_TRACKS[trackName]
     if not track then return end
     local cur = tonumber(LocalPlayer:GetAttribute("HayUpgrade"..trackName)) or 1
@@ -3886,7 +3934,7 @@ task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.BuyInterval) or 1)
         if not IN_GAME then break end
-        if State.AutoBuyTools then
+        if State.AutoBuyTools and not vacuumUpgradePriority.Reserve() then
             local sel = State.BuyToolsList or {}
             local list = {}
             if type(sel) == "table" then
@@ -3897,6 +3945,7 @@ task.spawn(function()
                 end
             end
             for _, name in ipairs(list) do
+                if vacuumUpgradePriority.Reserve() then break end
                 if name == "Pitchfork" and not owns("PitchforkOwned") then
                     pcall(function() BuyShopItem:FireServer("Pitchfork") end)
                 elseif name == "TNT" and not owns("TntOwned") then
@@ -3933,6 +3982,7 @@ task.spawn(function()
     while not Unloaded do
         task.wait(3)
         if not IN_GAME then break end
+        vacuumUpgradePriority.Purchase()
         if State.UpgCapacity then tryBuyTrack("Capacity") end
         if State.UpgHandSpeed then tryBuyTrack("Speed") end
         if State.UpgHandGrab then tryBuyTrack("Grab") end

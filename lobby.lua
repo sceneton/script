@@ -60,6 +60,35 @@ end
 
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
+local function installAntiIdle(tab, registry, isRunning)
+    local enabled, alive, warned = true, true, false
+    local virtualUser
+    registry.AntiAFK = tab:Toggle({
+        Title = "Anti AFK Kick", Value = true,
+        Callback = function(value) enabled = value == true end,
+    })
+    local idleConnection = LocalPlayer.Idled:Connect(function()
+        if not alive or not enabled or not isRunning() then return end
+        local ok,err = pcall(function()
+            virtualUser = virtualUser or game:GetService("VirtualUser")
+            local camera = Workspace.CurrentCamera
+            virtualUser:CaptureController()
+            virtualUser:ClickButton2(Vector2.zero, camera and camera.CFrame or CFrame.new())
+        end)
+        if not ok and not warned then
+            warned = true
+            warn("[BeyyHub] Anti AFK input unavailable: " .. tostring(err))
+        end
+    end)
+    local previousCleanup = _G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP = function()
+    stopPitchforkSelector()
+        alive = false
+        idleConnection:Disconnect()
+        if previousCleanup then previousCleanup() end
+    end
+end
+
 -- Pitchfork-only targeting: maintain child slots and budget large searches.
 local function createPitchforkSelector(allowModels, preferHovered, options)
     options=options or {}
@@ -202,7 +231,6 @@ do
     local hubRestoreAction = nil
     local hubCursorCleanup = nil
     _G.__BEYY_HUB_CLEANUP = function()
-    stopPitchforkSelector()
         hubUnloaded = true
         if hubRestoreAction then pcall(hubRestoreAction) end
         if hubCursorCleanup then pcall(hubCursorCleanup) end
@@ -516,6 +544,7 @@ end
     local Registry = {}
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     local lobbyToolsTab = hubWindow:Tab({ Title = "Lobby Tools", Icon = "zap" })
+    installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
     overviewTab:Section({ Title = "Detected chapter" })
     overviewTab:Paragraph({
         Title = BEYY_CHAPTER .. " (Place ID " .. tostring(game.PlaceId) .. ")",

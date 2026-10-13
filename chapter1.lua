@@ -1101,13 +1101,51 @@ local function setNeedlePickupStatus(text)
     if needlePickupStatus then needlePickupStatus:SetDesc(text) end
 end
 local lastUnusableNeedleLogAt = -math.huge
+local function createObjectiveIndex()
+    local current, items, positions, connections = nil, {}, {}, {}
+    local function stop()
+        for _,connection in ipairs(connections) do connection:Disconnect() end
+        current, items, positions, connections = nil, {}, {}, {}
+    end
+    local function add(item)
+        if item:IsA("BasePart") and not positions[item] then
+            items[#items+1]=item; positions[item]=#items
+        end
+    end
+    local function remove(item)
+        local index=positions[item]
+        if not index then return end
+        local last=items[#items]
+        items[index]=last; positions[last]=index
+        items[#items]=nil; positions[item]=nil
+    end
+    local function get(folder)
+        if folder~=current then
+            stop(); current=folder
+            if folder then
+                connections[1]=folder.DescendantAdded:Connect(add)
+                connections[2]=folder.DescendantRemoving:Connect(remove)
+                for _,item in ipairs(folder:GetDescendants()) do add(item) end
+            end
+        end
+        return items
+    end
+    return get,stop
+end
+
+local indexedObjectives, stopObjectiveIndex = createObjectiveIndex()
+local previousObjectiveCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    stopObjectiveIndex()
+    if previousObjectiveCleanup then pcall(previousObjectiveCleanup) end
+end
 local function findExposedNeedlePart()
     if not IN_GAME then return nil end
     local server = Workspace:FindFirstChild("NeedleObjectiveServer")
     local folder = server and server:FindFirstChild("Needle")
-    if not folder then return nil end
+    if not folder then indexedObjectives(nil); return nil end
     local invalidCount, invalidIdType, physicalCandidate = 0, nil, nil
-    for _, part in ipairs(folder:GetDescendants()) do
+    for _, part in ipairs(indexedObjectives(folder)) do
         if part:IsA("BasePart") and part:GetAttribute("IsNeedleObjective") == true
             and part:GetAttribute("HIDDEN_WITHIN") == nil then
             local id = resolveNeedleHayId(part)
@@ -4038,13 +4076,13 @@ do
 end
 
 local lastNeedleHandIn = 0
-RunService.Heartbeat:Connect(function()
+local needleHandInConnection = RunService.Heartbeat:Connect(function()
     if Unloaded or not IN_GAME then return end
     if not State.AutoHandInNeedle then return end
-    if needlePickupActive or roundEndingVisible() then return end
     if LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
     if os.clock() - lastNeedleHandIn < 0.12 then return end
     lastNeedleHandIn = os.clock()
+    if needlePickupActive or roundEndingVisible() then return end
     local farmer = Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("Farmer_NPC")
     local hrp = getHRP()
     if not farmer or not hrp then return end
@@ -4054,6 +4092,12 @@ RunService.Heartbeat:Connect(function()
     end
     pcall(function() NeedleHandIn:FireServer() end)
 end)
+local previousHandInCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    needleHandInConnection:Disconnect()
+    if previousHandInCleanup then pcall(previousHandInCleanup) end
+end
+
 
 task.spawn(function()
     while not Unloaded do

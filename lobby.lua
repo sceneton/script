@@ -1358,18 +1358,39 @@ end
             local char = LocalPlayer.Character
             return char and char:FindFirstChild("HumanoidRootPart")
         end
+        local portalSpawnAnchor
         local function getTeleportCircles()
-            local teleporter = Workspace:FindFirstChild("Teleporter")
-            if not teleporter then return {} end
-            local hrp = getHRP()
-            if not hrp then return {} end
-            local circles = {}
-            for _, obj in ipairs(teleporter:GetChildren()) do
-                if obj:IsA("BasePart") and obj.Name == "InnerCylinder" then
-                    table.insert(circles, { part = obj, dist = (obj.Position - hrp.Position).Magnitude })
+            local teleporter=Workspace:FindFirstChild("Teleporter")
+            local hrp=getHRP()
+            if not teleporter or not hrp then return {} end
+            if not portalSpawnAnchor then
+                local spawn,best=nil,math.huge
+                for _,obj in ipairs(Workspace:GetDescendants()) do
+                    if obj:IsA("SpawnLocation") then
+                        local distance=(obj.Position-hrp.Position).Magnitude
+                        if distance<best then spawn,best=obj,distance end
+                    end
+                end
+                portalSpawnAnchor=spawn and spawn.Position or hrp.Position
+            end
+            local circles={}
+            for _,obj in ipairs(teleporter:GetChildren()) do
+                if obj:IsA("BasePart") and obj.Name=="InnerCylinder" then
+                    circles[#circles+1]={part=obj,dist=(obj.Position-hrp.Position).Magnitude,
+                        spawnDist=(obj.Position-portalSpawnAnchor).Magnitude,order=#circles+1}
                 end
             end
-            table.sort(circles, function(a, b) return a.dist < b.dist end)
+            -- Choose the front pair using the fixed lobby spawn, not our current position.
+            table.sort(circles,function(a,b)
+                if a.spawnDist~=b.spawnDist then return a.spawnDist<b.spawnDist end
+                return a.order<b.order
+            end)
+            for i,entry in ipairs(circles) do entry.preferred=i<=2 end
+            table.sort(circles,function(a,b)
+                if a.preferred~=b.preferred then return a.preferred end
+                if a.dist~=b.dist then return a.dist<b.dist end
+                return a.order<b.order
+            end)
             return circles
         end
         local function clickGuiObjectEarly(obj)

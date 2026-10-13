@@ -1233,6 +1233,14 @@ task.spawn(function()
     end
 end)
 
+local tntTelemetry={}
+function tntTelemetry.SetStatus(text)
+    local message=text.." | phase: "..tostring(LocalPlayer:GetAttribute("TntPhase"))
+    if message~=tntTelemetry.LastText then
+        tntTelemetry.LastText=message
+        if tntTelemetry.Element then tntTelemetry.Element:SetDesc(message) end
+    end
+end
 local vacuumSuctionActive = false
 local function farmLoopEnabled()
     return not Unloaded and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
@@ -2224,6 +2232,7 @@ do
     Header(ToolsTab, "Auto Tool Usage")
     Info(ToolsTab, "Tools work independently of AFK mode. With AFK enabled, TNT targets remaining hay around the orbiting camera's current angle.")
     AddToggle(ToolsTab, "AutoUseTNT", "Auto Use TNT", false)
+    tntTelemetry.Element=ToolsTab:Paragraph({Title="TNT Status",Desc="Waiting for automatic TNT"})
     AddToggle(ToolsTab, "AutoUsePitchfork", "Auto Use Pitchfork", false)
     AddToggle(ToolsTab, "AutoDeployDrone", "Auto Deploy Drone", false)
     AddToggle(ToolsTab, "AutoUseVacuum", "Auto Use Vacuum (live heat + cooldown)", false,
@@ -3309,6 +3318,7 @@ task.spawn(function()
     end
 end)
 
+do
 local function tntScanChildren(folder)
     local children=folder:GetChildren()
     local index,started=0,os.clock()
@@ -3348,6 +3358,13 @@ local function findOrbitHayTarget(anchor)
     end
     return closest
 end
+local function afkTntDistanceLimit()
+    if not afkVacuumOrbitEnabled() then return 10 end
+    local band=afkCurrentBand()
+    local planned=band.radius+band.standoff-(band.characterInset or 0)
+    -- Include the smoothed radius while changing rings, plus the original tolerance.
+    return math.max(afkOrbitRadius,planned,afkSweepRadius or 0)+9
+end
 local function afkTntThrow(root, anchor)
     local origin = root.Position + Vector3.new(0, 1.5, 0)
     local hay = findOrbitHayTarget(anchor)
@@ -3373,34 +3390,54 @@ task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.ToolInterval) or 0.5)
         if not IN_GAME then break end
-        if State.AutoUseTNT and farmLoopEnabled() and owns("TntOwned") then
-            if not LocalPlayer:GetAttribute("NeedleInputLocked") then
-                local afk = afkFarmModeActive()
-                local root = getHRP()
-                local target = afkPlayerAnchor or afkCameraAnchor
-                local maxAfkDistance = afkVacuumOrbitEnabled() and (afkOrbitRadius + 9) or 10
-                if not afk or (root and target and afkHorizontalDistance(root.Position, target) <= maxAfkDistance) then
-                    pcall(function() TntAction:FireServer("light") end)
-                    task.wait(0.4)
-                    if farmLoopEnabled() and not LocalPlayer:GetAttribute("NeedleInputLocked") then
-                        local c = Workspace.CurrentCamera
-                        root = getHRP()
-                        target = afkPlayerAnchor or afkCameraAnchor
-                        if afk then
-                            if root and target and afkHorizontalDistance(root.Position, target) <= maxAfkDistance then
-                                local throwCFrame, velocity = afkTntThrow(root, target)
-                                if State.AutoUseTNT and farmLoopEnabled() then pcall(function() TntAction:FireServer("throw", throwCFrame, velocity) end) end
-                            end
-                        elseif c then
-                            local velocity = c.CFrame.LookVector * 40 + Vector3.new(0, 8, 0)
-                            pcall(function() TntAction:FireServer("throw", c.CFrame, velocity) end)
-                        end
-                    end
-                end
+        local ok,err=xpcall(function()
+            if not State.AutoUseTNT then tntTelemetry.SetStatus("Disabled");return end
+            if not farmLoopEnabled() then
+                tntTelemetry.SetStatus(needleHasPriority() and "Paused for needle pickup/turn-in" or "Paused for cutscene or round ending");return
             end
-        end
+            if not owns("TntOwned") then tntTelemetry.SetStatus("Waiting for TNT ownership");return end
+            if LocalPlayer:GetAttribute("NeedleInputLocked") then tntTelemetry.SetStatus("Paused: NeedleInputLocked");return end
+            local afk=afkFarmModeActive()
+            local root=getHRP()
+            local target=afkPlayerAnchor or afkCameraAnchor
+            local function positionAllowed()
+                if not afk then return true end
+                if not root or not target then tntTelemetry.SetStatus("Waiting for character or pile anchor");return false end
+                local distance=afkHorizontalDistance(root.Position,target)
+                local limit=afkTntDistanceLimit()
+                if distance>limit then
+                    tntTelemetry.SetStatus(string.format("Paused: outside orbit allowance (%.1f / %.1f studs)",distance,limit));return false
+                end
+                return true
+            end
+            if not positionAllowed() then return end
+            tntTelemetry.SetStatus("Sending light request")
+            TntAction:FireServer("light")
+            task.wait(0.4)
+            if not State.AutoUseTNT or not farmLoopEnabled() or LocalPlayer:GetAttribute("NeedleInputLocked") then
+                tntTelemetry.SetStatus("Cancelled before throw: priority or setting changed");return
+            end
+            local camera=Workspace.CurrentCamera
+            root=getHRP();target=afkPlayerAnchor or afkCameraAnchor
+            if not positionAllowed() then return end
+            if afk then
+                local from,velocity=afkTntThrow(root,target)
+                -- Target selection can yield; respect priority again before sending.
+                if not State.AutoUseTNT or not farmLoopEnabled() or LocalPlayer:GetAttribute("NeedleInputLocked") then
+                    tntTelemetry.SetStatus("Cancelled during target selection");return
+                end
+                if not root.Parent or root~=getHRP() or not positionAllowed() then return end
+                TntAction:FireServer("throw",from,velocity)
+            elseif camera then
+                TntAction:FireServer("throw",camera.CFrame,camera.CFrame.LookVector*40+Vector3.new(0,8,0))
+            else tntTelemetry.SetStatus("Waiting for camera");return end
+            tntTelemetry.SetStatus("Throw request sent")
+        end,function(errorText) return tostring(errorText) end)
+        if not ok then tntTelemetry.SetStatus("Worker error (will retry): "..err) end
     end
 end)
+
+end
 
 task.spawn(function()
     while not Unloaded do

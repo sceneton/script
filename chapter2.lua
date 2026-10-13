@@ -752,6 +752,9 @@ end
 
     local chapter2ConfigReady=false
     local Registry = {}
+    local roundFailsafe={Enabled=true}
+    Registry.AutoRoundFailsafe=overviewTab:Toggle({Title="Restart Stalled Rounds After 5 Minutes",Value=true,Callback=function(value) roundFailsafe.Enabled=value end})
+    roundFailsafe.TimeoutStatus=overviewTab:Paragraph({Title="Round Failsafe Status",Desc="Waiting for round timer"})
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
     overviewTab:Section({ Title = "Detected chapter" })
@@ -949,7 +952,7 @@ end
         return character and character:FindFirstChild("HumanoidRootPart")
     end
     local function farmBlocked()
-        return hubUnloaded or BEYY_CHAPTER=="Lobby"
+        return hubUnloaded or roundFailsafe.RecoveryPending or BEYY_CHAPTER=="Lobby"
             or (BEYY_CHAPTER=="Chapter2" and sharedFarmPuzzleBusy())
             or LocalPlayer:GetAttribute("NeedleInputLocked")==true
             or LocalPlayer:GetAttribute("CutsceneActive")==true
@@ -4263,6 +4266,129 @@ end
         SettingsTab:Paragraph({ Title = "Configs unavailable", Desc = "Saving configs requires filesystem support in your environment." })
     end
     end
+
+task.spawn(function()
+    local teleport=game:GetService("TeleportService")
+    local active=true
+    local pending=false
+    local pendingSince=0
+    local retryAt=0
+    local timerIncreasing=false
+    local lastTimer
+    local cachedTimer
+    local searchAt=0
+    local clock=_G.__BEYY_ROUND_TIMEOUT_CLOCK
+    if type(clock)~="table" or clock.JobId~=game.JobId or clock.PlaceId~=game.PlaceId then
+        clock={JobId=game.JobId,PlaceId=game.PlaceId};_G.__BEYY_ROUND_TIMEOUT_CLOCK=clock
+    end
+    local function status(text)
+        if roundFailsafe.TimeoutStatus then roundFailsafe.TimeoutStatus:SetDesc(text) end
+    end
+    local function parseTimer(text)
+        if type(text)~="string" then return nil end
+        local h,m,s=text:match("^%s*(%d+):(%d%d):(%d%d)%s*$")
+        if h and tonumber(m)<60 and tonumber(s)<60 then return tonumber(h)*3600+tonumber(m)*60+tonumber(s) end
+        m,s=text:match("^%s*(%d+):(%d%d)%s*$")
+        if not m then m,s=text:match("^[Tt]ime%s*:?%s*(%d+):(%d%d)%s*$") end
+        if m and tonumber(s)<60 then return tonumber(m)*60+tonumber(s) end
+        return nil
+    end
+    local function visibleTimer(obj)
+        local current=obj
+        local named=false
+        while current and current~=LocalPlayer:FindFirstChildOfClass("PlayerGui") do
+            local name=current.Name:lower()
+            if name:find("beyynative",1,true) or name:find("ending",1,true) or name:find("results",1,true) or name:find("puzzle",1,true) then return false end
+            if name:find("timer",1,true) or name=="time" then named=true end
+            if current:IsA("GuiObject") and not current.Visible then return false end
+            if current:IsA("ScreenGui") and not current.Enabled then return false end
+            current=current.Parent
+        end
+        local camera=Workspace.CurrentCamera
+        local bottomRight=camera and obj:IsA("GuiObject") and obj.AbsolutePosition.X>=camera.ViewportSize.X*0.65 and obj.AbsolutePosition.Y>=camera.ViewportSize.Y*0.65
+        return named or bottomRight
+    end
+    local function readTimer()
+        if cachedTimer and cachedTimer.Parent and visibleTimer(cachedTimer) then
+            local value=parseTimer(cachedTimer.Text)
+            if value then return value end
+        end
+        cachedTimer=nil
+        if os.clock()<searchAt then return nil end
+        searchAt=os.clock()+5
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return nil end
+        local found
+        for _,obj in ipairs(pg:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and parseTimer(obj.Text) and visibleTimer(obj) then
+                if found then return nil end -- Ambiguous timers use the elapsed-time fallback.
+                found=obj
+            end
+        end
+        cachedTimer=found
+        return found and parseTimer(found.Text) or nil
+    end
+    local function ensureReload()
+        if _G.__BEYY_TELEPORT_RELOAD_JOB==game.JobId then return true end
+        local env=_G
+        if type(getgenv)=="function" then local ok,value=pcall(getgenv);if ok and type(value)=="table" then env=value end end
+        local queue=queue_on_teleport or env.queue_on_teleport or env.queueonteleport or env.queue_on_tp
+        if type(queue)~="function" then return false,"teleport reload is unsupported" end
+        local ok,err=pcall(queue,[==[loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/feature/native-integrated-hub/loader.lua?refresh="..tostring(os.time()).."-"..tostring(math.random(1,1000000000))))()]==])
+        if ok then _G.__BEYY_TELEPORT_RELOAD_JOB=game.JobId end
+        return ok,tostring(err)
+    end
+    local failed=teleport.TeleportInitFailed:Connect(function(player,result,message,placeId)
+        if active and pending and player==LocalPlayer and placeId==BEYY_PLACE_IDS.Lobby then
+            pending=false;roundFailsafe.RecoveryPending=false;retryAt=os.clock()+15
+            status("Teleport failed; retrying in 15s: "..tostring(message))
+        end
+    end)
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        active=false;failed:Disconnect();roundFailsafe.RecoveryPending=false
+        if previous then pcall(previous) end
+    end
+    while active and not hubUnloaded do
+        task.wait(1)
+        if not active or hubUnloaded then break end
+        if LocalPlayer:GetAttribute("IntroCutsceneFinished")==true and not clock.Started then clock.Started=os.clock() end
+        local timer=readTimer()
+        if timer and lastTimer then
+            if timer>lastTimer then timerIncreasing=true
+            elseif timer<lastTimer then
+                if timerIncreasing and timer<lastTimer-10 then clock.Started=os.clock();retryAt=0 end
+                timerIncreasing=false
+            end
+        end
+        if timer then lastTimer=timer end
+        if timer and timerIncreasing then clock.Started=os.clock()-timer else timer=nil end
+        local elapsed=timer or (clock.Started and os.clock()-clock.Started)
+        if pending then
+            if os.clock()-pendingSince>=30 then
+                pending=false;roundFailsafe.RecoveryPending=false;retryAt=os.clock()+15
+                status("Teleport has not completed; retrying in 15s")
+            end
+        elseif not roundFailsafe.Enabled then status("Disabled")
+        elseif not elapsed then status("Waiting for round timer or intro completion")
+        elseif os.clock()<retryAt then -- Keep the failure reason visible during retry cooldown.
+        elseif elapsed<=300 then
+            status(string.format("%s: %d:%02d / 5:00",timer and "Game timer" or "Elapsed since intro",math.floor(elapsed/60),math.floor(elapsed%60)))
+        else
+            local ready,reason=ensureReload()
+            if not ready then status("Cannot restart automatically: "..tostring(reason));retryAt=os.clock()+15
+            else
+                safeWrite(CACHE_FOLDER.."/autofarmwins_shared.txt","true")
+                pending=true;pendingSince=os.clock();roundFailsafe.RecoveryPending=true
+                status("Round exceeded 5 minutes; returning to lobby")
+                local ok,err=pcall(function()
+                    teleport:Teleport(BEYY_PLACE_IDS.Lobby,LocalPlayer,{BeyyHubTimeoutRecovery=true,AutoFarmWins=true,Created=os.time()})
+                end)
+                if not ok then pending=false;roundFailsafe.RecoveryPending=false;retryAt=os.clock()+15;status("Teleport error; retrying in 15s: "..tostring(err)) end
+            end
+        end
+    end
+end)
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end

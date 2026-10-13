@@ -4642,7 +4642,7 @@ task.spawn(function()
                 pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15
                 status("Teleport has not completed; retrying in 15s")
             end
-        elseif not State.AutoFarmWins or not State.AutoRoundFailsafe then status("Disabled")
+        elseif not State.AutoRoundFailsafe then status("Disabled")
         elseif not elapsed then status("Waiting for round timer or intro completion")
         elseif os.clock()<retryAt then -- Keep the failure reason visible during retry cooldown.
         elseif elapsed<=300 then

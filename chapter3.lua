@@ -358,6 +358,30 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
     return priority
 end
 
+local function watchVacuumFocus(onTransition)
+    local alive,generation,resumeAt=true,0,0
+    local function changed()
+        if not alive then return end
+        generation+=1
+        resumeAt=os.clock()+0.25
+        onTransition()
+    end
+    local connections={}
+    if BEYY_CHAPTER~="Lobby" then
+        connections[1]=UserInputService.WindowFocused:Connect(changed)
+        connections[2]=UserInputService.WindowFocusReleased:Connect(changed)
+    end
+    return {
+        Generation=function() return generation end,
+        Ready=function() return alive and os.clock()>=resumeAt end,
+        Stop=function()
+            alive=false
+            for _,connection in ipairs(connections) do connection:Disconnect() end
+            table.clear(connections)
+        end,
+    }
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -1018,8 +1042,25 @@ end
             end)
         end
     end
+    local vacuumFocus=watchVacuumFocus(function()
+        local interrupted=vacuumHeld
+        releaseSharedVacuum()
+        if interrupted then
+            local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            local hud=pg and pg:FindFirstChild("HUD")
+            local heat=hud and hud:FindFirstChild("Overheat")
+            local fill=heat and heat:FindFirstChild("Fill")
+            if fill and fill:IsA("GuiObject") then
+                vacuumCooling=fill.Size.Y.Scale>0.001
+            else
+                vacuumCooling=false
+                vacuumCooldown=math.max(vacuumCooldown,os.clock()+13.5)
+            end
+        end
+    end)
     local oldCleanup=_G.__BEYY_HUB_CLEANUP
     _G.__BEYY_HUB_CLEANUP=function()
+        vacuumFocus.Stop()
         releaseSharedVacuum()
         if oldCleanup then pcall(oldCleanup) end
     end
@@ -1029,7 +1070,7 @@ end
             Enum.KeyCode.Seven,Enum.KeyCode.Eight,Enum.KeyCode.Nine}
         while not hubUnloaded do
             task.wait(0.08)
-            local active=needleFolder and BEYY_CHAPTER~="Lobby" and sharedFarmState.AutoUseVacuum
+            local active=vacuumFocus.Ready() and needleFolder and BEYY_CHAPTER~="Lobby" and sharedFarmState.AutoUseVacuum
                 and not farmBlocked() and not needlePriority() and hubWindow.Closed==true
             if not active then
                 releaseSharedVacuum()
@@ -1049,18 +1090,31 @@ end
                         releaseSharedVacuum()
                     elseif not vacuumHeld then
                         vacuumCooling=false
+                        local focusGeneration=vacuumFocus.Generation()
+                        local equipped=false
+                        local character=LocalPlayer.Character
+                        if character then
+                            for _,tool in ipairs(character:GetChildren()) do
+                                if tool:IsA("Tool") and tool.Name:lower():find("vacuum",1,true) then equipped=true;break end
+                            end
+                        end
                         local slot=math.clamp(math.floor(tonumber(sharedFarmState.VacuumHotbarSlot) or 5),1,9)
                         local key=hotbar[slot]
+                        if not equipped then
                         pcall(function() VirtualInputManager:SendKeyEvent(true,key,false,game) end)
                         task.wait(0.05)
                         pcall(function() VirtualInputManager:SendKeyEvent(false,key,false,game) end)
                         task.wait(0.15)
-                        if not farmBlocked() and hubWindow.Closed and not needlePriority() then
+                        end
+                        if vacuumFocus.Ready() and focusGeneration==vacuumFocus.Generation() and not farmBlocked() and hubWindow.Closed and not needlePriority() then
                             vacuumPoint=point
                             local pressed=pcall(function()
                                 VirtualInputManager:SendMouseButtonEvent(point.X,point.Y,0,true,game,0)
                             end)
-                            if pressed then vacuumHeld=true; vacuumStart=os.clock() end
+                            if pressed then
+                                vacuumHeld=true; vacuumStart=os.clock()
+                                if focusGeneration~=vacuumFocus.Generation() then releaseSharedVacuum() end
+                            end
                         end
                     elseif not level and os.clock()-vacuumStart>=30 then
                         releaseSharedVacuum()

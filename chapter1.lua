@@ -1241,9 +1241,11 @@ function tntTelemetry.SetStatus(text)
         if tntTelemetry.Element then tntTelemetry.Element:SetDesc(message) end
     end
 end
+local afkOrbitTelemetry={}
 local vacuumSuctionActive = false
 local function farmLoopEnabled()
-    return not Unloaded and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
+    return not Unloaded and (not State.AutoFarmWins or afkOrbitTelemetry.PileReady==true)
+        and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
 end
 
 local function afkFarmModeActive()
@@ -1257,7 +1259,6 @@ local function vacuumRequested()
 end
 
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
-local afkOrbitTelemetry={}
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
     { name = "base-lower", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
@@ -1424,6 +1425,47 @@ local function enterNeedleCamera()
     end
     print("[Camera] Needle exposed; AFK overhead view OFF (normal camera)")
 end
+function afkOrbitTelemetry.WaitForPile()
+    local folder=Workspace:FindFirstChild("HaystackClient")
+    if afkOrbitTelemetry.PileReady and folder==afkOrbitTelemetry.PileFolder and folder and folder.Parent then return true end
+    afkOrbitTelemetry.PileReady=false
+    afkOrbitAngle,afkOrbitLap=0,0
+    local now=os.clock()
+    if folder~=afkOrbitTelemetry.PileFolder then
+        afkOrbitTelemetry.PileFolder=folder
+        afkOrbitTelemetry.SeenParts={};afkOrbitTelemetry.StableSince=nil;afkOrbitTelemetry.LastCheck=nil
+    end
+    if afkOrbitTelemetry.LastCheck and now-afkOrbitTelemetry.LastCheck<0.25 then return false end
+    afkOrbitTelemetry.LastCheck=now
+    if not folder or not folder.Parent then
+        afkOrbitTelemetry.Signature=nil;afkOrbitTelemetry.StableSince=nil
+        afkOrbitTelemetry.Update(false,"Waiting for haystack to spawn");return false
+    end
+    local count=0
+    local added=false
+    local seen=afkOrbitTelemetry.SeenParts or {}
+    afkOrbitTelemetry.SeenParts=seen
+    for _,part in budgetedFolderChildren(folder,function() return not Unloaded and State.AutoFarmWins and folder.Parent~=nil end) do
+        if isPileHay(part) and type(part:GetAttribute("HayId"))=="number" then
+            count+=1
+            if not seen[part] then seen[part]=true;added=true end
+        end
+    end
+    if Unloaded or not State.AutoFarmWins or folder~=Workspace:FindFirstChild("HaystackClient") then return false end
+    if count==0 then
+        afkOrbitTelemetry.Signature=nil;afkOrbitTelemetry.StableSince=nil
+        afkOrbitTelemetry.Update(false,"Waiting for actual hay pieces");return false
+    end
+    -- Harvesting by other players must not restart the spawn wait.
+    if added or not afkOrbitTelemetry.StableSince then afkOrbitTelemetry.StableSince=os.clock() end
+    if os.clock()-(afkOrbitTelemetry.StableSince or os.clock())<1.5 then
+        afkOrbitTelemetry.Update(false,"Waiting for haystack to finish spawning");return false
+    end
+    afkOrbitTelemetry.PileReady=true
+    afkOrbitTelemetry.SeenParts=nil
+    afkOrbitTelemetry.Update(true,"Haystack ready; starting lower base")
+    return true
+end
 function afkOrbitTelemetry.CanAdvance()
     if not afkVacuumOrbitEnabled() then return true,"Running" end
     local root=getHRP()
@@ -1515,6 +1557,7 @@ local function bindAfkCameraView()
 end
 local function startAfkCamera()
     if afkCameraBound or not IN_GAME or not afkFarmModeActive() then return end
+    if not afkOrbitTelemetry.WaitForPile() then return end
     if afkCameraSuspended and afkCameraAnchor then
         bindAfkCameraView()
         return
@@ -1555,6 +1598,10 @@ task.spawn(function()
     while not Unloaded do
         task.wait(0.05)
         if IN_GAME and afkFarmModeActive() then
+            if afkOrbitTelemetry.PileReady and afkOrbitTelemetry.PileFolder~=Workspace:FindFirstChild("HaystackClient") then
+                releaseAfkCamera();afkOrbitTelemetry.PileReady=false
+            end
+            if not afkOrbitTelemetry.PileReady and not afkOrbitTelemetry.WaitForPile() then continue end
             if needleHasPriority() then
                 if not needleCameraMode then enterNeedleCamera() end
             else
@@ -3582,7 +3629,7 @@ do
     end
 
     local function mustReleaseForPriority()
-        return Unloaded or not IN_GAME or not vacuumRequested() or not Window.Closed
+        return Unloaded or not IN_GAME or (State.AutoFarmWins and not afkOrbitTelemetry.PileReady) or not vacuumRequested() or not Window.Closed
             or earlyIntroPending or introSkipPending or needleHasPriority() or roundEndingVisible() or needlePickupActive
             or LocalPlayer:GetAttribute("NeedleInputLocked") == true
             or getHRP() == nil or Workspace.CurrentCamera == nil
@@ -3962,7 +4009,7 @@ do
     end
     local function owned() return LocalPlayer:GetAttribute("NeedleOwned") == true end
     local function tryPickup(needle)
-        if busy or Unloaded or roundEndingVisible() or not State.AutoPickupNeedle or not Window.Closed or owned() or not needle or not needle.Parent then return false end
+        if busy or Unloaded or (State.AutoFarmWins and not afkOrbitTelemetry.PileReady) or roundEndingVisible() or not State.AutoPickupNeedle or not Window.Closed or owned() or not needle or not needle.Parent then return false end
         busy = true
         needlePickupActive = true
         local started = os.clock()

@@ -1450,9 +1450,9 @@ local function bindAfkCameraView()
                     + (wantedFocusOffsetY - (afkSweepFocusOffsetY or wantedFocusOffsetY)) * alpha
                 local radial = Vector3.new(math.cos(afkOrbitAngle), 0, math.sin(afkOrbitAngle))
                 local camAt = Vector3.new(
-                    afkCameraAnchor.X + radial.X * (afkSweepRadius + 2.6),
+                    afkCameraAnchor.X + radial.X * (afkSweepRadius + 0.6),
                     afkSweepSurfaceY + band.cameraLift,
-                    afkCameraAnchor.Z + radial.Z * (afkSweepRadius + 2.6)
+                    afkCameraAnchor.Z + radial.Z * (afkSweepRadius + 0.6)
                 )
                 local focus = Vector3.new(
                     afkCameraAnchor.X + radial.X * math.max(0, afkSweepRadius - 5),

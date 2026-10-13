@@ -1080,7 +1080,7 @@ local function recordNeedleDiagnostic(needle)
             local json=game:GetService("HttpService"):JSONEncode(report)
             _G.__BEYY_NEEDLE_DIAGNOSTIC=json
             if type(writefile)=="function" then pcall(writefile,"BeyyHub/needle_diagnostic.json",json) end
-            warn("[Needle Diagnostic] "..json)
+            warn("[Needle Diagnostic] Target "..report.Target.Path.."; full report in BeyyHub/needle_diagnostic.json or _G.__BEYY_NEEDLE_DIAGNOSTIC")
         end)
         if not ok then warn("[Needle Diagnostic] Capture failed: "..tostring(err)) end
     end)
@@ -1252,6 +1252,7 @@ local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
     { name = "base", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-second-lap", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
     { name = "base-transition", radius = 20.0, standoff = 2.1, cameraLift = 5.0, focusYOffset = 0.7 },
     { name = "lower-middle", radius = 18.0, standoff = 2.0, cameraLift = 5.0, focusYOffset = -0.1 },
     { name = "middle-transition", radius = 16.0, standoff = 1.95, cameraLift = 5.1, focusYOffset = -0.8 },
@@ -1349,7 +1350,7 @@ local function measureAfkBandSurfaces(center)
     end
     if floorY == math.huge then floorY = center.Y - 4 end
     if highestY == -math.huge then highestY = center.Y + 8 end
-    local fractions = {0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
+    local fractions = {0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
     local surfaces = {}
     for i, samples in ipairs(radialTops) do
         local baseline = floorY + (highestY - floorY) * fractions[i]
@@ -3718,6 +3719,148 @@ do
     end)
 end
 
+-- Bounded tracing runs only while a needle pickup is active.
+local needleTraceLoadedAt=os.clock()
+local needleTraceSequence=0
+local needleTraceLastSuccess
+local needleTraceFailedTarget
+local needleTraceBaselineLoaded=false
+local function beginNeedleTrace(needle,character,root,camera,started)
+    if not needleTraceBaselineLoaded then
+        needleTraceBaselineLoaded=true
+        needleTraceLastSuccess=_G.__BEYY_NEEDLE_LAST_SUCCESS
+        if not needleTraceLastSuccess and type(readfile)=="function" then
+            local ok,previous=pcall(function()
+                return game:GetService("HttpService"):JSONDecode(readfile("BeyyHub/needle_success_trace.json"))
+            end)
+            if ok and type(previous)=="table" and previous.Schema==1 and previous.Success==true and previous.PlaceId==game.PlaceId then needleTraceLastSuccess=previous end
+        end
+    end
+    needleTraceSequence+=1
+    local report={Schema=1,Attempt=needleTraceSequence,Time=os.time(),SessionUptime=os.clock()-needleTraceLoadedAt,PlaceId=game.PlaceId,JobId=game.JobId,
+        Events={},Snapshots={},DroppedEvents=0}
+    local connections={}
+    local stopped=false
+    local originalParent=needle.Parent
+    local originalServer=Workspace:FindFirstChild("NeedleObjectiveServer")
+    local mouse
+    pcall(function() mouse=LocalPlayer:GetMouse() end)
+    local function path(object)
+        if not object then return "nil" end
+        local ok,value=pcall(object.GetFullName,object)
+        return ok and value or tostring(object)
+    end
+    local function vector(v)
+        local result={X=v.X,Y=v.Y}
+        if typeof(v)=="Vector3" then result.Z=v.Z end
+        return result
+    end
+    local function event(kind,data)
+        if stopped then return end
+        if #report.Events>=128 then report.DroppedEvents+=1;return end
+        report.Events[#report.Events+1]={At=os.clock()-started,Kind=kind,Data=data}
+    end
+    local function watch(signal,kind,describe)
+        local ok,connection=pcall(function()
+            return signal:Connect(function(...)
+                local args={...}
+                local captured,data=pcall(describe,table.unpack(args))
+                event(kind,captured and data or {CaptureError=tostring(data)})
+            end)
+        end)
+        if ok then connections[#connections+1]=connection end
+    end
+    local function mouseState()
+        return {LeftPressed=UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1),
+            Behavior=tostring(UserInputService.MouseBehavior),Position=vector(UserInputService:GetMouseLocation()),
+            GameMouseTarget=mouse and path(mouse.Target) or "unavailable"}
+    end
+    local function snapshot(stage)
+        if stopped or #report.Snapshots>=24 then return end
+        local ok,data=pcall(function()
+            local tools={}
+            for _,item in ipairs(character:GetChildren()) do if item:IsA("Tool") then tools[#tools+1]=item.Name end end
+            local viewport=camera.ViewportSize/2
+            local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances={character}
+            local ray=camera:ViewportPointToRay(viewport.X,viewport.Y)
+            local hit=Workspace:Raycast(ray.Origin,ray.Direction*50,params)
+            local inset=GuiService:GetGuiInset()
+            return {Stage=stage,Mouse=mouseState(),Tools=tools,MenuClosed=Window.Closed,UIOwnsMouse=autoUiMouseBusy==true,
+                Unloaded=Unloaded,PickupOwnsMouse=needlePickupActive==true,OrbitEnabled=afkVacuumOrbitEnabled(),CharacterSame=LocalPlayer.Character==character,CharacterLive=character.Parent~=nil,RootLive=root.Parent~=nil,
+                ObjectiveLive=needle.Parent~=nil,ObjectiveParentSame=needle.Parent==originalParent,
+                ObjectiveServerSame=Workspace:FindFirstChild("NeedleObjectiveServer")==originalServer,
+                Target=path(needle),TargetPosition=vector(needle.Position),Distance=(root.Position-needle.Position).Magnitude,
+                TargetHayId=resolveNeedleHayId(needle),Hidden=needle:GetAttribute("HIDDEN"),HiddenWithin=needle:GetAttribute("HIDDEN_WITHIN"),
+                CameraSame=Workspace.CurrentCamera==camera,CameraType=tostring(camera.CameraType),CameraSubject=path(camera.CameraSubject),
+                CameraPosition=vector(camera.CFrame.Position),CameraLook=vector(camera.CFrame.LookVector),
+                CenterRayHit=hit and path(hit.Instance) or "none",GuiInset=vector(inset),
+                NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),
+                CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),HoveredHayId=LocalPlayer:GetAttribute("HoveredHayId")}
+        end)
+        report.Snapshots[#report.Snapshots+1]={At=os.clock()-started,Data=ok and data or {Stage=stage,CaptureError=tostring(data)}}
+    end
+    -- Signal callbacks are observation only; they never change input or gameplay state.
+    watch(UserInputService.InputBegan,"InputBegan",function(input,processed)
+        return {Type=tostring(input.UserInputType),GameProcessed=processed}
+    end)
+    watch(UserInputService.InputEnded,"InputEnded",function(input,processed)
+        return {Type=tostring(input.UserInputType),GameProcessed=processed}
+    end)
+    watch(UserInputService.WindowFocused,"Focus",function() return {Focused=true} end)
+    watch(UserInputService.WindowFocusReleased,"Focus",function() return {Focused=false} end)
+    watch(UserInputService:GetPropertyChangedSignal("MouseBehavior"),"MouseBehavior",function() return mouseState() end)
+    watch(Workspace:GetPropertyChangedSignal("CurrentCamera"),"CurrentCamera",function() return {Same=Workspace.CurrentCamera==camera} end)
+    watch(camera:GetPropertyChangedSignal("CameraType"),"CameraType",function() return {Value=tostring(camera.CameraType)} end)
+    watch(camera:GetPropertyChangedSignal("CameraSubject"),"CameraSubject",function() return {Value=path(camera.CameraSubject)} end)
+    watch(character.ChildAdded,"CharacterChildAdded",function(item) return {Path=path(item),Class=item.ClassName,Tool=item:IsA("Tool")} end)
+    watch(character.ChildRemoved,"CharacterChildRemoved",function(item) return {Path=path(item),Class=item.ClassName,Tool=item:IsA("Tool")} end)
+    watch(LocalPlayer.CharacterAdded,"CharacterAdded",function(item) return {Same=item==character} end)
+    watch(needle.AncestryChanged,"ObjectiveAncestry",function(_,parent) return {Parent=path(parent),Same=parent==originalParent} end)
+    for _,attribute in ipairs({"NeedleOwned","NeedleInputLocked","CutsceneActive","VacuumActive","HandHoldEnabled","PitchforkHoldEnabled"}) do
+        watch(LocalPlayer:GetAttributeChangedSignal(attribute),"PlayerAttribute",function() return {Name=attribute,Value=tostring(LocalPlayer:GetAttribute(attribute))} end)
+    end
+    local lastCameraEvent=-math.huge
+    local function checkCamera(expected)
+        if not expected or stopped or os.clock()-lastCameraEvent<0.1 then return end
+        local ok,changed=pcall(function()
+            return Workspace.CurrentCamera~=camera or camera.CameraType~=Enum.CameraType.Scriptable
+                or (camera.CFrame.Position-expected.Position).Magnitude>0.1
+                or camera.CFrame.LookVector:Dot(expected.LookVector)<0.999
+        end)
+        if ok and changed then lastCameraEvent=os.clock();event("CameraChangedBeforeAim",{Position=vector(camera.CFrame.Position),Type=tostring(camera.CameraType)}) end
+    end
+    local function finish(success,reason,clicks)
+        if stopped then return end
+        snapshot("after-cleanup")
+        report.Success=success;report.Reason=reason;report.Clicks=clicks;report.Duration=os.clock()-started
+        stopped=true
+        for _,connection in ipairs(connections) do pcall(connection.Disconnect,connection) end
+        task.defer(function()
+            local ok,err=pcall(function()
+                local history=_G.__BEYY_NEEDLE_TRACE_HISTORY or {}
+                history[#history+1]=report
+                if #history>12 then table.remove(history,1) end
+                _G.__BEYY_NEEDLE_TRACE_HISTORY=history
+                if success then needleTraceLastSuccess=report;_G.__BEYY_NEEDLE_LAST_SUCCESS=report end
+                local payload=success and report or {Failure=report,LastSuccess=needleTraceLastSuccess}
+                local json=game:GetService("HttpService"):JSONEncode(payload)
+                local filename="BeyyHub/needle_"..(success and "success" or (needleTraceFailedTarget==needle and "retry" or "failure")).."_trace.json"
+                if success then needleTraceFailedTarget=nil else needleTraceFailedTarget=needle end
+                local saved=false
+                if type(writefile)=="function" then saved=pcall(writefile,filename,json) end
+                if not success then
+                    _G.__BEYY_NEEDLE_FAILURE_TRACE=json
+                    warn(string.format("[Needle Trace] Attempt %d failed (%d clicks); %s. Trace %s",report.Attempt,clicks,tostring(reason),saved and filename or "available in _G.__BEYY_NEEDLE_FAILURE_TRACE"))
+                end
+            end)
+            if not ok then warn("[Needle Trace] Save failed: "..tostring(err)) end
+        end)
+    end
+    snapshot("start")
+    return {Event=event,Snapshot=snapshot,CheckCamera=checkCamera,Finish=finish}
+end
+
 do
     local SETTINGS = { HeightAboveNeedle = 2.5, HorizontalOffsetStuds = 2.0, MaxClicks = 8, MousePressSeconds = 0.10, OwnershipWaitSeconds = 0.10, RetryDelay = 0.6,
         FilterRadiusPixels = 50, FilterNeedleRadiusStuds = 8, FilterMaxParts = 400 }
@@ -3758,6 +3901,7 @@ do
         end
         local physicalFallback = type(needleId) ~= "number"
         setNeedlePickupStatus(physicalFallback and "Attempting normal mouse pickup; no numeric HayId found" or ("Picking up needle ID "..tostring(needleId)))
+        local trace=beginNeedleTrace(needle,char,root,cam,started)
         local initialPivot = char:GetPivot()
         local originalHover = LocalPlayer:GetAttribute("HoveredHayId")
         local previousPickupCameraType, previousPickupCameraSubject, previousPickupCameraCFrame
@@ -3847,6 +3991,7 @@ do
             if not mouseDown then return end
             local center = cam.ViewportSize / 2
             pcall(function() VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0) end)
+            trace.Event("ReleaseRequested",{Click=clicks})
             mouseDown = false
         end
         local function waitForConfirmation(seconds)
@@ -3862,6 +4007,10 @@ do
         local function cleanup()
             if cleaned then return end
             cleaned = true
+            captureOwnership()
+            success=success or observedOwnership
+            trace.Event("CleanupStarted",{})
+            trace.Snapshot("before-cleanup")
             releaseMouse()
             if bound then
                 pcall(function() RunService:UnbindFromRenderStep(renderName) end)
@@ -3911,6 +4060,7 @@ do
                 warn(string.format("[Needle] Pickup failed HayId=%s: %s (%d clicks)",
                     tostring(needleId), tostring(failureReason), clicks))
             end
+            trace.Finish(success,success and "NeedleOwned confirmed" or failureReason,clicks)
             activeCleanup = nil
             busy = false
             needlePickupActive = false
@@ -3956,17 +4106,21 @@ do
 
             local cameraPosition = targetRootPosition - horizontalForward * 3.5
                 + Vector3.new(0, 3.5, 0)
+            local expectedPickupCamera
             local function aimAtNeedle()
                 if Unloaded or not needle.Parent or observedOwnership or roundEndingVisible() then return end
                 if Workspace.CurrentCamera ~= cam then return end
+                trace.CheckCamera(expectedPickupCamera)
                 cam.CameraType = Enum.CameraType.Scriptable
                 cam.CFrame = CFrame.lookAt(cameraPosition, needle.Position, Vector3.yAxis)
+                expectedPickupCamera=cam.CFrame
             end
             if physicalFallback then
                 local humanoid=char:FindFirstChildOfClass("Humanoid")
                 if humanoid then humanoid:UnequipTools();RunService.RenderStepped:Wait() end
             end
             placeNearNeedle()
+            trace.Snapshot("after-positioning")
             captureOwnership()
             if observedOwnership then success = true; return end
             local function forceHover()
@@ -4028,18 +4182,23 @@ do
                     break
                 end
                 if physicalFallback then
+                    trace.Event("FreshReleaseRequested",{Click=i})
                     VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
                     RunService.RenderStepped:Wait()
                     if Unloaded or not State.AutoPickupNeedle or not Window.Closed then failureReason="Pickup cancelled before fresh click"; break end
                 end
+                trace.Snapshot("before-press-"..tostring(i))
+                trace.Event("PressRequested",{Click=i,OwnedMouseDown=mouseDown,PhysicalFallback=physicalFallback})
                 local pressed, pressErr = pcall(function()
                     VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
                 end)
                 if not pressed then failureReason = "VIM press failed: " .. tostring(pressErr); break end
+                trace.Event("PressResult",{OK=pressed,Error=pressErr and tostring(pressErr) or nil})
                 clicks += 1
                 mouseDown = true
                 task.wait(SETTINGS.MousePressSeconds)
                 releaseMouse()
+                trace.Snapshot("after-release-"..tostring(i))
                 if waitForConfirmation(SETTINGS.OwnershipWaitSeconds) then success = true; break end
                 if i == 4 and not physicalFallback then applyQueryFilter() end
             end

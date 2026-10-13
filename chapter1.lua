@@ -392,6 +392,25 @@ local function watchVacuumFocus(onTransition)
     }
 end
 
+local function createVacuumHeatWatchdog()
+    local running,lastHeat,lastProgress=false,nil,0
+    local watchdog={}
+    function watchdog.Start(heat)
+        running=true;lastHeat=heat;lastProgress=os.clock()
+    end
+    function watchdog.Stop() running=false;lastHeat=nil end
+    function watchdog.Check(heat)
+        if not running or type(heat)~="number" or heat~=heat then return nil end
+        local previous=lastHeat
+        if previous==nil or heat>previous+0.0002 then lastProgress=os.clock() end
+        lastHeat=heat
+        if previous and heat<previous-0.001 then return "cooling" end
+        if os.clock()-lastProgress>=4 then return "stalled" end
+        return nil
+    end
+    return watchdog
+end
+
 local BEYY_PLACE_IDS = {
     Lobby = 77108422251420,
     Chapter1 = 108628039999641,
@@ -3548,6 +3567,10 @@ do
                                 end)
                             end
                             if not vacuumFocus.Ready() or focusGeneration~=vacuumFocus.Generation() then return end
+                            -- Reconcile stale engine input before every new hold, including in background.
+                            pcall(function() VirtualInputManager:SendMouseButtonEvent(x,y,0,false,game,0) end)
+                            task.wait(0.05)
+                            if not canVacuum() or focusGeneration~=vacuumFocus.Generation() then return end
                             local pressed = pcall(function()
                                 VirtualInputManager:SendMouseMoveEvent(x, y, game)
                                 VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
@@ -3580,7 +3603,7 @@ do
                                     if os.clock() - lastRisingAt > HEAT_STALLED_SECONDS then
                                         if os.clock() - lastStallWarning > 30 then
                                             lastStallWarning = os.clock()
-                                            warn("[Vacuum] Heat not increasing; releasing Mouse1 and retrying equip (not cooling)")
+                                            warn("[Vacuum] Heat stalled; releasing stale VIM hold and retrying a fresh press")
                                         end
                                         break
                                     end

@@ -3736,7 +3736,7 @@ do
     end
     local function owned() return LocalPlayer:GetAttribute("NeedleOwned") == true end
     local function tryPickup(needle)
-        if busy or Unloaded or roundEndingVisible() or not State.AutoPickupNeedle or owned() or not needle or not needle.Parent then return false end
+        if busy or Unloaded or roundEndingVisible() or not State.AutoPickupNeedle or not Window.Closed or owned() or not needle or not needle.Parent then return false end
         busy = true
         needlePickupActive = true
         local started = os.clock()
@@ -3982,13 +3982,13 @@ do
             RunService:BindToRenderStep(renderName, Enum.RenderPriority.Last.Value + 30, forceHover)
             bound = true
             RunService.RenderStepped:Wait()
-            applyQueryFilter()
+            if not physicalFallback then applyQueryFilter() end
 
             RunService.RenderStepped:Wait()
             for i = 1, SETTINGS.MaxClicks do
                 captureOwnership()
                 if observedOwnership then success = true; break end
-                if Unloaded or not State.AutoPickupNeedle or roundEndingVisible() then failureReason = "Pickup cancelled at round end"; break end
+                if Unloaded or not State.AutoPickupNeedle or not Window.Closed or roundEndingVisible() then failureReason = "Pickup cancelled at round end"; break end
                 if not needle.Parent then failureReason = "Needle disappeared before confirmation"; break end
                 if not char.Parent or not root.Parent then failureReason = "Character disappeared"; break end
                 local distance = (root.Position - needle.Position).Magnitude
@@ -4013,7 +4013,9 @@ do
                     params.FilterType=Enum.RaycastFilterType.Exclude
                     params.FilterDescendantsInstances={char}
                     local hit=Workspace:Raycast(ray.Origin,ray.Direction*50,params)
-                    if not hit or hit.Instance~=needle then
+                    local needleModel=needle.Parent
+                    local hitNeedle=hit and (hit.Instance==needle or (needleModel and needleModel:IsA("Model") and hit.Instance:IsDescendantOf(needleModel) and hit.Instance:GetAttribute("IsNeedleObjective")==true))
+                    if not hitNeedle then
                         failureReason="Physical click ray blocked by "..(hit and hit.Instance:GetFullName() or "no target")
                         break
                     end
@@ -4025,6 +4027,11 @@ do
                     failureReason = "Needle camera did not centre the target"
                     break
                 end
+                if physicalFallback then
+                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                    RunService.RenderStepped:Wait()
+                    if Unloaded or not State.AutoPickupNeedle or not Window.Closed then failureReason="Pickup cancelled before fresh click"; break end
+                end
                 local pressed, pressErr = pcall(function()
                     VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
                 end)
@@ -4034,7 +4041,7 @@ do
                 task.wait(SETTINGS.MousePressSeconds)
                 releaseMouse()
                 if waitForConfirmation(SETTINGS.OwnershipWaitSeconds) then success = true; break end
-                if i == 4 then applyQueryFilter() end
+                if i == 4 and not physicalFallback then applyQueryFilter() end
             end
             captureOwnership()
             success = success or observedOwnership

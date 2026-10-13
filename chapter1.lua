@@ -3743,6 +3743,7 @@ local function beginNeedleTrace(needle,character,root,camera,started)
         Events={},Snapshots={},DroppedEvents=0}
     local connections={}
     local stopped=false
+    local lastObserved={}
     local originalParent=needle.Parent
     local originalServer=Workspace:FindFirstChild("NeedleObjectiveServer")
     local mouse
@@ -3759,6 +3760,13 @@ local function beginNeedleTrace(needle,character,root,camera,started)
     end
     local function event(kind,data)
         if stopped then return end
+        local observationKey,observationValue
+        if kind=="CameraType" or kind=="CameraSubject" then observationKey=kind;observationValue=data.Value
+        elseif kind=="PlayerAttribute" then observationKey=kind..tostring(data.Name);observationValue=data.Value end
+        if observationKey then
+            if lastObserved[observationKey]==observationValue then return end
+            lastObserved[observationKey]=observationValue
+        end
         if #report.Events>=128 then report.DroppedEvents+=1;return end
         report.Events[#report.Events+1]={At=os.clock()-started,Kind=kind,Data=data}
     end
@@ -3797,17 +3805,17 @@ local function beginNeedleTrace(needle,character,root,camera,started)
                 CameraSame=Workspace.CurrentCamera==camera,CameraType=tostring(camera.CameraType),CameraSubject=path(camera.CameraSubject),
                 CameraPosition=vector(camera.CFrame.Position),CameraLook=vector(camera.CFrame.LookVector),
                 CenterRayHit=hit and path(hit.Instance) or "none",GuiInset=vector(inset),
-                NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),
+                VacuumActive=LocalPlayer:GetAttribute("VacuumActive"),VacuumState=LocalPlayer:GetAttribute("VacuumState"),NeedleEquippedSlot=LocalPlayer:GetAttribute("NeedleEquippedSlot"),NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),
                 CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),HoveredHayId=LocalPlayer:GetAttribute("HoveredHayId")}
         end)
         report.Snapshots[#report.Snapshots+1]={At=os.clock()-started,Data=ok and data or {Stage=stage,CaptureError=tostring(data)}}
     end
     -- Signal callbacks are observation only; they never change input or gameplay state.
     watch(UserInputService.InputBegan,"InputBegan",function(input,processed)
-        return {Type=tostring(input.UserInputType),GameProcessed=processed}
+        return {Type=tostring(input.UserInputType),Key=tostring(input.KeyCode),GameProcessed=processed}
     end)
     watch(UserInputService.InputEnded,"InputEnded",function(input,processed)
-        return {Type=tostring(input.UserInputType),GameProcessed=processed}
+        return {Type=tostring(input.UserInputType),Key=tostring(input.KeyCode),GameProcessed=processed}
     end)
     watch(UserInputService.WindowFocused,"Focus",function() return {Focused=true} end)
     watch(UserInputService.WindowFocusReleased,"Focus",function() return {Focused=false} end)

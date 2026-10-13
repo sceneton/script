@@ -63,9 +63,10 @@ print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 local function installAntiIdle(tab, registry, isRunning)
     local enabled, alive, warned = true, true, false
     local virtualUser
+    local status = tab:Paragraph({Title="Anti AFK Status",Desc="Enabled; waiting for idle signal"})
     registry.AntiAFK = tab:Toggle({
         Title = "Anti AFK Kick", Value = true,
-        Callback = function(value) enabled = value == true end,
+        Callback = function(value) enabled = value == true; status:SetDesc(enabled and "Enabled; waiting for idle signal" or "Disabled") end,
     })
     local idleConnection = LocalPlayer.Idled:Connect(function()
         if not alive or not enabled or not isRunning() then return end
@@ -75,7 +76,23 @@ local function installAntiIdle(tab, registry, isRunning)
             virtualUser:CaptureController()
             virtualUser:ClickButton2(Vector2.zero, camera and camera.CFrame or CFrame.new())
         end)
-        if not ok and not warned then
+        local method = "VirtualUser"
+        if not ok then
+            method = "VirtualInputManager"
+            local pressed=false
+            ok,err=pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(0,0,1,true,game,0)
+                pressed=true
+            end)
+            if pressed then
+                local released,releaseErr=pcall(function() VirtualInputManager:SendMouseButtonEvent(0,0,1,false,game,0) end)
+                if not released then ok=false;err=releaseErr end
+            end
+        end
+        status:SetDesc(ok and ("Idle input sent via "..method) or ("Idle input failed: "..tostring(err)))
+        if ok then
+            print("[BeyyHub] Anti AFK idle input sent via "..method)
+        elseif not warned then
             warned = true
             warn("[BeyyHub] Anti AFK input unavailable: " .. tostring(err))
         end

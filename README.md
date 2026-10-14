@@ -30,6 +30,14 @@ The five-minute round failsafe is exclusive to Chapter 1 and defaults on, indepe
 
 No-ID Chapter 1 needle pickup selects hand slot 1 and moves closer before physical clicks. Numeric-ID pickup retains the local HoveredHayId override. Diagnostic success, failure and retry traces are saved under BeyyHub/ when executor filesystem support is available.
 
+## Chapter 3 / Ranch
+
+Chapter 3 has Auto Grab & Attach UFO Parts (default OFF), Auto Solve Ranch Puzzles (default ON), a one-shot instant-completion diagnostic and an object-inspection button. Both toggles use the existing saved config system. The GUI solvers match wire colors, pull vent strands and align the laser using the replicated CenterY attribute. UFO progress is confirmed through CarryingUfoPart/HeldBy and Returned/PartsReturned, rather than remote delivery alone.
+
+These options are adapted from [BeyyTU/needlehub chapter3.lua](https://github.com/BeyyTU/needlehub/blob/main/chapter3.lua) (source blob 1e4025b9bd9d261effa6b45334038d532c08c4ed; the blob hash identifies the imported content). Farming and vacuum input yield while Ranch input is active. Opening the menu, disabling the relevant toggle or unloading cancels input; held mouse buttons are released. The instant-completion button sends one experimental PuzzleDone() request; GUI closure alone does not prove server completion.
+
+Validation covers compilation and mocked matching-wire, laser-coordinate, vent-direction, input error/release, cancellation, busy gating and UFO candidate/ownership checks. Live Chapter 3 gameplay still needs verification.
+
 ## Validation
 
 All seven Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.

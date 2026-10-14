@@ -1242,6 +1242,7 @@ function tntTelemetry.SetStatus(text)
         if tntTelemetry.Element then tntTelemetry.Element:SetDesc(message) end
     end
 end
+local afkOrbitTelemetry={}
 local vacuumSuctionActive = false
 local function farmLoopEnabled()
     return not Unloaded and not afkOrbitTelemetry.RecoveryPending and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
@@ -1258,7 +1259,6 @@ local function vacuumRequested()
 end
 
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
-local afkOrbitTelemetry={}
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
     { name = "base-lower", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },

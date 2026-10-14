@@ -1447,6 +1447,9 @@ end
     -- Chapter 3 options adapted from BeyyTU/needlehub chapter3.lua
     -- Reference blob: 1e4025b9bd9d261effa6b45334038d532c08c4ed
     local function installRanchOptions()
+        local ranchUfoStatusText="Starting UFO automation"
+        local ranchUfoStatusLabel
+        local ranchUfoDiagnostic=function() return {} end
         -- Ranch GUI solver. The three GUI layouts and interactive controls
         -- were obtained from the live read-only Ranch JSON captures.
         -- Server-side puzzle remote arguments are NOT known. Normal solving
@@ -2043,6 +2046,10 @@ end
             end
             return nil
         end
+        local function ranchUfoUnheld(piece)
+            local holder=piece:GetAttribute("HeldBy")
+            return holder==nil or holder==false or holder=="" or tonumber(holder)==0
+        end
         local function ranchUfoExposedPart(model)
             if not model then return nil end
             local root=farmRoot()
@@ -2055,7 +2062,7 @@ end
                         or piece:GetAttribute("Revealed")~=nil)
                     and piece:GetAttribute("Revealed")==true
                     and piece:GetAttribute("Returned")~=true
-                    and piece:GetAttribute("HeldBy")==nil then
+                    and ranchUfoUnheld(piece) then
                     local distance=root and (root.Position-piece.Position).Magnitude or 0
                     local untilAt=ranchUfoFailedUntil[piece.Name] or 0
                     if os.clock()>=untilAt and distance<score then
@@ -2099,14 +2106,69 @@ end
             if not ok then ranchUfoNotice(name.." failed: "..tostring(err),true) end
             return ok -- Local send only; never interpreted as server acceptance.
         end
+        local function ranchUfoBlockReason(ignoreMenu)
+            if hubUnloaded then return "Hub unloaded" end
+            if not sharedFarmState.AutoGrabAttachUfoParts then return "Auto Grab & Attach UFO Parts is OFF" end
+            if not hubWindow.Closed and not ignoreMenu then return "Close the menu to allow UFO movement" end
+            if needleBusy or needlePriority() then return "Waiting for needle pickup / turn-in" end
+            if ranchInstantProbeActive then return "Waiting for instant puzzle test" end
+            if ranchPuzzleInputBusy then return "Waiting for puzzle input" end
+            local puzzle=ranchActivePuzzle()
+            if puzzle then return "Waiting for puzzle: "..puzzle end
+            for _,flag in ipairs({"NeedleInputLocked","CutsceneActive","HintViewerOpen"}) do
+                if LocalPlayer:GetAttribute(flag)==true then return "Waiting for "..flag end
+            end
+            if not farmRoot() then return "Waiting for character root" end
+            if not Workspace.CurrentCamera then return "Waiting for camera" end
+            return nil
+        end
         local function ranchUfoSafeToMove()
-            return not hubUnloaded and sharedFarmState.AutoGrabAttachUfoParts
-                and hubWindow.Closed and not needleBusy and not needlePriority()
-                and not ranchInstantProbeActive and not ranchPuzzleInputBusy
-                and ranchActivePuzzle()==nil
-                and LocalPlayer:GetAttribute("NeedleInputLocked")~=true
-                and LocalPlayer:GetAttribute("CutsceneActive")~=true
-                and LocalPlayer:GetAttribute("HintViewerOpen")~=true
+            return ranchUfoBlockReason()==nil
+        end
+        ranchUfoDiagnostic=function()
+            local model=ranchUfoModel()
+            local data={status=ranchUfoStatusText,blocker=ranchUfoBlockReason(true),menuOpen=not hubWindow.Closed,
+                module=__BEYY_MODULE,placeId=game.PlaceId,jobId=game.JobId,
+                modelFound=model~=nil,carrying=ranchUfoCarried(),
+                partsReturned=ranchUfoReturned(model),pieces={}}
+            if model then
+                data.modelAttributes=model:GetAttributes()
+                local root=farmRoot()
+                for _,piece in ipairs(model:GetDescendants()) do
+                    if piece:IsA("BasePart") then
+                        data.pieces[#data.pieces+1]={path=piece:GetFullName(),
+                            attributes=piece:GetAttributes(),unheld=ranchUfoUnheld(piece),
+                            distance=root and (root.Position-piece.Position).Magnitude or nil,
+                            retryIn=math.max(0,(ranchUfoFailedUntil[piece.Name] or 0)-os.clock())}
+                    end
+                end
+            end
+            return data
+        end
+        local function ranchUfoUpdateStatus()
+            local reason=ranchUfoBlockReason(true)
+            if reason then ranchUfoStatusText=reason
+            elseif ranchUfoBusy then return
+            else
+                local model=ranchUfoModel()
+                if not model then ranchUfoStatusText="Waiting for Workspace.UfoSplitted model"
+                elseif model:GetAttribute("Repaired")==true or ranchUfoReturned(model)>=(tonumber(model:GetAttribute("PartsTotal")) or 7) then
+                    ranchUfoStatusText="UFO repaired / all parts returned"
+                elseif ranchUfoCarried() then ranchUfoStatusText="Carrying "..ranchUfoCarried().."; attachment pending"
+                elseif os.clock()<ranchUfoNextActionAt then ranchUfoStatusText="Waiting for retry cooldown"
+                elseif ranchUfoExposedPart(model) then ranchUfoStatusText="Ready: "..ranchUfoExposedPart(model).Name
+                else
+                    local revealed,held,returned=0,0,0
+                    for _,piece in ipairs(model:GetDescendants()) do
+                        if piece:IsA("BasePart") and piece:GetAttribute("Revealed")==true then
+                            revealed+=1
+                            if not ranchUfoUnheld(piece) then held+=1 end
+                            if piece:GetAttribute("Returned")==true then returned+=1 end
+                        end
+                    end
+                    ranchUfoStatusText=string.format("No eligible UFO part: revealed=%d, held=%d, returned=%d",revealed,held,returned)
+                end
+            end
         end
         local function ranchUfoWaitFor(check,timeout)
             local deadline=os.clock()+timeout
@@ -2403,8 +2465,11 @@ end
             return attached()
         end
         task.spawn(function()
+            local lastStatus
             while not hubUnloaded do
                 task.wait(0.10)
+                local tickOK,tickError=pcall(function()
+                ranchUfoUpdateStatus()
                 if sharedFarmState.AutoGrabAttachUfoParts and not ranchUfoBusy
                     and os.clock()>=ranchUfoNextActionAt and ranchUfoSafeToMove() then
                     local model=ranchUfoModel()
@@ -2415,6 +2480,7 @@ end
                         local piece=not carrying and ranchUfoExposedPart(model) or nil
                         if carrying or piece then
                             ranchUfoBusy=true
+                            ranchUfoStatusText=carrying and ("Attaching "..carrying) or ("Picking up "..piece.Name)
                             releaseSharedVacuum()
                             local root=farmRoot()
                             local camera=Workspace.CurrentCamera
@@ -2492,6 +2558,17 @@ end
                         end
                     end
                 end
+                end)
+                if not tickOK then
+                    ranchUfoStatusText="UFO worker error: "..tostring(tickError)
+                    ranchUfoNotice(ranchUfoStatusText,true)
+                    task.wait(1)
+                end
+                local display=ranchUfoStatusText..(hubWindow.Closed and "" or " (menu paused)")
+                if ranchUfoStatusLabel and display~=lastStatus then
+                    lastStatus=display
+                    pcall(function() ranchUfoStatusLabel:SetDesc(display) end)
+                end
             end
         end)
 
@@ -2502,6 +2579,18 @@ end
         tab:Section({Title="UFO part collection"})
         farmToggle(tab,"AutoGrabAttachUfoParts","Auto Grab & Attach UFO Parts",
             "Automatically picks up revealed UFO pieces, approaches the UFO and attaches them. Confirms ownership and PartsReturned; starts OFF for testing.")
+        ranchUfoStatusLabel=tab:Paragraph({Title="UFO Pickup / Attach Status",Desc=ranchUfoStatusText})
+        tab:Button({Title="Export UFO Pickup Diagnostics",Callback=function()
+            local ok,err=pcall(function()
+                local data=ranchUfoDiagnostic()
+                local json=httpService:JSONEncode(data)
+                local path=CACHE_FOLDER.."/ufo_pickup_diagnostic.json"
+                safeWrite(path,json)
+                if type(setclipboard)=="function" then pcall(setclipboard,json) end
+                print("[Ranch UFO] "..ranchUfoStatusText.." | diagnostic: "..path)
+            end)
+            if not ok then warn("[Ranch UFO] Diagnostic failed: "..tostring(err)) end
+        end})
         tab:Section({Title="UFO puzzle automation"})
         farmToggle(tab,"AutoSolveRanchPuzzles","Auto Solve Ranch Puzzles",
             "Auto-drag matching wires, remove vent hay, and align laser when puzzle opens. OFF lets you test whether the game completes idle puzzles on its own.")
@@ -3426,3 +3515,4 @@ end
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end
+

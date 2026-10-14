@@ -38,6 +38,16 @@ These options are adapted from [BeyyTU/needlehub chapter3.lua](https://github.co
 
 Validation covers compilation and mocked matching-wire, laser-coordinate, vent-direction, input error/release, cancellation, busy gating and UFO candidate/ownership checks. Live Chapter 3 gameplay still needs verification.
 
+## Chapter 3 boss workflow
+
+The Chapter 3 Boss tab adds a saved Auto Boss Fight master switch (default OFF). Body Hits Between Weak Points, Auto Grab Escape and Auto Key Pickup & Finish default ON beneath it. Enable the master and close the menu to run the controller. It does not reposition the player during combat: stay within the boss pitchfork range. The controller sends cooldown-paced rays from the real character head toward the current animated weak-point bone, or chest/pelvis between windows. It works with the vacuum equipped; existing Auto Use Vacuum remains a separate control.
+
+Grab weak points take priority, with server-timed prompt responses as a fallback when held. After defeat, the controller approaches TakeKeyPrompt, waits for HasCarKey, teleports to (-658.85, 3.76, 285.29), and walks one lap on a three-stud-radius route. Ending monitors observe TruckFinish.Cutscene/Blocked/Skip, NeedleRoundCompleted and completion/timer attributes without firing ending remotes. Finishing is latched per boss encounter so it does not repeat.
+
+Boss Diagnostics is optional (default OFF). Live boss/vacuum/ending status and Export Boss Diagnostics are available in the tab. Automatic diagnostics save to BeyyHub/chapter3_boss_integrated.json when enabled. The master/menu gates apply to boss attacks and movement; unload releases held input, stops walking and disconnects listeners. Shared hay tools and UFO collection yield during the enabled boss workflow while vacuum automation remains available.
+
+The standalone workflow was verified in user-supplied live captures, including weak/body hits while holding vacuum, Perfect grab escape, confirmed key pickup, walking and round completion. The integrated module compiles and passes mocked combat, menu/master gates, finishing latch, movement, diagnostics and cleanup checks, plus UFO/puzzle regressions; the combined native-hub workflow still needs a live check.
+
 ## Validation
 
 All seven Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.

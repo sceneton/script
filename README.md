@@ -48,6 +48,14 @@ Boss Diagnostics is optional (default OFF). Live boss/vacuum/ending status and E
 
 The standalone workflow was verified in user-supplied live captures, including weak/body hits while holding vacuum, Perfect grab escape, confirmed key pickup, walking and round completion. The integrated module compiles and passes mocked combat, menu/master gates, finishing latch, movement, diagnostics and cleanup checks, plus UFO/puzzle regressions; the combined native-hub workflow still needs a live check.
 
+## Chapter 3 boss TNT
+
+With Auto Boss Fight and Auto Use TNT enabled, TNT switches from the existing hay routine to the boss controller. It lights only when Head is the dazed weak point, BossVulnerable is true, and the exported boss fuse estimate fits the remaining BossStunEndsAt window. It waits for the server's lit acknowledgement and the replicated lighting delay, then refreshes the animated head position and solves a ballistic path within the replicated throw-speed limits. It withholds throws if vulnerability closes, input is locked, the fuse/window estimate is too short or no trajectory is feasible. Denials, missing lighting replies and cooldown reservations prevent repeated light spam. No equipment switch or camera change is made.
+
+Boss TNT Status and optional diagnostics include lighting, denial, throw timing/slot and TNT hit feedback. Existing hay TNT remains outside the enabled boss encounter. The controller uses BossFight.Config.TntFuse as its fuse estimate; actual server fuse behavior, trajectory acceptance and TNT use while holding vacuum still require an in-game test. A lit TNT is not forcibly discarded when the head window closes, since no verified cancellation request is available; its estimated fuse is allowed to expire without sending an off-target throw.
+
+Validation includes official Luau compilation and mocked lighting acknowledgement, vulnerability/head gates, ballistic endpoint, cooldown, denial, missing reply, closing-window and cleanup checks, plus the existing integrated boss/finish regressions.
+
 ## Validation
 
 All seven Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.

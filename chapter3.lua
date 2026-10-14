@@ -737,9 +737,10 @@ end
 
     local Registry = {}
     local roundFailsafe={Enabled=true}
+
+    local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     Registry.AutoRoundFailsafe=overviewTab:Toggle({Title="Restart Stalled Rounds After 5 Minutes",Value=true,Callback=function(value) roundFailsafe.Enabled=value end})
     roundFailsafe.TimeoutStatus=overviewTab:Paragraph({Title="Round Failsafe Status",Desc="Waiting for round timer"})
-    local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
     overviewTab:Section({ Title = "Detected chapter" })
     overviewTab:Paragraph({

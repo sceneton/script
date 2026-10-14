@@ -12,6 +12,7 @@ local MODULES = {
     [108628039999641] = {file="chapter1.lua", name="Chapter1"},
     [83445806734780] = {file="chapter2.lua", name="Chapter2"},
     [82626725163709] = {file="chapter3.lua", name="Chapter3"},
+    [102537610748607] = {file="chapter4.lua", name="Chapter4"},
 }
 
 local target = MODULES[game.PlaceId]
@@ -96,7 +97,7 @@ if revision then
             local oldPrefixes = {"v103_00_native_", "v103_00_native_ui1_", "v103_00_native_rot2_", "v103_00_native_tabs3_"}
             if previousRevision then table.insert(oldPrefixes, "v103_00_native_" .. previousRevision .. "_") end
             for _, prefix in ipairs(oldPrefixes) do
-                for _, file in ipairs({"loader.lua", "lobby.lua", "chapter1.lua", "chapter2.lua", "chapter3.lua"}) do
+                for _, file in ipairs({"loader.lua", "lobby.lua", "chapter1.lua", "chapter2.lua", "chapter3.lua", "chapter4.lua"}) do
                     pcall(delfile, CACHE_FOLDER .. "/" .. prefix .. file)
                 end
             end

@@ -1,0 +1,46 @@
+-- Decompiled game.StarterPlayer.StarterPlayerScripts.BossFightClient.BossToolSelection
+
+local v_u_1 = game:GetService("Players").LocalPlayer
+local v_u_2 = game:GetService("ReplicatedStorage"):WaitForChild("BossFight")
+local v_u_3 = workspace:WaitForChild("HayGolem_Rig")
+local v_u_4 = require(script.Parent.Parent:WaitForChild("HotbarSlots"))
+local v_u_5 = require(script.Parent.Parent:WaitForChild("Notify"))
+local v_u_6 = false
+local function v7()
+    -- upvalues: (ref) v_u_6, (copy) v_u_1, (copy) v_u_3, (copy) v_u_5
+    if not v_u_6 and (v_u_1:GetAttribute("BossPitchforkGranted") == true and (v_u_1:GetAttribute("IntroCutsceneFinished") == true and (v_u_1:GetAttribute("CutsceneActive") ~= true and (v_u_1:GetAttribute("NeedleInputLocked") ~= true and v_u_3:GetAttribute("BossState") ~= "Intro")))) then
+        v_u_6 = true
+        v_u_5.push({})
+    end
+end
+for _, v8 in {
+    "BossPitchforkGranted",
+    "IntroCutsceneFinished",
+    "CutsceneActive",
+    "NeedleInputLocked"
+} do
+    v_u_1:GetAttributeChangedSignal(v8):Connect(v7)
+end
+v_u_3:GetAttributeChangedSignal("BossState"):Connect(v7)
+task.defer(v7)
+local function v_u_10()
+    -- upvalues: (copy) v_u_4, (copy) v_u_2
+    local v9 = v_u_4.getEquipped()
+    v_u_2.Equip:FireServer(typeof(v9) == "number" and v9 and v9 or 0)
+end
+v_u_4.EquippedChanged:Connect(function(p11)
+    -- upvalues: (copy) v_u_2
+    v_u_2.Equip:FireServer(typeof(p11) == "number" and p11 and p11 or 0)
+end)
+v_u_3:GetAttributeChangedSignal("BossServerReady"):Connect(function()
+    -- upvalues: (copy) v_u_3, (copy) v_u_4, (copy) v_u_2
+    if v_u_3:GetAttribute("BossServerReady") == true then
+        local v12 = v_u_4.getEquipped()
+        v_u_2.Equip:FireServer(typeof(v12) == "number" and v12 and v12 or 0)
+    end
+end)
+v_u_1.CharacterAdded:Connect(function()
+    -- upvalues: (copy) v_u_10
+    task.defer(v_u_10)
+end)
+task.defer(v_u_10)

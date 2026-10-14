@@ -1,0 +1,1181 @@
+-- Decompiled game.Players.RaggedReo.PlayerScripts.UfoWireClient
+
+local v_u_1 = game:GetService("ContextActionService")
+local v_u_2 = game:GetService("GuiService")
+local v3 = game:GetService("Players")
+local v_u_4 = game:GetService("ReplicatedStorage")
+local v_u_5 = game:GetService("RunService")
+local v_u_6 = game:GetService("SoundService")
+local v_u_7 = game:GetService("Lighting")
+local v_u_8 = game:GetService("TweenService")
+local v_u_9 = game:GetService("UserInputService")
+local v_u_10 = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonR2 }
+local v_u_11 = Enum.KeyCode.M
+local v_u_12 = v3.LocalPlayer
+local v_u_13 = v_u_12:WaitForChild("PlayerGui"):WaitForChild("UfoWireMinigame", (1 / 0))
+local v_u_14 = v_u_13:WaitForChild("Panel")
+local v15 = v_u_14:WaitForChild("Left")
+local v16 = v_u_14:WaitForChild("Right")
+local v_u_17 = v_u_14:WaitForChild("Lines")
+local v_u_18 = v_u_17:WaitForChild("LineTemplate")
+local v_u_19 = v_u_14:FindFirstChild("Done")
+local v_u_20 = v_u_14:FindFirstChild("Hint")
+local v_u_21
+if v_u_20 then
+    v_u_21 = v_u_20:FindFirstChild("Pointer")
+else
+    v_u_21 = v_u_20
+end
+v_u_18.Visible = false
+if v_u_20 and v_u_20:IsA("GuiObject") then
+    v_u_20.Visible = false
+end
+v_u_13.Enabled = false
+task.spawn(function()
+    -- upvalues: (copy) v_u_13
+    local function v23()
+        -- upvalues: (ref) v_u_13
+        local v22 = { v_u_13 }
+        game:GetService("ContentProvider"):PreloadAsync(v22)
+    end
+    pcall(v23)
+end)
+local v_u_24 = v_u_4:WaitForChild("UfoCrash"):WaitForChild("Remotes")
+local v25 = v_u_24:WaitForChild("WirePuzzle")
+local v_u_26 = v_u_24:WaitForChild("WireLight")
+local function v30(p27)
+    local v28 = {}
+    for _, v29 in p27:GetChildren() do
+        if v29:IsA("GuiObject") and typeof(v29:GetAttribute("Wire")) == "string" then
+            table.insert(v28, v29)
+        end
+    end
+    return v28
+end
+local v_u_31 = v30(v15)
+local v_u_32 = v30(v16)
+local v_u_33 = {}
+for _, v34 in v_u_31 do
+    v_u_33[v34] = true
+end
+local v_u_35 = table.move(v_u_32, 1, #v_u_32, #v_u_31 + 1, table.clone(v_u_31))
+local v_u_36 = {}
+for _, v37 in v_u_31 do
+    local v38 = v37.Position
+    table.insert(v_u_36, v38)
+end
+local v_u_39 = {}
+for _, v40 in v_u_32 do
+    local v41 = v40.Position
+    table.insert(v_u_39, v41)
+end
+local v42 = v_u_31[1]
+if v42 then
+    v42 = v_u_31[1]:FindFirstChild("Indicator")
+    if not (v42 and v42:IsA("GuiObject")) then
+        v42 = nil
+    end
+end
+local v43 = v_u_32[1]
+if v43 then
+    v43 = v_u_32[1]:FindFirstChild("Indicator")
+    if not (v43 and v43:IsA("GuiObject")) then
+        v43 = nil
+    end
+end
+local v_u_44 = v42 and v42.BackgroundColor3 or Color3.fromRGB(245, 225, 70)
+local v_u_45 = v43 and v43.BackgroundColor3 or Color3.fromRGB(58, 58, 60)
+local function v_u_48(p46)
+    -- upvalues: (copy) v_u_6, (copy) v_u_4
+    local v47 = v_u_6:FindFirstChild("Sounds")
+    if v47 then
+        v47 = v47:FindFirstChild(p46)
+    end
+    if not v47 then
+        v47 = v_u_4:FindFirstChild("Shared")
+        if v47 then
+            v47 = v47:FindFirstChild("SoundServiceClient", true)
+        end
+        if v47 then
+            v47 = v47:FindFirstChild(p46)
+        end
+    end
+    if v47 and v47:IsA("Sound") then
+        return v47
+    else
+        return nil
+    end
+end
+local function v_u_52(p49)
+    -- upvalues: (copy) v_u_48, (copy) v_u_6
+    local v50 = v_u_48(p49)
+    if v50 then
+        local v_u_51 = v50:Clone()
+        v_u_51.Looped = false
+        v_u_51.Parent = v_u_6
+        v_u_51:Play()
+        v_u_51.Ended:Once(function()
+            -- upvalues: (copy) v_u_51
+            v_u_51:Destroy()
+        end)
+    end
+end
+local v_u_53 = v_u_14.Position
+local v_u_54 = {
+    ["connected"] = {},
+    ["linesByLeft"] = {},
+    ["pointer"] = Vector2.zero,
+    ["connections"] = {},
+    ["mouseBehavior"] = v_u_9.MouseBehavior,
+    ["mouseIcon"] = v_u_9.MouseIconEnabled
+}
+local function v_u_56()
+    -- upvalues: (copy) v_u_54, (copy) v_u_7, (copy) v_u_8
+    if v_u_54.blur then
+        v_u_54.blur:Destroy()
+    end
+    local v55 = Instance.new("BlurEffect")
+    v55.Name = "UfoWireBlur"
+    v55.Size = 0
+    v55.Parent = v_u_7
+    v_u_54.blur = v55
+    v_u_8:Create(v55, TweenInfo.new(0.3), {}):Play()
+end
+local function v_u_59()
+    -- upvalues: (copy) v_u_54, (copy) v_u_8
+    local v_u_57 = v_u_54.blur
+    v_u_54.blur = nil
+    if v_u_57 then
+        local v58 = v_u_8:Create(v_u_57, TweenInfo.new(0.3), {})
+        v58.Completed:Once(function()
+            -- upvalues: (copy) v_u_57
+            v_u_57:Destroy()
+        end)
+        v58:Play()
+    end
+end
+local function v_u_62()
+    -- upvalues: (copy) v_u_54, (copy) v_u_48, (copy) v_u_6, (copy) v_u_8
+    if v_u_54.buzz then
+        v_u_54.buzz:Destroy()
+    end
+    local v60 = v_u_48("LightBuzzLooped")
+    if v60 then
+        local v61 = v60:Clone()
+        v61.Looped = true
+        v61.Volume = 0
+        v61.Parent = v_u_6
+        v61:Play()
+        v_u_54.buzz = v61
+        v_u_8:Create(v61, TweenInfo.new(0.3), {
+            ["Volume"] = v60.Volume
+        }):Play()
+    end
+end
+local function v_u_65()
+    -- upvalues: (copy) v_u_54, (copy) v_u_8
+    local v_u_63 = v_u_54.buzz
+    v_u_54.buzz = nil
+    if v_u_63 then
+        local v64 = v_u_8:Create(v_u_63, TweenInfo.new(0.8), {})
+        v64.Completed:Once(function()
+            -- upvalues: (copy) v_u_63
+            v_u_63:Destroy()
+        end)
+        v64:Play()
+    end
+end
+local function v_u_67()
+    -- upvalues: (copy) v_u_12, (copy) v_u_54
+    local v66 = v_u_12.Character
+    if v66 then
+        v66 = v66:FindFirstChildOfClass("Humanoid")
+    end
+    if v66 then
+        v_u_54.frozen = {
+            ["humanoid"] = v66,
+            ["walkSpeed"] = v66.WalkSpeed,
+            ["jumpPower"] = v66.JumpPower,
+            ["jumpHeight"] = v66.JumpHeight
+        }
+        v66.WalkSpeed = 0
+        v66.JumpPower = 0
+        v66.JumpHeight = 0
+    end
+end
+local function v_u_80(p68, p69, p70)
+    -- upvalues: (copy) v_u_18, (copy) v_u_14, (copy) v_u_17
+    local v71 = v_u_18
+    local v72 = (tonumber(v71:GetAttribute("Thickness")) or 0.032) * v_u_14.AbsoluteSize.Y
+    local v73 = p68.Parent
+    local v74 = v_u_17.AbsolutePosition - v73.AbsolutePosition
+    local v75 = p70 - p69
+    local v76 = (p69 + p70) / 2 + v74
+    p68.Position = UDim2.fromOffset(v76.X, v76.Y)
+    p68.Size = UDim2.fromOffset(v75.Magnitude + v72, v72)
+    local v77 = v75.Y
+    local v78 = v75.X
+    local v79 = math.atan2(v77, v78)
+    p68.Rotation = math.deg(v79)
+end
+local function v_u_87(p81)
+    local v82 = table.clone(p81)
+    for v83 = #v82, 2, -1 do
+        local v84 = math.random(v83)
+        local v85 = v82[v84]
+        local v86 = v82[v83]
+        v82[v83] = v85
+        v82[v84] = v86
+    end
+    return v82
+end
+local function v_u_93()
+    -- upvalues: (copy) v_u_17, (copy) v_u_18, (copy) v_u_54, (copy) v_u_35
+    for _, v88 in v_u_17:GetChildren() do
+        if v88 ~= v_u_18 and v88:IsA("GuiObject") then
+            v88:Destroy()
+        end
+    end
+    table.clear(v_u_54.connected)
+    table.clear(v_u_54.linesByLeft)
+    for _, v89 in v_u_35 do
+        local v90 = v89:FindFirstChild("Tip")
+        if not (v90 and v90:IsA("GuiObject")) then
+            v90 = nil
+        end
+        if v90 then
+            v90.Selectable = true
+        end
+    end
+    local v91 = v_u_54
+    local v92 = v_u_54
+    v_u_54.dragging = nil
+    v91.dragLine = nil
+    v92.padHeld = false
+end
+local function v_u_97()
+    -- upvalues: (copy) v_u_54, (copy) v_u_13, (copy) v_u_14, (copy) v_u_53, (copy) v_u_59, (copy) v_u_65, (copy) v_u_20, (copy) v_u_93, (copy) v_u_1, (copy) v_u_2, (copy) v_u_9
+    if v_u_54.open then
+        v_u_54.open = false
+        v_u_13.Enabled = false
+        v_u_14.Position = v_u_53
+        v_u_59()
+        v_u_65()
+        if v_u_20 and v_u_20:IsA("GuiObject") then
+            v_u_20.Visible = false
+        end
+        if v_u_54.hintLine then
+            v_u_54.hintLine:Destroy()
+            v_u_54.hintLine = nil
+        end
+        v_u_93()
+        for _, v94 in v_u_54.connections do
+            v94:Disconnect()
+        end
+        table.clear(v_u_54.connections)
+        v_u_1:UnbindAction("UfoWireBack")
+        v_u_1:UnbindAction("UfoWirePad")
+        local v95 = v_u_54.frozen
+        v_u_54.frozen = nil
+        if v95 and v95.humanoid.Parent then
+            if v95.humanoid.WalkSpeed == 0 then
+                v95.humanoid.WalkSpeed = v95.walkSpeed
+            end
+            if v95.humanoid.JumpPower == 0 then
+                v95.humanoid.JumpPower = v95.jumpPower
+            end
+            if v95.humanoid.JumpHeight == 0 then
+                v95.humanoid.JumpHeight = v95.jumpHeight
+            end
+        end
+        local v96 = v_u_2.SelectedObject
+        if v96 and v96:IsDescendantOf(v_u_13) then
+            v_u_2.SelectedObject = nil
+        end
+        v_u_9.MouseBehavior = v_u_54.mouseBehavior
+        v_u_9.MouseIconEnabled = v_u_54.mouseIcon
+        v_u_54.piece = nil
+    end
+end
+local function v_u_101()
+    -- upvalues: (copy) v_u_54, (copy) v_u_20, (copy) v_u_52, (copy) v_u_19, (copy) v_u_26, (copy) v_u_24, (copy) v_u_59, (copy) v_u_65, (copy) v_u_8, (copy) v_u_14, (copy) v_u_53, (copy) v_u_97
+    if not v_u_54.finishing then
+        v_u_54.finishing = true
+        if v_u_20 and v_u_20:IsA("GuiObject") then
+            v_u_20.Visible = false
+        end
+        if v_u_54.hintLine then
+            v_u_54.hintLine:Destroy()
+            v_u_54.hintLine = nil
+        end
+        v_u_52("CablesFinish")
+        if v_u_19 and v_u_19:IsA("GuiObject") then
+            v_u_19.Visible = true
+        end
+        local v_u_98 = v_u_54.piece
+        task.delay(0.6, function()
+            -- upvalues: (ref) v_u_54, (copy) v_u_98, (ref) v_u_26, (ref) v_u_24, (ref) v_u_59, (ref) v_u_65, (ref) v_u_8, (ref) v_u_14, (ref) v_u_53, (ref) v_u_97
+            if v_u_54.open then
+                if v_u_98 then
+                    v_u_26:FireServer(v_u_98)
+                end
+                local v99 = v_u_24:FindFirstChild("PuzzleDone")
+                if v_u_98 and v99 then
+                    v99:FireServer(v_u_98)
+                end
+                v_u_59()
+                v_u_65()
+                local v100 = v_u_8:Create(v_u_14, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+                    ["Position"] = v_u_53 + UDim2.fromScale(0, 1.2)
+                })
+                v100.Completed:Once(v_u_97)
+                v100:Play()
+            end
+        end)
+    end
+end
+local function v_u_116(p102, p103)
+    local v104 = (1 / 0)
+    local v105 = nil
+    for _, v106 in p103 do
+        local v107 = v106:FindFirstChild("Tip")
+        if not (v107 and v107:IsA("GuiObject")) then
+            v107 = nil
+        end
+        local v108 = v107 or v106
+        local v109 = v108.AbsolutePosition + v108.AbsoluteSize / 2
+        local v110 = v108.AbsoluteSize.X
+        local v111 = v108.AbsoluteSize.Y
+        local v112 = math.max(v110, v111) * 1.2
+        local v113 = (p102 - v109).Magnitude
+        local v114 = p102.Y - v109.Y
+        local v115
+        if math.abs(v114) < v106.AbsoluteSize.Y * 0.8 and p102.X > v106.AbsolutePosition.X - v112 then
+            v115 = p102.X < v106.AbsolutePosition.X + v106.AbsoluteSize.X + v112
+        else
+            v115 = false
+        end
+        if (v113 < v112 or v115) and v113 < v104 then
+            v105 = v106
+            v104 = v113
+        end
+    end
+    return v105
+end
+local function v_u_126(p117)
+    -- upvalues: (copy) v_u_33, (copy) v_u_32, (copy) v_u_31, (copy) v_u_54
+    local v118 = nil
+    local v119 = (1 / 0)
+    local v120
+    if v_u_33[p117] then
+        v120 = v_u_32
+    else
+        v120 = v_u_31
+    end
+    for _, v121 in v120 do
+        if not v_u_33[v121] then
+            for _, v122 in v_u_54.connected do
+                if v122 == v121 then
+                    v123 = true
+                    goto l11
+                end
+            end
+            v123 = false
+            goto l11
+        end
+        local v123 = v_u_54.connected[v121] ~= nil
+        ::l11::
+        if not v123 then
+            local v124 = v121.Position.Y.Scale - p117.Position.Y.Scale
+            local v125 = math.abs(v124)
+            if v125 < v119 then
+                v118 = v121
+                v119 = v125
+            end
+        end
+    end
+    return v118
+end
+local function v_u_132()
+    -- upvalues: (copy) v_u_31, (copy) v_u_32, (copy) v_u_33, (copy) v_u_54
+    for _, v127 in { v_u_31, v_u_32 } do
+        local v128 = nil
+        for _, v129 in v127 do
+            if not v_u_33[v129] then
+                for _, v130 in v_u_54.connected do
+                    if v130 == v129 then
+                        v131 = true
+                        goto l10
+                    end
+                end
+                v131 = false
+                goto l10
+            end
+            local v131 = v_u_54.connected[v129] ~= nil
+            ::l10::
+            if not v131 and (not v128 or v129.Position.Y.Scale < v128.Position.Y.Scale) then
+                v128 = v129
+            end
+        end
+        if v128 then
+            return v128
+        end
+    end
+    return nil
+end
+local function v_u_136()
+    -- upvalues: (copy) v_u_2, (copy) v_u_35
+    local v133 = v_u_2.SelectedObject
+    if not v133 then
+        return nil
+    end
+    for _, v134 in v_u_35 do
+        local v135 = v134:FindFirstChild("Tip")
+        if not (v135 and v135:IsA("GuiObject")) then
+            v135 = nil
+        end
+        if v135 and (v133 == v135 or v133:IsDescendantOf(v135)) then
+            return v134
+        end
+    end
+    return nil
+end
+local function v_u_144(p137)
+    -- upvalues: (copy) v_u_33, (copy) v_u_54
+    local v138 = {}
+    for _, v139 in p137 do
+        if not v_u_33[v139] then
+            for _, v140 in v_u_54.connected do
+                if v140 == v139 then
+                    v141 = true
+                    goto l8
+                end
+            end
+            v141 = false
+            goto l8
+        end
+        local v141 = v_u_54.connected[v139] ~= nil
+        ::l8::
+        if not v141 then
+            table.insert(v138, v139)
+        end
+    end
+    table.sort(v138, function(p142, p143)
+        return p142.Position.Y.Scale < p143.Position.Y.Scale
+    end)
+    return v138
+end
+local function v_u_154()
+    -- upvalues: (copy) v_u_144, (copy) v_u_31, (copy) v_u_32, (copy) v_u_126
+    for v145, v146 in { v_u_144(v_u_31), (v_u_144(v_u_32)) } do
+        for v147, v148 in v146 do
+            local v149 = v148:FindFirstChild("Tip")
+            if not (v149 and v149:IsA("GuiObject")) then
+                v149 = nil
+            end
+            if v149 then
+                local v150 = v146[(v147 - 2) % #v146 + 1]:FindFirstChild("Tip")
+                if not (v150 and v150:IsA("GuiObject")) then
+                    v150 = nil
+                end
+                v149.NextSelectionUp = v150
+                local v151 = v146[v147 % #v146 + 1]:FindFirstChild("Tip")
+                if not (v151 and v151:IsA("GuiObject")) then
+                    v151 = nil
+                end
+                v149.NextSelectionDown = v151
+                local v152 = v_u_126(v148)
+                if v152 then
+                    v152 = v152:FindFirstChild("Tip")
+                    if not (v152 and v152:IsA("GuiObject")) then
+                        v152 = nil
+                    end
+                end
+                local v153
+                if v145 == 2 then
+                    v153 = v152
+                else
+                    v153 = nil
+                end
+                v149.NextSelectionLeft = v153
+                if v145 ~= 1 then
+                    v152 = nil
+                end
+                v149.NextSelectionRight = v152
+            end
+        end
+    end
+end
+local function v_u_165(p155, p156)
+    -- upvalues: (copy) v_u_54, (copy) v_u_33, (copy) v_u_20, (copy) v_u_18, (copy) v_u_17, (copy) v_u_52
+    if not v_u_54.open or v_u_54.finishing then
+        ::l2::
+        return
+    end
+    local v157
+    if v_u_33[p155] then
+        v157 = v_u_54.connected[p155] ~= nil
+        ::l9::
+        if not v157 then
+            if v_u_54.dragLine then
+                v_u_54.dragLine:Destroy()
+            end
+            local v158 = v_u_54
+            local v159 = v_u_54
+            v_u_54.dragging = nil
+            v158.dragLine = nil
+            v159.padHeld = false
+            v_u_54.lastActivity = os.clock()
+            if v_u_20 and v_u_20:IsA("GuiObject") then
+                v_u_20.Visible = false
+            end
+            if v_u_54.hintLine then
+                v_u_54.hintLine:Destroy()
+                v_u_54.hintLine = nil
+            end
+            v_u_54.dragging = p155
+            v_u_54.padHeld = p156
+            local v160 = v_u_54
+            local v161 = p155:FindFirstChild("Stub")
+            local v162
+            if v161 and v161:IsA("GuiObject") then
+                v162 = v161.BackgroundColor3
+            else
+                v162 = Color3.new(1, 1, 1)
+            end
+            local v163 = v_u_18:Clone()
+            v163.Name = "Line"
+            v163.BackgroundColor3 = v162
+            v163.Visible = true
+            v163.Parent = v_u_17
+            v160.dragLine = v163
+            v_u_52("UiTick")
+            return
+        end
+        goto l2
+    else
+        for _, v164 in v_u_54.connected do
+            if v164 == p155 then
+                v157 = true
+                goto l9
+            end
+        end
+        v157 = false
+        goto l9
+    end
+end
+local v_u_166 = nil
+local function v_u_176(p167)
+    -- upvalues: (copy) v_u_54, (copy) v_u_20, (copy) v_u_33, (ref) v_u_166
+    local v168 = v_u_54.dragging
+    local v169 = v_u_54.dragLine
+    local v170 = v_u_54
+    local v171 = v_u_54
+    v_u_54.dragging = nil
+    v170.dragLine = nil
+    v171.padHeld = false
+    if not (v168 and v169) then
+        return
+    end
+    v_u_54.lastActivity = os.clock()
+    if v_u_20 and v_u_20:IsA("GuiObject") then
+        v_u_20.Visible = false
+    end
+    if v_u_54.hintLine then
+        v_u_54.hintLine:Destroy()
+        v_u_54.hintLine = nil
+    end
+    local v172
+    if p167 == nil or v_u_33[p167] == v_u_33[v168] then
+        v172 = false
+        ::l10::
+        if v172 then
+            local v173
+            if v_u_33[v168] then
+                v173 = v168
+            else
+                v173 = p167
+            end
+            if v_u_33[v168] then
+                v168 = p167
+            end
+            v_u_166(v173, v168, v169)
+        else
+            v169:Destroy()
+        end
+    end
+    local v174
+    if v_u_33[p167] then
+        v174 = v_u_54.connected[p167] ~= nil
+        ::l17::
+        v172 = not v174
+        if v172 then
+            if p167:GetAttribute("Wire") == v168:GetAttribute("Wire") then
+                v172 = true
+            else
+                v172 = false
+            end
+        end
+        goto l10
+    else
+        for _, v175 in v_u_54.connected do
+            if v175 == p167 then
+                v174 = true
+                goto l17
+            end
+        end
+        v174 = false
+        goto l17
+    end
+end
+v_u_166 = function(p177, p178, p179)
+    -- upvalues: (copy) v_u_54, (copy) v_u_44, (copy) v_u_154, (copy) v_u_52, (copy) v_u_31, (copy) v_u_101
+    v_u_54.lastConnect = os.clock()
+    v_u_54.connected[p177] = p178
+    v_u_54.linesByLeft[p177] = p179
+    local v180 = p178:FindFirstChild("Indicator")
+    if not (v180 and v180:IsA("GuiObject")) then
+        v180 = nil
+    end
+    if v180 then
+        v180.BackgroundColor3 = v_u_44
+    end
+    for _, v181 in { p177, p178 } do
+        local v182 = v181:FindFirstChild("Tip")
+        if not (v182 and v182:IsA("GuiObject")) then
+            v182 = nil
+        end
+        if v182 then
+            v182.Selectable = false
+        end
+    end
+    v_u_154()
+    v_u_52("CableJoin")
+    local v183 = 0
+    for _ in v_u_54.connected do
+        v183 = v183 + 1
+    end
+    if #v_u_31 <= v183 then
+        v_u_101()
+    end
+end
+local function v_u_189()
+    -- upvalues: (copy) v_u_31, (copy) v_u_33, (copy) v_u_54, (copy) v_u_32
+    local v184 = nil
+    for _, v185 in v_u_31 do
+        if not v_u_33[v185] then
+            for _, v186 in v_u_54.connected do
+                if v186 == v185 then
+                    v187 = true
+                    goto l8
+                end
+            end
+            v187 = false
+            goto l8
+        end
+        local v187 = v_u_54.connected[v185] ~= nil
+        ::l8::
+        if not v187 and (not v184 or v185.AbsolutePosition.Y < v184.AbsolutePosition.Y) then
+            v184 = v185
+        end
+    end
+    if not v184 then
+        return nil, nil
+    end
+    for _, v188 in v_u_32 do
+        if v188:GetAttribute("Wire") == v184:GetAttribute("Wire") then
+            return v184, v188
+        end
+    end
+    return nil, nil
+end
+local function v_u_202()
+    -- upvalues: (copy) v_u_54, (copy) v_u_31, (copy) v_u_33, (copy) v_u_32, (copy) v_u_20, (ref) v_u_166, (copy) v_u_18, (copy) v_u_17
+    if v_u_54.finishing or os.clock() - v_u_54.lastConnect < 10 then
+        return
+    end
+    local v190 = nil
+    local v191 = nil
+    for _, v192 in v_u_31 do
+        if not v_u_33[v192] then
+            for _, v193 in v_u_54.connected do
+                if v193 == v192 then
+                    v194 = true
+                    goto l11
+                end
+            end
+            v194 = false
+            goto l11
+        end
+        local v194 = v_u_54.connected[v192] ~= nil
+        ::l11::
+        if not v194 and v192 ~= v_u_54.dragging then
+            for _, v195 in v_u_32 do
+                if v195 ~= v_u_54.dragging then
+                    if not v_u_33[v195] then
+                        for _, v196 in v_u_54.connected do
+                            if v196 == v195 then
+                                v197 = true
+                                goto l26
+                            end
+                        end
+                        v197 = false
+                        goto l26
+                    end
+                    local v197 = v_u_54.connected[v195] ~= nil
+                    ::l26::
+                    if not v197 and (v195:GetAttribute("Wire") == v192:GetAttribute("Wire") and (not v190 or v192.AbsolutePosition.Y < v190.AbsolutePosition.Y)) then
+                        v191 = v195
+                        v190 = v192
+                    end
+                end
+            end
+        end
+    end
+    if v190 and v191 then
+        if v_u_20 and v_u_20:IsA("GuiObject") then
+            v_u_20.Visible = false
+        end
+        if v_u_54.hintLine then
+            v_u_54.hintLine:Destroy()
+            v_u_54.hintLine = nil
+        end
+        v_u_54.lastActivity = os.clock()
+        local v198 = v_u_166
+        local v199 = v190:FindFirstChild("Stub")
+        local v200
+        if v199 and v199:IsA("GuiObject") then
+            v200 = v199.BackgroundColor3
+        else
+            v200 = Color3.new(1, 1, 1)
+        end
+        local v201 = v_u_18:Clone()
+        v201.Name = "Line"
+        v201.BackgroundColor3 = v200
+        v201.Visible = true
+        v201.Parent = v_u_17
+        v198(v190, v191, v201)
+    else
+        v_u_54.lastConnect = os.clock()
+    end
+end
+local function v_u_221()
+    -- upvalues: (copy) v_u_20, (copy) v_u_54, (copy) v_u_189, (copy) v_u_18, (copy) v_u_17, (copy) v_u_80, (copy) v_u_21
+    if v_u_20 and (v_u_20:IsA("GuiObject") and not (v_u_54.finishing or v_u_54.dragging)) then
+        local v203 = os.clock() - v_u_54.lastActivity
+        if v203 < 3 then
+            if v_u_20 and v_u_20:IsA("GuiObject") then
+                v_u_20.Visible = false
+            end
+            if v_u_54.hintLine then
+                v_u_54.hintLine:Destroy()
+                v_u_54.hintLine = nil
+            end
+            return
+        else
+            local v204, v205 = v_u_189()
+            if v204 and v205 then
+                v_u_20.Visible = true
+                if not v_u_54.hintLine then
+                    local v206 = v_u_54
+                    local v207 = v204:FindFirstChild("Stub")
+                    local v208
+                    if v207 and v207:IsA("GuiObject") then
+                        v208 = v207.BackgroundColor3
+                    else
+                        v208 = Color3.new(1, 1, 1)
+                    end
+                    local v209 = v_u_20
+                    local v210 = v_u_18:Clone()
+                    v210.Name = "Line"
+                    v210.BackgroundColor3 = v208
+                    v210.Visible = true
+                    v210.Parent = v209 or v_u_17
+                    v206.hintLine = v210
+                    v_u_54.hintLine.BackgroundTransparency = 0.45
+                    v_u_54.hintLine.ZIndex = v_u_20.ZIndex
+                end
+                local v211 = ((v203 - 3) % 2.3 - 0.5) / 1.3
+                local v212 = math.clamp(v211, 0, 1)
+                local v213 = v212 * v212 * (3 - v212 * 2)
+                local v214 = v204:FindFirstChild("Tip")
+                if not (v214 and v214:IsA("GuiObject")) then
+                    v214 = nil
+                end
+                local v215 = v214 or v204
+                local v216 = v215.AbsolutePosition + v215.AbsoluteSize / 2 - v_u_17.AbsolutePosition
+                local v217 = v205:FindFirstChild("Tip")
+                if not (v217 and v217:IsA("GuiObject")) then
+                    v217 = nil
+                end
+                local v218 = v217 or v205
+                local v219 = v216:Lerp(v218.AbsolutePosition + v218.AbsoluteSize / 2 - v_u_17.AbsolutePosition, v213)
+                v_u_80(v_u_54.hintLine, v216, v219)
+                if v_u_21 and v_u_21:IsA("GuiObject") then
+                    local v220 = v219 + v_u_17.AbsolutePosition - v_u_20.AbsolutePosition
+                    v_u_21.Position = UDim2.fromOffset(v220.X, v220.Y)
+                end
+            else
+                if v_u_20 and v_u_20:IsA("GuiObject") then
+                    v_u_20.Visible = false
+                end
+                if v_u_54.hintLine then
+                    v_u_54.hintLine:Destroy()
+                    v_u_54.hintLine = nil
+                end
+            end
+        end
+    else
+        if v_u_20 and v_u_20:IsA("GuiObject") then
+            v_u_20.Visible = false
+        end
+        if v_u_54.hintLine then
+            v_u_54.hintLine:Destroy()
+            v_u_54.hintLine = nil
+        end
+        return
+    end
+end
+local function v_u_303(p222)
+    -- upvalues: (copy) v_u_54, (copy) v_u_97, (copy) v_u_14, (copy) v_u_53, (copy) v_u_56, (copy) v_u_62, (copy) v_u_93, (copy) v_u_20, (copy) v_u_19, (copy) v_u_87, (copy) v_u_36, (copy) v_u_31, (copy) v_u_39, (copy) v_u_32, (copy) v_u_45, (copy) v_u_154, (copy) v_u_9, (copy) v_u_67, (copy) v_u_1, (copy) v_u_33, (copy) v_u_136, (copy) v_u_2, (copy) v_u_116, (copy) v_u_176, (copy) v_u_132, (copy) v_u_126, (copy) v_u_35, (copy) v_u_165, (copy) v_u_10, (copy) v_u_13, (copy) v_u_5, (copy) v_u_80, (copy) v_u_17, (copy) v_u_202, (copy) v_u_221
+    if v_u_54.open then
+        v_u_97()
+    end
+    v_u_54.open = true
+    v_u_54.finishing = false
+    v_u_54.piece = p222
+    v_u_14.Position = v_u_53
+    v_u_56()
+    v_u_62()
+    v_u_93()
+    v_u_54.lastActivity = os.clock()
+    if v_u_20 and v_u_20:IsA("GuiObject") then
+        v_u_20.Visible = false
+    end
+    if v_u_54.hintLine then
+        v_u_54.hintLine:Destroy()
+        v_u_54.hintLine = nil
+    end
+    v_u_54.lastConnect = os.clock()
+    if v_u_19 and v_u_19:IsA("GuiObject") then
+        v_u_19.Visible = false
+    end
+    for v223, v224 in v_u_87(v_u_36) do
+        v_u_31[v223].Position = v224
+    end
+    for v225, v226 in v_u_87(v_u_39) do
+        v_u_32[v225].Position = v226
+        local v227 = v_u_32[v225]:FindFirstChild("Indicator")
+        if not (v227 and v227:IsA("GuiObject")) then
+            v227 = nil
+        end
+        if v227 then
+            v227.BackgroundColor3 = v_u_45
+        end
+    end
+    v_u_154()
+    v_u_54.mouseBehavior = v_u_9.MouseBehavior
+    v_u_54.mouseIcon = v_u_9.MouseIconEnabled
+    v_u_67()
+    v_u_1:BindActionAtPriority("UfoWireBack", function(_, p228)
+        -- upvalues: (ref) v_u_54
+        if p228 == Enum.UserInputState.Begin then
+            if v_u_54.dragLine then
+                v_u_54.dragLine:Destroy()
+            end
+            local v229 = v_u_54
+            local v230 = v_u_54
+            v_u_54.dragging = nil
+            v229.dragLine = nil
+            v230.padHeld = false
+        end
+        return Enum.ContextActionResult.Sink
+    end, false, 3000, Enum.KeyCode.ButtonB)
+    local v231 = v_u_10
+    v_u_1:BindActionAtPriority("UfoWirePad", function(_, p232)
+        -- upvalues: (ref) v_u_54, (ref) v_u_33, (ref) v_u_32, (ref) v_u_31, (ref) v_u_136, (ref) v_u_9, (ref) v_u_2, (ref) v_u_116, (ref) v_u_176, (ref) v_u_132, (ref) v_u_126, (ref) v_u_35, (ref) v_u_165
+        if p232 ~= Enum.UserInputState.Begin or v_u_54.finishing then
+            return Enum.ContextActionResult.Sink
+        end
+        local v_u_233 = v_u_54.dragging
+        if v_u_233 then
+            local v234
+            if v_u_33[v_u_233] then
+                v234 = v_u_32
+            else
+                v234 = v_u_31
+            end
+            local v235 = v_u_136()
+            if not (v235 and table.find(v234, v235)) then
+                v235 = v_u_116(v_u_9:GetMouseLocation() - v_u_2:GetGuiInset(), v234)
+            end
+            if v235 then
+                v_u_176(v235)
+                task.defer(function()
+                    -- upvalues: (ref) v_u_132, (ref) v_u_2
+                    local v236 = v_u_132()
+                    local v237 = v_u_2
+                    local v238
+                    if v236 then
+                        v238 = v236:FindFirstChild("Tip")
+                        if not (v238 and v238:IsA("GuiObject")) then
+                            v238 = nil
+                        end
+                    else
+                        v238 = nil
+                    end
+                    v237.SelectedObject = v238
+                end)
+            else
+                task.defer(function()
+                    -- upvalues: (ref) v_u_126, (copy) v_u_233, (ref) v_u_2
+                    local v239 = v_u_126(v_u_233)
+                    local v240 = v_u_2
+                    local v241
+                    if v239 then
+                        v241 = v239:FindFirstChild("Tip")
+                        if not (v241 and v241:IsA("GuiObject")) then
+                            v241 = nil
+                        end
+                    else
+                        v241 = nil
+                    end
+                    v240.SelectedObject = v241
+                end)
+            end
+            return Enum.ContextActionResult.Sink
+        end
+        local v242 = v_u_35
+        local v243 = v_u_136()
+        if not (v243 and table.find(v242, v243)) then
+            v243 = v_u_116(v_u_9:GetMouseLocation() - v_u_2:GetGuiInset(), v242)
+        end
+        local v_u_244 = v243 or v_u_132()
+        if v_u_244 then
+            v_u_165(v_u_244, true)
+            if v_u_54.dragging == v_u_244 then
+                task.defer(function()
+                    -- upvalues: (ref) v_u_126, (copy) v_u_244, (ref) v_u_2
+                    local v245 = v_u_126(v_u_244)
+                    local v246 = v_u_2
+                    local v247
+                    if v245 then
+                        v247 = v245:FindFirstChild("Tip")
+                        if not (v247 and v247:IsA("GuiObject")) then
+                            v247 = nil
+                        end
+                    else
+                        v247 = nil
+                    end
+                    v246.SelectedObject = v247
+                end)
+            end
+        end
+        return Enum.ContextActionResult.Sink
+    end, false, 3000, table.unpack(v231))
+    v_u_13.Enabled = true
+    task.defer(function()
+        -- upvalues: (ref) v_u_54, (ref) v_u_9, (ref) v_u_2, (ref) v_u_14, (ref) v_u_126, (ref) v_u_132
+        if v_u_54.open then
+            if v_u_9.PreferredInput ~= Enum.PreferredInput.Gamepad then
+                return
+            end
+            local v248 = v_u_2.SelectedObject
+            if v248 and v248:IsDescendantOf(v_u_14) then
+                return
+            end
+            local v249
+            if v_u_54.dragging then
+                v249 = v_u_126(v_u_54.dragging)
+            else
+                v249 = v_u_132()
+            end
+            local v250 = v_u_2
+            local v251
+            if v249 then
+                v251 = v249:FindFirstChild("Tip")
+                if not (v251 and v251:IsA("GuiObject")) then
+                    v251 = nil
+                end
+            else
+                v251 = nil
+            end
+            v250.SelectedObject = v251
+        end
+    end)
+    local v252 = v_u_54.connections
+    local v253 = v_u_9.InputBegan
+    local function v264(p254)
+        -- upvalues: (ref) v_u_54, (ref) v_u_14, (ref) v_u_35, (ref) v_u_33, (ref) v_u_165
+        if p254.UserInputType ~= Enum.UserInputType.MouseButton1 and p254.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        if v_u_54.dragging or v_u_54.finishing then
+            return
+        end
+        local v255 = Vector2.new(p254.Position.X, p254.Position.Y)
+        local v256 = v_u_14.AbsoluteSize.Y * 0.08
+        local v257 = nil
+        for _, v258 in v_u_35 do
+            local v259 = v258:FindFirstChild("Tip")
+            if not (v259 and v259:IsA("GuiObject")) then
+                v259 = nil
+            end
+            local v260 = v259 or v258
+            local v261 = (v255 - (v260.AbsolutePosition + v260.AbsoluteSize / 2)).Magnitude
+            if v261 <= v256 then
+                if not v_u_33[v258] then
+                    for _, v262 in v_u_54.connected do
+                        if v262 == v258 then
+                            v263 = true
+                            goto l19
+                        end
+                    end
+                    v263 = false
+                    goto l19
+                end
+                local v263 = v_u_54.connected[v258] ~= nil
+                ::l19::
+                if not v263 then
+                    v257 = v258
+                    v256 = v261
+                end
+            end
+        end
+        if v257 then
+            v_u_54.pointer = v255
+            v_u_165(v257, false)
+        end
+    end
+    table.insert(v252, v253:Connect(v264))
+    local v265 = v_u_54.connections
+    local v266 = v_u_9.InputChanged
+    local function v268(p267)
+        -- upvalues: (ref) v_u_54
+        if p267.UserInputType == Enum.UserInputType.MouseMovement or p267.UserInputType == Enum.UserInputType.Touch then
+            v_u_54.pointer = Vector2.new(p267.Position.X, p267.Position.Y)
+        end
+    end
+    table.insert(v265, v266:Connect(v268))
+    local v269 = v_u_54.connections
+    local v270 = v_u_9.InputEnded
+    local function v276(p271)
+        -- upvalues: (ref) v_u_54, (ref) v_u_176, (ref) v_u_116, (ref) v_u_33, (ref) v_u_32, (ref) v_u_31
+        if (p271.UserInputType == Enum.UserInputType.MouseButton1 or p271.UserInputType == Enum.UserInputType.Touch) and (v_u_54.dragging and not v_u_54.padHeld) then
+            v_u_54.pointer = Vector2.new(p271.Position.X, p271.Position.Y)
+            local v272 = v_u_176
+            local v273 = v_u_116
+            local v274 = v_u_54.pointer
+            local v275
+            if v_u_33[v_u_54.dragging] then
+                v275 = v_u_32
+            else
+                v275 = v_u_31
+            end
+            v272((v273(v274, v275)))
+        end
+    end
+    table.insert(v269, v270:Connect(v276))
+    local v277 = v_u_54.connections
+    local v278 = v_u_5.RenderStepped
+    local function v302()
+        -- upvalues: (ref) v_u_9, (ref) v_u_54, (ref) v_u_80, (ref) v_u_17, (ref) v_u_2, (ref) v_u_14, (ref) v_u_126, (ref) v_u_132, (ref) v_u_202, (ref) v_u_221
+        v_u_9.MouseBehavior = Enum.MouseBehavior.Default
+        v_u_9.MouseIconEnabled = true
+        for v279, v280 in v_u_54.connected do
+            local v281 = v_u_54.linesByLeft[v279]
+            if v281 then
+                local v282 = v_u_80
+                local v283 = v279:FindFirstChild("Tip")
+                if not (v283 and v283:IsA("GuiObject")) then
+                    v283 = nil
+                end
+                local v284 = v283 or v279
+                local v285 = v284.AbsolutePosition + v284.AbsoluteSize / 2 - v_u_17.AbsolutePosition
+                local v286 = v280:FindFirstChild("Tip")
+                if not (v286 and v286:IsA("GuiObject")) then
+                    v286 = nil
+                end
+                local v287 = v286 or v280
+                v282(v281, v285, v287.AbsolutePosition + v287.AbsoluteSize / 2 - v_u_17.AbsolutePosition)
+            end
+        end
+        if v_u_54.dragging and v_u_54.dragLine then
+            local v288 = v_u_2.SelectedObject
+            local v289
+            if v_u_54.padHeld then
+                if v288 and v288:IsDescendantOf(v_u_14) then
+                    v289 = v288.AbsolutePosition + v288.AbsoluteSize / 2 - v_u_17.AbsolutePosition
+                else
+                    local v290 = v_u_54.dragging
+                    local v291 = v290:FindFirstChild("Tip")
+                    if not (v291 and v291:IsA("GuiObject")) then
+                        v291 = nil
+                    end
+                    local v292 = v291 or v290
+                    v289 = v292.AbsolutePosition + v292.AbsoluteSize / 2 - v_u_17.AbsolutePosition
+                end
+            else
+                v289 = v_u_54.pointer - v_u_17.AbsolutePosition
+            end
+            local v293 = v_u_80
+            local v294 = v_u_54.dragLine
+            local v295 = v_u_54.dragging
+            local v296 = v295:FindFirstChild("Tip")
+            if not (v296 and v296:IsA("GuiObject")) then
+                v296 = nil
+            end
+            local v297 = v296 or v295
+            v293(v294, v297.AbsolutePosition + v297.AbsoluteSize / 2 - v_u_17.AbsolutePosition, v289)
+        end
+        if not v_u_54.finishing and v_u_9.PreferredInput == Enum.PreferredInput.Gamepad then
+            local v298 = v_u_2.SelectedObject
+            if not (v298 and v298:IsDescendantOf(v_u_14)) then
+                local v299
+                if v_u_54.dragging then
+                    v299 = v_u_126(v_u_54.dragging)
+                else
+                    v299 = v_u_132()
+                end
+                local v300 = v_u_2
+                local v301
+                if v299 then
+                    v301 = v299:FindFirstChild("Tip")
+                    if not (v301 and v301:IsA("GuiObject")) then
+                        v301 = nil
+                    end
+                else
+                    v301 = nil
+                end
+                v300.SelectedObject = v301
+            end
+        end
+        v_u_202()
+        v_u_221()
+    end
+    table.insert(v277, v278:Connect(v302))
+end
+v25.OnClientEvent:Connect(function(p304, p305)
+    -- upvalues: (copy) v_u_303
+    task.wait(tonumber(p305) or 0)
+    v_u_303(p304)
+end)
+v_u_12.CharacterRemoving:Connect(v_u_97)
+if v_u_5:IsStudio() then
+    local v_u_306 = v_u_24:WaitForChild("StudioGiveLight", 10)
+    if v_u_306 then
+        v_u_9.InputBegan:Connect(function(p307, p308)
+            -- upvalues: (copy) v_u_11, (copy) v_u_306
+            if not p308 and p307.KeyCode == v_u_11 then
+                v_u_306:FireServer()
+            end
+        end)
+    end
+    local v309 = Instance.new("BindableEvent")
+    v309.Name = "StudioOpen"
+    v309.Event:Connect(function()
+        -- upvalues: (copy) v_u_303
+        v_u_303(nil)
+    end)
+    v309.Parent = script
+end

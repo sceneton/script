@@ -1,0 +1,1181 @@
+-- Decompiled game.StarterPlayer.StarterPlayerScripts.BossFightClient.BossGrabClient
+
+local v_u_1 = game:GetService("Players")
+local v2 = game:GetService("ReplicatedStorage")
+local v_u_3 = game:GetService("RunService")
+local v_u_4 = game:GetService("TweenService")
+local v_u_5 = game:GetService("UserInputService")
+local v_u_6 = game:GetService("ContextActionService")
+local v7 = game:GetService("SoundService")
+local v_u_8 = game:GetService("Debris")
+local v_u_9 = v_u_1.LocalPlayer
+local v_u_10 = workspace:WaitForChild("HayGolem_Rig")
+local v_u_11 = v_u_10:WaitForChild("RootPart")
+local v12 = v2:WaitForChild("BossFight")
+local v_u_13 = v12:WaitForChild("GrabInput")
+local v_u_14 = require(v12:WaitForChild("SoundPalette"))
+local v_u_15 = require(script.Parent:WaitForChild("BossCameraShake"))
+local v16 = v_u_9:WaitForChild("PlayerGui")
+local v_u_17 = Font.new("rbxasset://fonts/families/LuckiestGuy.json")
+local v18 = Font.new("rbxasset://fonts/families/SpecialElite.json", Enum.FontWeight.Bold)
+local v_u_19 = Color3.fromRGB(28, 18, 10)
+local v_u_20 = Color3.fromRGB(255, 201, 74)
+local v_u_21 = Color3.fromRGB(255, 246, 225)
+local v_u_22 = Color3.fromRGB(235, 72, 46)
+local v_u_23 = Color3.fromRGB(134, 86, 46)
+local v24 = Color3.fromRGB(184, 126, 70)
+local v25 = Color3.fromRGB(56, 35, 20)
+local v26 = Color3.fromRGB(96, 214, 84)
+local v_u_27 = {}
+local v_u_28 = {
+    ["ButtonA"] = Color3.fromRGB(92, 176, 64),
+    ["ButtonB"] = Color3.fromRGB(214, 64, 52),
+    ["ButtonX"] = Color3.fromRGB(64, 124, 222),
+    ["ButtonY"] = Color3.fromRGB(226, 184, 44)
+}
+local v_u_29 = {}
+local v_u_30 = {}
+local v_u_31 = {
+    "CutsceneActive",
+    "NeedleInputLocked",
+    "EventChestViewActive",
+    "Chapter2ReleaseActive",
+    "UpgradeBookOpen",
+    "ShopViewOpen",
+    "HintViewerOpen",
+    "StudioEventsPanelOpen",
+    "NeedleRoundComplete"
+}
+local v_u_32 = false
+local function v_u_39(p33, p34, p35)
+    local v36 = Instance.new(p33)
+    for v37, v38 in pairs(p35 or {}) do
+        v36[v37] = v38
+    end
+    v36.Parent = p34
+    return v36
+end
+local v_u_40 = v_u_39("Folder", v7, {})
+local function v_u_46(p41, p42, p43)
+    -- upvalues: (copy) v_u_14, (ref) v_u_32, (copy) v_u_39, (copy) v_u_40, (copy) v_u_8
+    local v44 = v_u_14[p41]
+    if v44 and not v_u_32 then
+        local v45 = v_u_39("Sound", v_u_40, {
+            ["SoundId"] = v44.Id,
+            ["Volume"] = v44.Volume * (p43 or 1),
+            ["PlaybackSpeed"] = (v44.Speed or 1) * (p42 or 1)
+        })
+        v45:Play()
+        v_u_8:AddItem(v45, (v44.Life or 1) + 0.3)
+    end
+end
+local v_u_47 = v_u_32
+local v_u_48 = {}
+local v_u_49 = {}
+local function v_u_56(p50, p51, p52, p53, p54)
+    -- upvalues: (copy) v_u_39
+    local v55 = v_u_39("Frame", p50, {
+        ["Name"] = p51,
+        ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+        ["Position"] = UDim2.fromScale(0.5, 0.5),
+        ["Size"] = UDim2.fromScale(p52, p52),
+        ["BackgroundColor3"] = p53,
+        ["BackgroundTransparency"] = p54
+    })
+    v_u_39("UICorner", v55, {
+        ["CornerRadius"] = UDim.new(0.5, 0)
+    })
+    return v55
+end
+local function v_u_57()
+    return workspace:GetServerTimeNow()
+end
+for _, v58 in v_u_11:GetDescendants() do
+    if v58:IsA("Bone") and not v_u_48[v58.Name] then
+        v_u_48[v58.Name] = v58
+    end
+end
+local v_u_59 = v_u_48.UpperArm_L
+local v_u_60 = v_u_48.UpperArm_R
+local v_u_61
+if v_u_59 then
+    v_u_61 = v_u_59.CFrame
+else
+    v_u_61 = v_u_59
+end
+local v_u_62
+if v_u_60 then
+    v_u_62 = v_u_60.CFrame
+else
+    v_u_62 = v_u_60
+end
+local v_u_63 = {}
+local function v_u_77(p64)
+    -- upvalues: (copy) v_u_63, (copy) v_u_59, (copy) v_u_61, (copy) v_u_60, (copy) v_u_62
+    local v65 = v_u_63
+    local v66 = v65.value
+    local v67 = v_u_63.target - v_u_63.value
+    local v68 = -9 * p64
+    v65.value = v66 + v67 * (1 - math.exp(v68))
+    local v69 = v_u_63
+    local v70 = v69.pulse
+    local v71 = -6 * p64
+    v69.pulse = v70 * math.exp(v71)
+    if v_u_63.target == 0 and v_u_63.value < 0.002 then
+        local v72 = v_u_63.pulse
+        if math.abs(v72) < 0.002 then
+            if v_u_63.applied then
+                if v_u_59 and v_u_61 then
+                    v_u_59.CFrame = v_u_61 * CFrame.Angles(0, 0, 0)
+                end
+                if v_u_60 and v_u_62 then
+                    v_u_60.CFrame = v_u_62 * CFrame.Angles(0, -0, 0)
+                end
+                v_u_63.applied = false
+            end
+            return
+        end
+    end
+    local v73 = v_u_63.value * 0.05235987755982989
+    local v74 = os.clock() * 7
+    local v75 = v73 * math.sin(v74)
+    local v76 = v_u_63.value * 0.4886921905584123 + v_u_63.pulse + v75
+    if v_u_59 and v_u_61 then
+        v_u_59.CFrame = v_u_61 * CFrame.Angles(0, v76, 0)
+    end
+    if v_u_60 and v_u_62 then
+        v_u_60.CFrame = v_u_62 * CFrame.Angles(0, -v76, 0)
+    end
+    v_u_63.applied = true
+end
+local v_u_78 = nil
+local v_u_79 = nil
+local function v_u_88()
+    -- upvalues: (copy) v_u_48, (copy) v_u_11
+    local v80 = v_u_48.Hand_L
+    local v81 = v_u_48.Hand_R
+    local v82 = v_u_11.CFrame.LookVector
+    local v83 = v82.X
+    local v84 = v82.Z
+    local v85 = Vector3.new(v83, 0, v84)
+    local v86 = v85.Magnitude > 0.01 and v85.Unit or Vector3.new(0, 0, 1)
+    local v87 = (v80 and (v81 and (v80.TransformedWorldCFrame.Position + v81.TransformedWorldCFrame.Position) * 0.5) or v_u_11.Position + Vector3.new(0, 7, 0) + v86 * 3) - Vector3.new(0, 0.6, 0) + v86 * 0.3
+    return CFrame.lookAt(v87, v87 + v86)
+end
+local function v_u_98()
+    -- upvalues: (ref) v_u_79, (copy) v_u_9
+    local v89 = v_u_79
+    if v89 then
+        v_u_79 = nil
+        local v90 = v_u_9
+        local v91 = v89.minZoom
+        local v92 = v_u_9.CameraMaxZoomDistance
+        v90.CameraMinZoomDistance = math.min(v91, v92)
+        v_u_9.CameraMaxZoomDistance = v89.maxZoom
+        v_u_9.CameraMinZoomDistance = v89.minZoom
+        v_u_9.CameraMode = v89.mode
+        local v93 = v89.camera
+        if v93 and (v93.Parent and v93.CameraSubject == v89.proxy) then
+            local v94 = v_u_9.Character
+            local v95
+            if v94 then
+                v95 = v94:FindFirstChildOfClass("Humanoid")
+            else
+                v95 = v94
+            end
+            if v89.character == v94 then
+                v95 = v89.subject or v95
+            end
+            v93.CameraSubject = v95
+        end
+        for v96, v97 in pairs(v89.transparency) do
+            if v96.Parent then
+                v96.LocalTransparencyModifier = v97
+            end
+        end
+        v89.proxy:Destroy()
+        v_u_9:SetAttribute("BossKnockdownCamera", false)
+    end
+end
+local function v_u_115(p99, p100)
+    -- upvalues: (ref) v_u_79, (copy) v_u_31, (copy) v_u_9, (copy) v_u_39, (copy) v_u_11
+    local v101 = workspace.CurrentCamera
+    if v_u_79 or (not v101 or v101.CameraType == Enum.CameraType.Scriptable) then
+        ::l2::
+        return
+    end
+    for _, v102 in v_u_31 do
+        if v_u_9:GetAttribute(v102) == true then
+            v114 = true
+            ::l8::
+            if not v114 then
+                local v103 = v_u_39("Part", workspace, {
+                    ["Position"] = p100.Position - Vector3.new(0, 1.6, 0)
+                })
+                local v104 = {
+                    ["camera"] = v101,
+                    ["proxy"] = v103,
+                    ["character"] = p99,
+                    ["subject"] = v101.CameraSubject,
+                    ["mode"] = v_u_9.CameraMode,
+                    ["minZoom"] = v_u_9.CameraMinZoomDistance,
+                    ["maxZoom"] = v_u_9.CameraMaxZoomDistance,
+                    ["transparency"] = {}
+                }
+                for _, v105 in p99:GetDescendants() do
+                    if v105:IsA("BasePart") or v105:IsA("Decal") then
+                        v104.transparency[v105] = v105.LocalTransparencyModifier
+                    end
+                end
+                v_u_79 = v104
+                v_u_9:SetAttribute("BossKnockdownCamera", true)
+                v_u_9.CameraMode = Enum.CameraMode.Classic
+                local v106 = v_u_9
+                local v107 = v_u_9.CameraMinZoomDistance
+                v106.CameraMaxZoomDistance = math.max(v107, 12.5)
+                v_u_9.CameraMinZoomDistance = 12.5
+                v_u_9.CameraMaxZoomDistance = 12.5
+                v101.CameraSubject = v103
+                local v108 = v103.Position
+                local v109 = CFrame.lookAt
+                local v110 = v_u_11.CFrame.LookVector
+                local v111 = v110.X
+                local v112 = v110.Z
+                local v113 = Vector3.new(v111, 0, v112)
+                v101.CFrame = v109(v108 + (v113.Magnitude > 0.01 and v113.Unit or Vector3.new(0, 0, 1)) * 12.5 + Vector3.new(0, 1.5, 0), v108)
+                return
+            end
+            goto l2
+        end
+    end
+    local v114 = false
+    goto l8
+end
+local function v_u_121()
+    -- upvalues: (ref) v_u_78, (copy) v_u_88
+    local v116 = v_u_78
+    if v116 and v116.root.Parent then
+        local v117 = v_u_88()
+        local v118 = (os.clock() - v116.startedAt) / 0.2
+        local v119 = math.clamp(v118, 0, 1)
+        local v120 = v116.root
+        if v119 < 1 then
+            v117 = v116.from:Lerp(v117, v119) or v117
+        end
+        v120.CFrame = v117
+        v116.root.AssemblyLinearVelocity = Vector3.new(0, 0, 0)
+        v116.root.AssemblyAngularVelocity = Vector3.new(0, 0, 0)
+    end
+end
+local function v_u_129(p122)
+    -- upvalues: (ref) v_u_78, (ref) v_u_47, (copy) v_u_9, (copy) v_u_115, (copy) v_u_15
+    if v_u_78 or (v_u_47 or p122 ~= v_u_9.Character) then
+        return
+    else
+        local v123 = p122:FindFirstChildOfClass("Humanoid")
+        local v124 = p122:FindFirstChild("HumanoidRootPart")
+        if v123 and (v124 and v123.Health > 0) then
+            v_u_78 = {
+                ["character"] = p122,
+                ["humanoid"] = v123,
+                ["root"] = v124,
+                ["startedAt"] = os.clock(),
+                ["from"] = v124.CFrame
+            }
+            v123.PlatformStand = true
+            local v_u_125 = v123:FindFirstChildOfClass("Animator")
+            if v_u_125 then
+                local v_u_126 = Instance.new("Animation")
+                v_u_126.AnimationId = "rbxassetid://507765644"
+                local v127, v128 = pcall(function()
+                    -- upvalues: (copy) v_u_125, (copy) v_u_126
+                    return v_u_125:LoadAnimation(v_u_126)
+                end)
+                if v127 and v128 then
+                    v128.Priority = Enum.AnimationPriority.Action4
+                    v128.Looped = true
+                    v128:Play(0.15, 1, 1.7)
+                    v_u_78.track = v128
+                end
+            end
+            v_u_115(p122, v124)
+            v_u_15.add(0.45)
+        end
+    end
+end
+local v_u_130 = v_u_39("ScreenGui", v16, {})
+local v_u_131 = v_u_79
+local v_u_132 = v_u_78
+local v_u_133 = {}
+local function v_u_141()
+    -- upvalues: (copy) v_u_9, (copy) v_u_11
+    local v134 = v_u_9.Character
+    local v135
+    if v134 then
+        v135 = v134:FindFirstChildOfClass("Humanoid")
+    else
+        v135 = v134
+    end
+    local v136
+    if v134 then
+        v136 = v134:FindFirstChild("HumanoidRootPart")
+    else
+        v136 = v134
+    end
+    if v135 and (v136 and (v135.Health > 0 and v134:GetAttribute("BossRagdolled") ~= true)) then
+        v135.PlatformStand = false
+        v135:ChangeState(Enum.HumanoidStateType.Freefall)
+        local v137 = v_u_11.CFrame.LookVector
+        local v138 = v137.X
+        local v139 = v137.Z
+        local v140 = Vector3.new(v138, 0, v139)
+        v136.AssemblyLinearVelocity = (v140.Magnitude > 0.01 and v140.Unit or Vector3.new(0, 0, 1)) * 24 + Vector3.new(0, 38, 0)
+    end
+end
+for _, v142 in {
+    { UDim2.fromScale(1, 0.26), UDim2.fromScale(0, 0), 90 },
+    { UDim2.fromScale(1, 0.26), UDim2.fromScale(0, 0.74), -90 },
+    { UDim2.fromScale(0.22, 1), UDim2.fromScale(0, 0), 0 },
+    { UDim2.fromScale(0.22, 1), UDim2.fromScale(0.78, 0), 180 }
+} do
+    local v143 = v_u_39("Frame", v_u_130, {
+        ["Size"] = v142[1],
+        ["Position"] = v142[2],
+        ["BackgroundColor3"] = Color3.fromRGB(96, 16, 6)
+    })
+    v_u_39("UIGradient", v143, {
+        ["Rotation"] = v142[3],
+        ["Transparency"] = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(0.55, 0.7), NumberSequenceKeypoint.new(1, 1) })
+    })
+    table.insert(v_u_133, v143)
+end
+local v_u_144 = v_u_39("Frame", v_u_130, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.69),
+    ["Size"] = UDim2.fromOffset(260, 268)
+})
+local v_u_145 = v_u_39("UIScale", v_u_144, {})
+local v_u_146 = v_u_39("TextLabel", v_u_39("ImageLabel", v_u_144, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0),
+    ["Position"] = UDim2.fromScale(0.5, 0),
+    ["Size"] = UDim2.fromOffset(226, 50),
+    ["ScaleType"] = Enum.ScaleType.Stretch
+}), {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.52),
+    ["Size"] = UDim2.fromScale(0.84, 0.66),
+    ["FontFace"] = v_u_17,
+    ["TextColor3"] = v_u_21
+})
+v_u_39("UIStroke", v_u_146, {
+    ["Color"] = v_u_19
+})
+local v147 = v_u_39("Frame", v_u_144, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0),
+    ["Position"] = UDim2.new(0.5, 0, 0, 58),
+    ["Size"] = UDim2.fromOffset(150, 150)
+})
+v_u_56(v147, "Backdrop", 0.98, Color3.new(0, 0, 0), 0.55)
+local v_u_148 = v_u_56(v147, "Zone", 0.5, v26, 1)
+local v_u_149 = v_u_39("UIStroke", v_u_148, {
+    ["Color"] = v26
+})
+local v_u_150 = v_u_39("UIStroke", v_u_56(v147, "Target", 0.62, v_u_21, 1), {
+    ["Color"] = v_u_21
+})
+local v_u_151 = v_u_56(v147, "Closer", 1.4, v_u_20, 1)
+local v_u_152 = v_u_39("UIStroke", v_u_151, {
+    ["Color"] = v_u_20
+})
+local v_u_153 = v_u_56(v147, "Key", 0.44, v_u_23, 0)
+v_u_39("UIGradient", v_u_153, {
+    ["Color"] = ColorSequence.new(v24, v25)
+})
+v_u_39("UIStroke", v_u_153, {
+    ["Color"] = v_u_19
+})
+local v_u_154 = v_u_39("TextLabel", v_u_153, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.53),
+    ["Size"] = UDim2.fromScale(0.7, 0.7),
+    ["FontFace"] = v_u_17,
+    ["TextColor3"] = v_u_21
+})
+v_u_39("UIStroke", v_u_154, {
+    ["Color"] = v_u_19
+})
+local v_u_155 = v_u_39("ImageLabel", v_u_153, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromScale(0.78, 0.78)
+})
+local v_u_156 = v_u_39("UIScale", v_u_153, {})
+local v157 = v_u_39("TextButton", v147, {
+    ["Size"] = UDim2.fromScale(1, 1)
+})
+local v_u_158 = v_u_39("Frame", v_u_144, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0),
+    ["Position"] = UDim2.new(0.5, 0, 0, 216),
+    ["Size"] = UDim2.fromOffset(250, 24)
+})
+v_u_39("UIListLayout", v_u_158, {
+    ["FillDirection"] = Enum.FillDirection.Horizontal,
+    ["HorizontalAlignment"] = Enum.HorizontalAlignment.Center,
+    ["VerticalAlignment"] = Enum.VerticalAlignment.Center,
+    ["Padding"] = UDim.new(0, 8),
+    ["SortOrder"] = Enum.SortOrder.LayoutOrder
+})
+local v_u_159 = v_u_39("Frame", v_u_144, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0),
+    ["Position"] = UDim2.new(0.5, 0, 0, 244),
+    ["Size"] = UDim2.fromOffset(250, 22)
+})
+v_u_39("UIListLayout", v_u_159, {
+    ["FillDirection"] = Enum.FillDirection.Horizontal,
+    ["HorizontalAlignment"] = Enum.HorizontalAlignment.Center,
+    ["VerticalAlignment"] = Enum.VerticalAlignment.Center,
+    ["Padding"] = UDim.new(0, 6),
+    ["SortOrder"] = Enum.SortOrder.LayoutOrder
+})
+local v_u_160 = v_u_39("TextLabel", v_u_144, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.new(0.5, 0, 0, 133),
+    ["Size"] = UDim2.fromOffset(300, 44),
+    ["FontFace"] = v_u_17,
+    ["TextColor3"] = v_u_20
+})
+local v_u_161 = v_u_39("UIStroke", v_u_160, {
+    ["Color"] = v_u_19
+})
+local v_u_162 = v_u_39("UIScale", v_u_160, {})
+local v_u_163 = v_u_39("TextLabel", v_u_144, {
+    ["AnchorPoint"] = Vector2.new(0.5, 0),
+    ["Position"] = UDim2.new(0.5, 0, 0, 272),
+    ["Size"] = UDim2.fromOffset(300, 20),
+    ["FontFace"] = v18,
+    ["TextColor3"] = v_u_21
+})
+v_u_39("UIStroke", v_u_163, {
+    ["Color"] = v_u_19
+})
+local v_u_164 = nil
+local v_u_165 = {}
+local v_u_166 = {}
+local v_u_167 = 0
+local v_u_168 = {}
+local function v_u_172(p169)
+    -- upvalues: (copy) v_u_160, (copy) v_u_29, (copy) v_u_20, (copy) v_u_21, (copy) v_u_22, (copy) v_u_161, (copy) v_u_162, (copy) v_u_4, (ref) v_u_167
+    local v170 = p169 == "Perfect" and true or p169 == "Good"
+    v_u_160.Text = v_u_29[p169] or p169
+    v_u_160.TextColor3 = p169 == "Perfect" and v_u_20 or (v170 and v_u_21 or v_u_22)
+    v_u_160.TextTransparency = 0
+    v_u_161.Transparency = 0
+    v_u_162.Scale = 1.55
+    v_u_4:Create(v_u_162, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+    v_u_167 = v_u_167 + 1
+    local v_u_171 = v_u_167
+    task.delay(0.55, function()
+        -- upvalues: (copy) v_u_171, (ref) v_u_167, (ref) v_u_4, (ref) v_u_160, (ref) v_u_161
+        if v_u_171 == v_u_167 then
+            v_u_4:Create(v_u_160, TweenInfo.new(0.25), {}):Play()
+            v_u_4:Create(v_u_161, TweenInfo.new(0.25), {}):Play()
+        end
+    end)
+end
+local function v_u_179()
+    -- upvalues: (ref) v_u_164, (copy) v_u_165, (copy) v_u_20, (copy) v_u_19, (copy) v_u_21, (copy) v_u_4, (copy) v_u_166, (copy) v_u_22
+    if v_u_164 then
+        for v173, v174 in v_u_165 do
+            local v175 = v173 <= v_u_164.successes
+            v174.BackgroundColor3 = v175 and v_u_20 or Color3.fromRGB(24, 24, 24)
+            v174.BackgroundTransparency = v175 and 0 or 0.3
+            v174.Outline.Color = v175 and v_u_19 or v_u_21
+            if v175 and not v174:GetAttribute("Filled") then
+                v174:SetAttribute("Filled", true)
+                v174.Pop.Scale = 1.6
+                v_u_4:Create(v174.Pop, TweenInfo.new(0.25, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+            end
+        end
+        for v176, v177 in v_u_166 do
+            local v178 = v176 <= v_u_164.misses
+            v177.BackgroundColor3 = v178 and v_u_22 or Color3.fromRGB(24, 24, 24)
+            v177.BackgroundTransparency = v178 and 0 or 0.35
+            v177.Outline.Color = v178 and v_u_19 or v_u_22
+            v177.Mark.TextTransparency = v178 and 0 or 1
+            v177.Mark.Outline.Transparency = v178 and 0 or 1
+        end
+    end
+end
+local function v_u_189(p180, p181)
+    -- upvalues: (copy) v_u_165, (copy) v_u_166, (copy) v_u_56, (copy) v_u_158, (copy) v_u_39, (copy) v_u_21, (copy) v_u_159, (copy) v_u_22, (copy) v_u_17, (copy) v_u_19
+    for _, v182 in v_u_165 do
+        v182:Destroy()
+    end
+    for _, v183 in v_u_166 do
+        v183:Destroy()
+    end
+    table.clear(v_u_165)
+    table.clear(v_u_166)
+    for v184 = 1, p180 do
+        local v185 = v_u_56(v_u_158, "Pip", 1, Color3.fromRGB(24, 24, 24), 0.3)
+        v185.Size = UDim2.fromOffset(22, 22)
+        v185.LayoutOrder = v184
+        v_u_39("UIStroke", v185, {
+            ["Color"] = v_u_21
+        })
+        v_u_39("UIScale", v185, {})
+        v_u_165[v184] = v185
+    end
+    for v186 = 1, p181 do
+        local v187 = v_u_56(v_u_159, "Slip", 1, Color3.fromRGB(24, 24, 24), 0.35)
+        v187.Size = UDim2.fromOffset(16, 16)
+        v187.LayoutOrder = v186
+        v_u_39("UIStroke", v187, {
+            ["Color"] = v_u_22
+        })
+        local v188 = {
+            ["Color"] = v_u_19
+        }
+        v_u_39("UIStroke", v_u_39("TextLabel", v187, {
+            ["Size"] = UDim2.fromScale(1, 1),
+            ["FontFace"] = v_u_17,
+            ["TextColor3"] = v_u_21
+        }), v188)
+        v_u_166[v186] = v187
+    end
+end
+local function v_u_195()
+    -- upvalues: (copy) v_u_5
+    local function v191()
+        -- upvalues: (ref) v_u_5
+        local v190 = v_u_5.PreferredInput
+        return v190 == Enum.PreferredInput.Gamepad and "Gamepad" or (v190 == Enum.PreferredInput.Touch and "Touch" or "Keyboard")
+    end
+    local v192, v193 = pcall(v191)
+    if v192 and v193 then
+        return v193
+    end
+    local v194 = v_u_5:GetLastInputType()
+    return v194 == Enum.UserInputType.Touch and "Touch" or (string.find(v194.Name, "Gamepad") and "Gamepad" or (v_u_5.TouchEnabled and not v_u_5.KeyboardEnabled and "Touch" or "Keyboard"))
+end
+local function v_u_203(p196, p197)
+    -- upvalues: (ref) v_u_164, (copy) v_u_172, (copy) v_u_179, (copy) v_u_46, (copy) v_u_63, (copy) v_u_15, (copy) v_u_156, (copy) v_u_4, (copy) v_u_168, (copy) v_u_163
+    if v_u_164 and not v_u_164.results[p196] then
+        v_u_164.results[p196] = p197
+        local v198 = p197 == "Perfect" and true or p197 == "Good"
+        if v198 then
+            local v199 = v_u_164
+            local v200 = v_u_164.needed
+            local v201 = v_u_164.successes + 1
+            v199.successes = math.min(v200, v201)
+        else
+            local v202 = v_u_164
+            v202.misses = v202.misses + 1
+        end
+        v_u_172(p197)
+        v_u_179()
+        if v198 then
+            v_u_46(p197 == "Perfect" and "Crit" or "HitTick", p197 == "Perfect" and 1.25 or 1.15)
+            v_u_63.pulse = -0.20943951023931956
+            v_u_15.add(0.12)
+            v_u_156.Scale = 1.25
+            v_u_4:Create(v_u_156, TweenInfo.new(0.2, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+        else
+            v_u_46("Bonk", 0.7, 1.3)
+            v_u_46("Rustle", 0.6, 1.4)
+            v_u_63.pulse = 0.17453292519943295
+            v_u_168.pulse = 0.45
+            v_u_15.add(0.4)
+        end
+        if p196 == 1 then
+            v_u_163.Visible = false
+        end
+    end
+end
+local function v_u_211(p204)
+    -- upvalues: (ref) v_u_164, (copy) v_u_203, (copy) v_u_13
+    if not v_u_164 or v_u_164.finished then
+        return
+    end
+    local v205 = workspace:GetServerTimeNow()
+    local v208, v209
+    if v_u_164 then
+        for v208, v209 in v_u_164.prompts do
+            if not v_u_164.results[v208] then
+                goto l6
+            end
+        end
+        v208 = nil
+        v209 = nil
+    else
+        v208 = nil
+        v209 = nil
+    end
+    ::l6::
+    if v208 and v205 >= v209.shownAt then
+        local v210 = v205 - v209.perfectAt
+        v_u_203(v208, math.abs(v210) <= v_u_164.perfect and "Perfect" or (math.abs(v210) <= v_u_164.good and "Good" or (v210 < 0 and "Early" or "Late")))
+        v_u_13:FireServer(v_u_164.id, v208, p204, v205)
+    end
+end
+local function v_u_214(_, p212, p213)
+    -- upvalues: (copy) v_u_211
+    if p212 == Enum.UserInputState.Begin then
+        v_u_211(p213.UserInputType == Enum.UserInputType.MouseButton1 and "Click" or p213.KeyCode.Name)
+    end
+    return Enum.ContextActionResult.Sink
+end
+local v215 = v157.Activated
+table.insert(v_u_49, v215:Connect(function(p216)
+    -- upvalues: (copy) v_u_211
+    if p216 and p216.UserInputType == Enum.UserInputType.Touch then
+        v_u_211("Touch")
+    elseif p216 and p216.UserInputType == Enum.UserInputType.MouseButton1 then
+        v_u_211("Click")
+    end
+end))
+local function v_u_220(p217)
+    -- upvalues: (ref) v_u_164, (copy) v_u_6, (copy) v_u_30, (copy) v_u_146, (copy) v_u_151, (copy) v_u_172, (copy) v_u_160, (copy) v_u_20, (copy) v_u_46, (copy) v_u_130
+    local v_u_218 = v_u_164
+    if v_u_218 and not v_u_218.finished then
+        v_u_218.finished = true
+        v_u_6:UnbindAction("BossGrabEscape")
+        local v219 = v_u_30[p217]
+        if v219 then
+            v_u_146.Text = p217 == "Perfect" and "PERFECT ESCAPE!" or (p217 == "Rescued" and "PULLED FREE!" or "YOU\'RE FREE!")
+            v_u_151.Visible = false
+            v_u_172(p217 == "Perfect" and "Perfect" or "Good")
+            v_u_160.Text = "FREE!"
+            v_u_160.TextColor3 = v_u_20
+            v_u_46("WeakBreak", 1.1)
+        end
+        task.delay(v219 and 0.8 or 0, function()
+            -- upvalues: (ref) v_u_164, (copy) v_u_218, (ref) v_u_130
+            if v_u_164 == v_u_218 then
+                v_u_164 = nil
+                v_u_130.Enabled = false
+            end
+        end)
+    end
+end
+local function v_u_235(p221)
+    -- upvalues: (ref) v_u_47, (ref) v_u_164, (copy) v_u_6, (copy) v_u_189, (copy) v_u_179, (copy) v_u_146, (copy) v_u_163, (copy) v_u_151, (copy) v_u_160, (copy) v_u_161, (copy) v_u_130, (copy) v_u_168, (copy) v_u_214
+    if not v_u_47 and type(p221) == "table" then
+        local v222 = p221.prompts
+        if type(v222) == "table" then
+            if v_u_164 and not v_u_164.finished then
+                v_u_6:UnbindAction("BossGrabEscape")
+            end
+            local v223 = {
+                ["id"] = p221.id,
+                ["prompts"] = p221.prompts
+            }
+            local v224 = p221.needed
+            v223.needed = tonumber(v224) or 3
+            local v225 = p221.allowed
+            v223.allowed = tonumber(v225) or 2
+            local v226 = p221.perfect
+            v223.perfect = tonumber(v226) or 0.08
+            local v227 = p221.good
+            v223.good = tonumber(v227) or 0.17
+            v223.results = {}
+            v_u_164 = v223
+            v_u_189(v_u_164.needed, v_u_164.allowed)
+            v_u_179()
+            v_u_146.Text = "BREAK FREE!"
+            v_u_163.Visible = true
+            v_u_151.Visible = false
+            v_u_160.TextTransparency = 1
+            v_u_161.Transparency = 1
+            v_u_130.Enabled = true
+            v_u_168.pulse = 0.4
+            local v228 = {}
+            local v229 = {}
+            for _, v230 in v_u_164.prompts do
+                for _, v_u_231 in { v230.key, v230.pad } do
+                    if type(v_u_231) == "string" and not v228[v_u_231] then
+                        local v232, v233 = pcall(function()
+                            -- upvalues: (copy) v_u_231
+                            return Enum.KeyCode[v_u_231]
+                        end)
+                        if v232 and v233 then
+                            v228[v_u_231] = true
+                            table.insert(v229, v233)
+                        end
+                    end
+                end
+            end
+            local v234 = Enum.UserInputType.MouseButton1
+            table.insert(v229, v234)
+            v_u_6:BindActionAtPriority("BossGrabEscape", v_u_214, false, Enum.ContextActionPriority.High.Value + 50, table.unpack(v229))
+            return
+        end
+    end
+end
+local v_u_236 = nil
+local v_u_237 = nil
+local function v_u_271(p238)
+    -- upvalues: (ref) v_u_164, (copy) v_u_151, (copy) v_u_172, (copy) v_u_179, (copy) v_u_46, (copy) v_u_63, (copy) v_u_168, (copy) v_u_15, (copy) v_u_163, (copy) v_u_195, (ref) v_u_236, (ref) v_u_237, (copy) v_u_5, (copy) v_u_155, (copy) v_u_154, (copy) v_u_27, (copy) v_u_153, (copy) v_u_28, (copy) v_u_23, (copy) v_u_148, (copy) v_u_149, (copy) v_u_150, (copy) v_u_156, (copy) v_u_4, (copy) v_u_152, (copy) v_u_21, (copy) v_u_20
+    local v241, v242
+    if v_u_164 then
+        for v241, v242 in v_u_164.prompts do
+            if not v_u_164.results[v241] then
+                goto l3
+            end
+        end
+        v241 = nil
+        v242 = nil
+    else
+        v241 = nil
+        v242 = nil
+    end
+    ::l3::
+    if v241 then
+        if v242.perfectAt + v_u_164.good < p238 then
+            if v_u_164 then
+                if v_u_164.results[v241] then
+                    return
+                end
+                v_u_164.results[v241] = "Late"
+                local v243 = v_u_164
+                v243.misses = v243.misses + 1
+                v_u_172("Late")
+                v_u_179()
+                v_u_46("Bonk", 0.7, 1.3)
+                v_u_46("Rustle", 0.6, 1.4)
+                v_u_63.pulse = 0.17453292519943295
+                v_u_168.pulse = 0.45
+                v_u_15.add(0.4)
+                if v241 == 1 then
+                    v_u_163.Visible = false
+                end
+            end
+            return
+        else
+            local v244 = v_u_195()
+            if v241 ~= v_u_236 or v244 ~= v_u_237 then
+                v_u_236 = v241
+                v_u_237 = v244
+                local v245
+                if v244 == "Gamepad" then
+                    local v_u_246 = v242.pad
+                    local function v247()
+                        -- upvalues: (ref) v_u_5, (copy) v_u_246
+                        return v_u_5:GetImageForKeyCode(Enum.KeyCode[v_u_246])
+                    end
+                    local v248, v249 = pcall(v247)
+                    v245 = (not v248 or (type(v249) ~= "string" or not v249)) and "" or v249 or ""
+                else
+                    v245 = ""
+                end
+                v_u_155.Visible = v245 ~= ""
+                v_u_155.Image = v245
+                v_u_154.Visible = v245 == ""
+                local v250 = v_u_154
+                local v251
+                if v244 == "Touch" then
+                    v251 = "TAP"
+                elseif v244 == "Gamepad" then
+                    v251 = v_u_27[v242.pad] or "A"
+                else
+                    local v252 = v242.key
+                    v251 = tostring(v252)
+                end
+                v250.Text = v251
+                v_u_153.BackgroundColor3 = v244 == "Gamepad" and v245 == "" and (v_u_28[v242.pad] or v_u_23) or v_u_23
+                local v253 = v_u_163
+                local v254
+                if v244 == "Touch" then
+                    v254 = "Tap when the ring is in the green zone!"
+                elseif v244 == "Gamepad" then
+                    v254 = "Press when the ring is in the green zone!"
+                else
+                    local v255 = v242.key
+                    v254 = "Click (or press " .. tostring(v255) .. ") when the ring is in the green zone!"
+                end
+                v253.Text = v254
+            end
+            local v256 = 0.8 * v_u_164.good
+            local v257 = v242.perfectAt - v242.shownAt
+            local v258 = v256 / math.max(0.05, v257)
+            local v259 = 0.62 - v258
+            local v260 = math.max(0.05, v259)
+            v_u_148.Size = UDim2.fromScale(v260, v260)
+            v_u_149.Thickness = (0.62 + v258 - v260) * 0.5 * 150
+            if p238 < v242.shownAt then
+                v_u_149.Transparency = 0.75
+                v_u_151.Visible = false
+                v_u_153.BackgroundTransparency = 0.45
+                v_u_154.TextTransparency = 0.45
+                v_u_155.ImageTransparency = 0.45
+                v_u_150.Transparency = 0.5
+            else
+                if v_u_164.tickedIndex ~= v241 then
+                    v_u_164.tickedIndex = v241
+                    v_u_46("HitTick", 0.75, 0.8)
+                    v_u_156.Scale = 1.2
+                    v_u_4:Create(v_u_156, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+                end
+                v_u_153.BackgroundTransparency = 0
+                v_u_154.TextTransparency = 0
+                v_u_155.ImageTransparency = 0
+                local v261 = v242.perfectAt - v242.shownAt
+                local v262 = math.max(0.05, v261)
+                local v263 = (p238 - v242.shownAt) / v262
+                local v264 = 0.62 + 0.8 * (1 - v263)
+                local v265 = math.max(0.2, v264)
+                v_u_151.Visible = true
+                v_u_151.Size = UDim2.fromScale(v265, v265)
+                local v266 = p238 - v242.perfectAt
+                local v267 = math.abs(v266)
+                local v268 = v267 <= v_u_164.good
+                v_u_152.Color = v268 and v_u_21 or v_u_20
+                v_u_152.Thickness = v268 and 7 or 5
+                local v269 = v_u_152
+                local v270 = 1 - v263 * 3
+                v269.Transparency = math.clamp(v270, 0, 1) * 0.6
+                v_u_150.Transparency = v268 and 0 or 0.15
+                v_u_149.Transparency = v268 and 0.15 or 0.5
+                v_u_150.Color = v267 <= v_u_164.perfect and v_u_20 or v_u_21
+            end
+        end
+    else
+        v_u_151.Visible = false
+        return
+    end
+end
+local v_u_272 = v_u_39("ScreenGui", v16, {})
+local v273 = v_u_39("Frame", v_u_272, {
+    ["AnchorPoint"] = Vector2.new(0.5, 1),
+    ["Position"] = UDim2.fromScale(0.5, 0.8),
+    ["Size"] = UDim2.fromOffset(340, 64),
+    ["BackgroundColor3"] = Color3.new(0, 0, 0)
+})
+v_u_39("UICorner", v273, {
+    ["CornerRadius"] = UDim.new(0.25, 0)
+})
+v_u_39("UIStroke", v273, {
+    ["Color"] = Color3.new(0, 0, 0)
+})
+local v_u_274 = v_u_39("UIScale", v273, {})
+local v_u_275 = v_u_39("TextLabel", v273, {
+    ["Position"] = UDim2.new(0, 12, 0, 6),
+    ["Size"] = UDim2.new(1, -24, 0, 24),
+    ["FontFace"] = v18,
+    ["TextColor3"] = v_u_20
+})
+v_u_39("UIStroke", v_u_275, {
+    ["Color"] = Color3.new(0, 0, 0)
+})
+v_u_39("UITextSizeConstraint", v_u_275, {})
+v_u_39("UIStroke", v_u_39("TextLabel", v273, {
+    ["Position"] = UDim2.new(0, 12, 0, 30),
+    ["Size"] = UDim2.new(1, -24, 0, 16),
+    ["FontFace"] = v18,
+    ["TextColor3"] = v_u_21
+}), {
+    ["Color"] = Color3.new(0, 0, 0)
+})
+local v276 = v_u_39("Frame", v273, {
+    ["AnchorPoint"] = Vector2.new(0.5, 1),
+    ["Position"] = UDim2.new(0.5, 0, 1, -7),
+    ["Size"] = UDim2.new(1, -24, 0, 7),
+    ["BackgroundColor3"] = Color3.fromRGB(24, 24, 24)
+})
+v_u_39("UICorner", v276, {
+    ["CornerRadius"] = UDim.new(1, 0)
+})
+local v_u_277 = v_u_39("Frame", v276, {
+    ["Size"] = UDim2.fromScale(0, 1),
+    ["BackgroundColor3"] = v_u_20
+})
+v_u_39("UICorner", v_u_277, {
+    ["CornerRadius"] = UDim.new(1, 0)
+})
+local v_u_278 = nil
+local function v_u_287()
+    -- upvalues: (copy) v_u_10, (copy) v_u_9, (copy) v_u_11, (copy) v_u_272, (ref) v_u_278, (copy) v_u_1, (copy) v_u_275, (copy) v_u_277
+    local v279 = v_u_10:GetAttribute("GrabVictim")
+    local v280 = workspace.CurrentCamera
+    local v281
+    if typeof(v279) == "number" and (v279 ~= v_u_9.UserId and v280 ~= nil) then
+        v281 = (v280.CFrame.Position - v_u_11.Position).Magnitude < 90
+    else
+        v281 = false
+    end
+    v_u_272.Enabled = v281
+    if v281 then
+        if v279 ~= v_u_278 then
+            v_u_278 = v279
+            local v282 = v_u_1:GetPlayerByUserId(v279)
+            v_u_275.Text = string.upper(v282 and v282.DisplayName or "A farmhand") .. " IS TRAPPED!"
+        end
+        local v283 = v_u_277
+        local v284 = UDim2.fromScale
+        local v285 = v_u_10
+        local v286 = tonumber(v285:GetAttribute("GrabRescue")) or 0
+        v283.Size = v284(math.clamp(v286, 0, 1), 1)
+    else
+        v_u_278 = nil
+    end
+end
+local v288 = v12.Feedback.OnClientEvent
+local function v303(p289, p290, p291)
+    -- upvalues: (ref) v_u_47, (copy) v_u_235, (copy) v_u_9, (copy) v_u_63, (copy) v_u_129, (ref) v_u_164, (copy) v_u_172, (copy) v_u_179, (copy) v_u_220, (copy) v_u_168, (copy) v_u_15, (ref) v_u_132, (copy) v_u_98, (copy) v_u_30, (copy) v_u_141
+    if v_u_47 then
+        return
+    elseif p289 == "GrabPrompts" then
+        v_u_235(p290)
+        return
+    elseif p289 == "AttackFX" and type(p291) == "table" then
+        local v292 = p291.userId == v_u_9.UserId
+        if p290 == "Grabbed" then
+            v_u_63.target = 1
+            if v292 and v_u_9.Character then
+                v_u_129(v_u_9.Character)
+                return
+            end
+        elseif p290 == "GrabProgress" then
+            local v293 = p291.grade == "Perfect" and true or p291.grade == "Good"
+            if not v292 then
+                v_u_63.pulse = v293 and -0.17453292519943295 or 0.15707963267948966
+            end
+            if v292 and (v_u_164 and v_u_164.id == p291.id) then
+                local v294 = p291.index
+                local v295 = tonumber(v294)
+                if v295 and v_u_164.results[v295] ~= p291.grade then
+                    local v296 = v_u_164.results[v295]
+                    v_u_164.results[v295] = p291.grade
+                    if v296 ~= nil then
+                        v_u_172(p291.grade)
+                    end
+                end
+                local v297 = v_u_164
+                local v298 = p291.successes
+                v297.successes = tonumber(v298) or v_u_164.successes
+                local v299 = v_u_164
+                local v300 = p291.misses
+                v299.misses = tonumber(v300) or v_u_164.misses
+                v_u_179()
+                return
+            end
+        elseif p290 == "GrabHurl" then
+            v_u_63.pulse = 0.13962634015954636
+            if v292 then
+                v_u_220("Thrown")
+                v_u_168.pulse = 0.6
+                v_u_15.add(0.35)
+                return
+            end
+        elseif p290 == "GrabRelease" then
+            v_u_63.target = 0
+            if v292 then
+                v_u_220(p291.reason)
+                local v301 = v_u_132
+                if v301 then
+                    v_u_132 = nil
+                    if v301.track then
+                        v301.track:Stop(0.2)
+                    end
+                    v_u_98()
+                end
+                if v_u_30[p291.reason] then
+                    v_u_141()
+                    return
+                end
+            end
+        elseif p290 == "Cancel" then
+            if v_u_164 and v_u_164.id == p291.id then
+                v_u_220("Cancelled")
+                local v302 = v_u_132
+                if v302 then
+                    v_u_132 = nil
+                    if v302.track then
+                        v302.track:Stop(0.2)
+                    end
+                    v_u_98()
+                end
+            end
+            v_u_63.target = 0
+        end
+    end
+end
+table.insert(v_u_49, v288:Connect(v303))
+local v_u_304 = {}
+local function v312(p_u_305)
+    -- upvalues: (copy) v_u_304, (copy) v_u_220, (ref) v_u_132, (copy) v_u_98, (copy) v_u_129
+    for _, v306 in v_u_304 do
+        v306:Disconnect()
+    end
+    table.clear(v_u_304)
+    v_u_220("Respawned")
+    local v307 = v_u_132
+    if v307 then
+        v_u_132 = nil
+        if v307.track then
+            v307.track:Stop(0.2)
+        end
+        v_u_98()
+    end
+    local v308 = v_u_304
+    local v309 = p_u_305:GetAttributeChangedSignal("BossHeld")
+    local function v311()
+        -- upvalues: (copy) p_u_305, (ref) v_u_129, (ref) v_u_132, (ref) v_u_98
+        if p_u_305:GetAttribute("BossHeld") == true then
+            v_u_129(p_u_305)
+            return
+        else
+            local v310 = v_u_132
+            if v310 then
+                v_u_132 = nil
+                if v310.track then
+                    v310.track:Stop(0.2)
+                end
+                v_u_98()
+            end
+        end
+    end
+    table.insert(v308, v309:Connect(v311))
+    if p_u_305:GetAttribute("BossHeld") == true then
+        v_u_129(p_u_305)
+    end
+end
+local v313 = v_u_9.CharacterAdded
+table.insert(v_u_49, v313:Connect(v312))
+if v_u_9.Character then
+    task.spawn(v312, v_u_9.Character)
+end
+local v314 = v_u_10:GetAttributeChangedSignal("Encounter")
+table.insert(v_u_49, v314:Connect(function()
+    -- upvalues: (copy) v_u_63, (copy) v_u_220, (ref) v_u_132, (copy) v_u_98
+    v_u_63.target = 0
+    v_u_220("Reset")
+    local v315 = v_u_132
+    if v315 then
+        v_u_132 = nil
+        if v315.track then
+            v315.track:Stop(0.2)
+        end
+        v_u_98()
+    end
+end))
+local v316 = v_u_3.PreSimulation
+table.insert(v_u_49, v316:Connect(v_u_121))
+v_u_3:BindToRenderStep("BossGrabPin", Enum.RenderPriority.Camera.Value - 2, function(p317)
+    -- upvalues: (copy) v_u_121, (ref) v_u_131, (ref) v_u_132, (copy) v_u_31, (copy) v_u_9, (copy) v_u_98
+    v_u_121()
+    local v318 = v_u_131
+    if not v318 then
+        ::l2::
+        return
+    end
+    if not v_u_132 or (workspace.CurrentCamera ~= v318.camera or v318.camera.CameraType == Enum.CameraType.Scriptable) then
+        ::l4::
+        v_u_98()
+        return
+    end
+    for _, v319 in v_u_31 do
+        if v_u_9:GetAttribute(v319) == true then
+            v324 = true
+            ::l10::
+            if not v324 then
+                local v320 = v318.proxy
+                local v321 = v318.proxy.Position
+                local v322 = v_u_132.root.Position - Vector3.new(0, 1.6, 0)
+                local v323 = -12 * p317
+                v320.Position = v321:Lerp(v322, 1 - math.exp(v323))
+                goto l2
+            end
+            goto l4
+        end
+    end
+    local v324 = false
+    goto l10
+end)
+v_u_3:BindToRenderStep("BossGrabCameraShow", Enum.RenderPriority.Camera.Value + 5, function()
+    -- upvalues: (ref) v_u_131
+    local v325 = v_u_131
+    if v325 then
+        for v326 in pairs(v325.transparency) do
+            if v326.Parent then
+                v326.LocalTransparencyModifier = 0
+            end
+        end
+    end
+end)
+local v327 = v_u_3.RenderStepped
+local function v348(p328)
+    -- upvalues: (copy) v_u_77, (copy) v_u_145, (copy) v_u_274, (ref) v_u_164, (copy) v_u_271, (copy) v_u_57, (ref) v_u_132, (copy) v_u_168, (copy) v_u_15, (copy) v_u_46, (copy) v_u_133, (copy) v_u_130, (copy) v_u_144, (copy) v_u_287
+    v_u_77(p328)
+    local v329 = workspace.CurrentCamera
+    local v330 = v329 and v329.ViewportSize or Vector2.new(1280, 720)
+    local v331 = v330.X
+    local v332 = v330.Y
+    local v333 = math.min(v331, v332) / 720
+    local v334 = math.clamp(v333, 0.62, 1.15)
+    v_u_145.Scale = v334
+    v_u_274.Scale = v334
+    if v_u_164 and not v_u_164.finished then
+        v_u_271(v_u_57())
+    end
+    if v_u_132 then
+        local v335 = v_u_132
+        v335.throb = v335.throb + p328
+        if v_u_132.throb > 1.15 then
+            v_u_132.throb = 0
+            local v336 = v_u_168
+            local v337 = v_u_168.pulse
+            v336.pulse = math.max(v337, 0.18)
+            v_u_15.add(0.08)
+            v_u_46("Rustle", 0.55, 0.9)
+        end
+    end
+    local v338 = v_u_168
+    local v339 = v338.base
+    local v340 = (v_u_132 and 0.32 or 0) - v_u_168.base
+    local v341 = -6 * p328
+    v338.base = v339 + v340 * (1 - math.exp(v341))
+    local v342 = v_u_168
+    local v343 = v342.pulse
+    local v344 = -3.5 * p328
+    v342.pulse = v343 * math.exp(v344)
+    local v345 = v_u_168.base + v_u_168.pulse
+    local v346 = math.clamp(v345, 0, 0.85)
+    for _, v347 in v_u_133 do
+        v347.BackgroundTransparency = 1 - v346
+    end
+    v_u_130.Enabled = v_u_164 ~= nil and true or v346 > 0.01
+    v_u_144.Visible = v_u_164 ~= nil
+    v_u_287()
+end
+table.insert(v_u_49, v327:Connect(v348))
+script.Destroying:Connect(function()
+    -- upvalues: (ref) v_u_47, (copy) v_u_49, (copy) v_u_304, (copy) v_u_3, (copy) v_u_6, (ref) v_u_132, (copy) v_u_98, (copy) v_u_59, (copy) v_u_61, (copy) v_u_60, (copy) v_u_62, (copy) v_u_130, (copy) v_u_272, (copy) v_u_40
+    v_u_47 = true
+    for _, v349 in v_u_49 do
+        v349:Disconnect()
+    end
+    for _, v350 in v_u_304 do
+        v350:Disconnect()
+    end
+    v_u_3:UnbindFromRenderStep("BossGrabPin")
+    v_u_3:UnbindFromRenderStep("BossGrabCameraShow")
+    v_u_6:UnbindAction("BossGrabEscape")
+    local v351 = v_u_132
+    if v351 then
+        v_u_132 = nil
+        if v351.track then
+            v351.track:Stop(0.2)
+        end
+        v_u_98()
+    end
+    if v_u_59 and v_u_61 then
+        v_u_59.CFrame = v_u_61 * CFrame.Angles(0, 0, 0)
+    end
+    if v_u_60 and v_u_62 then
+        v_u_60.CFrame = v_u_62 * CFrame.Angles(0, -0, 0)
+    end
+    v_u_130:Destroy()
+    v_u_272:Destroy()
+    v_u_40:Destroy()
+end)

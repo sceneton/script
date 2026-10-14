@@ -1,0 +1,194 @@
+-- Decompiled game.ReplicatedStorage.Shared.Configs.ClassConfig
+
+local v_u_1 = {
+    ["SpinCost"] = 40,
+    ["DefaultClass"] = "Starter",
+    ["FreeClassSlots"] = 1,
+    ["MaxClassSlots"] = 2,
+    ["ExtraSlotProductId"] = 3710608410,
+    ["Order"] = {
+        "Starter",
+        "Pack Mule",
+        "Hay Merchant",
+        "Forkmaster",
+        "Demolitionist",
+        "Prospector",
+        "Drone Specialist",
+        "Hoover",
+        "Ultimate Farmer",
+        "The Chosen One"
+    }
+}
+local v2 = {
+    ["Starter"] = {
+        ["Color"] = Color3.fromRGB(230, 230, 230)
+    },
+    ["Pack Mule"] = {
+        ["Color"] = Color3.fromRGB(70, 225, 76)
+    },
+    ["Hay Merchant"] = {
+        ["Color"] = Color3.fromRGB(50, 206, 255)
+    },
+    ["Forkmaster"] = {
+        ["Color"] = Color3.fromRGB(255, 151, 30)
+    },
+    ["Demolitionist"] = {
+        ["Color"] = Color3.fromRGB(255, 81, 49)
+    },
+    ["Prospector"] = {
+        ["Color"] = Color3.fromRGB(255, 86, 201)
+    },
+    ["Drone Specialist"] = {
+        ["Color"] = Color3.fromRGB(190, 205, 216)
+    },
+    ["Hoover"] = {
+        ["Color"] = Color3.fromRGB(168, 80, 255)
+    },
+    ["Ultimate Farmer"] = {
+        ["Color"] = Color3.fromRGB(255, 211, 49)
+    },
+    ["The Chosen One"] = {
+        ["Color"] = Color3.fromRGB(255, 232, 140)
+    }
+}
+v_u_1.Classes = v2
+v_u_1.Inherits = {
+    ["Ultimate Farmer"] = {
+        "Pack Mule",
+        "Hay Merchant",
+        "Forkmaster",
+        "Demolitionist",
+        "Prospector",
+        "Drone Specialist",
+        "Hoover"
+    },
+    ["The Chosen One"] = {
+        "Pack Mule",
+        "Hay Merchant",
+        "Forkmaster",
+        "Demolitionist",
+        "Prospector",
+        "Drone Specialist",
+        "Hoover"
+    }
+}
+v_u_1.Specials = {
+    ["Demolitionist"] = { "TntSplit" },
+    ["Prospector"] = { "HayToDiamond" },
+    ["Drone Specialist"] = { "DroneSwarm" },
+    ["Ultimate Farmer"] = { "GoldenHarvest" },
+    ["Hoover"] = { "Overcharge" },
+    ["The Chosen One"] = {
+        "TntSplit",
+        "HayToDiamond",
+        "DroneSwarm",
+        "GoldenHarvest",
+        "Overcharge"
+    }
+}
+function v_u_1.hasSpecial(p3, p4)
+    -- upvalues: (copy) v_u_1
+    local v5 = v_u_1.Specials[v_u_1.normalize(p3)]
+    if not v5 then
+        return false
+    end
+    for _, v6 in ipairs(v5) do
+        if v6 == p4 then
+            return true
+        end
+    end
+    return false
+end
+function v_u_1.isValid(p7)
+    -- upvalues: (copy) v_u_1
+    local v8
+    if type(p7) == "string" then
+        v8 = v_u_1.Classes[p7] ~= nil
+    else
+        v8 = false
+    end
+    return v8
+end
+function v_u_1.normalize(p9)
+    -- upvalues: (copy) v_u_1
+    return v_u_1.isValid(p9) and p9 and p9 or v_u_1.DefaultClass
+end
+function v_u_1.get(p10)
+    -- upvalues: (copy) v_u_1
+    return v_u_1.Classes[v_u_1.normalize(p10)]
+end
+function v_u_1.normalizeSlotCount(p11)
+    -- upvalues: (copy) v_u_1
+    local v12 = tonumber(p11) or v_u_1.FreeClassSlots
+    local v13 = math.floor(v12)
+    local v14 = v_u_1.FreeClassSlots
+    local v15 = v_u_1.MaxClassSlots
+    return math.clamp(v13, v14, v15)
+end
+function v_u_1.normalizeSlots(p16)
+    -- upvalues: (copy) v_u_1
+    local v17 = {}
+    for v18 = 1, v_u_1.MaxClassSlots do
+        local v19 = v_u_1.normalize
+        local v20
+        if type(p16) == "table" then
+            v20 = p16[v18] or nil
+        else
+            v20 = nil
+        end
+        v17[v18] = v19(v20)
+    end
+    return v17
+end
+function v_u_1.normalizeSlotIndex(p21, p22)
+    -- upvalues: (copy) v_u_1
+    local v23 = tonumber(p21) or 0
+    local v24 = math.floor(v23)
+    return (v24 < 1 or v_u_1.normalizeSlotCount(p22) < v24) and 1 or v24
+end
+function v_u_1.passive(p25, p26)
+    -- upvalues: (copy) v_u_1
+    local v27 = v_u_1.normalize(p25)
+    local v28 = v_u_1.Classes[v27]
+    if v28 then
+        v28 = v28[p26]
+    end
+    if v28 ~= nil then
+        return v28
+    end
+    for _, v29 in ipairs(v_u_1.Inherits[v27] or {}) do
+        local v30 = v_u_1.Classes[v29]
+        if v30 then
+            v30 = v30[p26]
+        end
+        if v30 ~= nil then
+            return v30
+        end
+    end
+    return nil
+end
+function v_u_1.roll(p31)
+    -- upvalues: (copy) v_u_1
+    local v32 = p31 or Random.new()
+    local v33 = 0
+    for _, v34 in ipairs(v_u_1.Order) do
+        local v35 = v_u_1.Classes[v34]
+        local v36 = v35 and v35.Weight or 0
+        v33 = v33 + math.max(0, v36)
+    end
+    if v33 <= 0 then
+        return v_u_1.DefaultClass
+    end
+    local v37 = v32:NextNumber(0, v33)
+    local v38 = 0
+    for _, v39 in ipairs(v_u_1.Order) do
+        local v40 = v_u_1.Classes[v39]
+        local v41 = v40 and v40.Weight or 0
+        v38 = v38 + math.max(0, v41)
+        if v37 <= v38 then
+            return v39
+        end
+    end
+    return v_u_1.DefaultClass
+end
+return table.freeze(v_u_1)

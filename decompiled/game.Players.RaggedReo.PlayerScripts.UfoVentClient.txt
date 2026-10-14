@@ -1,0 +1,740 @@
+-- Decompiled game.Players.RaggedReo.PlayerScripts.UfoVentClient
+
+local v_u_1 = game:GetService("ContextActionService")
+local v_u_2 = game:GetService("GuiService")
+local v_u_3 = game:GetService("Lighting")
+local v4 = game:GetService("Players")
+local v_u_5 = game:GetService("ReplicatedStorage")
+local v_u_6 = game:GetService("RunService")
+local v_u_7 = game:GetService("SoundService")
+local v_u_8 = game:GetService("TweenService")
+local v_u_9 = game:GetService("UserInputService")
+local v_u_10 = NumberRange.new(-50, 50)
+local v_u_11 = Enum.KeyCode.V
+local v_u_12 = { Enum.KeyCode.ButtonA, Enum.KeyCode.ButtonX, Enum.KeyCode.ButtonR2 }
+local v_u_13 = v4.LocalPlayer
+local v_u_14 = v_u_13:WaitForChild("PlayerGui"):WaitForChild("UfoVentMinigame", (1 / 0))
+local v_u_15 = v_u_14:WaitForChild("Panel")
+local v_u_16 = v_u_15:FindFirstChild("Clip") or v_u_15
+local v_u_17 = v_u_16:WaitForChild("Hole")
+local v18 = v_u_16:WaitForChild("Strands")
+local v_u_19 = v_u_16:FindFirstChild("Counter")
+local v_u_20 = v_u_16:FindFirstChild("BitTemplate")
+local v_u_21 = v_u_16:FindFirstChild("Hint")
+local v_u_22
+if v_u_21 then
+    v_u_22 = v_u_21:FindFirstChild("Pointer")
+else
+    v_u_22 = v_u_21
+end
+local v_u_23 = v_u_15:FindFirstChildOfClass("UIScale")
+if v_u_21 and v_u_21:IsA("GuiObject") then
+    v_u_21.Visible = false
+end
+if v_u_20 and v_u_20:IsA("GuiObject") then
+    v_u_20.Visible = false
+end
+v_u_14.Enabled = false
+task.spawn(function()
+    -- upvalues: (copy) v_u_14
+    local function v25()
+        -- upvalues: (ref) v_u_14
+        local v24 = { v_u_14 }
+        game:GetService("ContentProvider"):PreloadAsync(v24)
+    end
+    pcall(v25)
+end)
+local v_u_26 = v_u_5:WaitForChild("UfoCrash"):WaitForChild("Remotes")
+local v27 = v_u_26:WaitForChild("VentPuzzle")
+local function v_u_30(p28)
+    -- upvalues: (copy) v_u_7, (copy) v_u_5
+    local v29 = v_u_7:FindFirstChild("Sounds")
+    if v29 then
+        v29 = v29:FindFirstChild(p28)
+    end
+    if not v29 then
+        v29 = v_u_5:FindFirstChild("Shared")
+        if v29 then
+            v29 = v29:FindFirstChild("SoundServiceClient", true)
+        end
+        if v29 then
+            v29 = v29:FindFirstChild(p28)
+        end
+    end
+    if v29 and v29:IsA("Sound") then
+        return v29
+    else
+        return nil
+    end
+end
+local v_u_31 = {}
+local v_u_32 = nil
+local function v_u_36(p33)
+    -- upvalues: (copy) v_u_30, (copy) v_u_7
+    local v34 = v_u_30(p33)
+    if v34 then
+        local v_u_35 = v34:Clone()
+        v_u_35.Looped = false
+        v_u_35.Parent = v_u_7
+        v_u_35:Play()
+        v_u_35.Ended:Once(function()
+            -- upvalues: (copy) v_u_35
+            v_u_35:Destroy()
+        end)
+    end
+end
+for _, v37 in v18:GetChildren() do
+    if v37:IsA("ImageLabel") then
+        local v38 = v37:FindFirstChild("Grab")
+        local v39 = {
+            ["image"] = v37
+        }
+        if not (v38 and v38:IsA("GuiButton")) then
+            v38 = nil
+        end
+        v39.grab = v38
+        v39.zIndex = v37.ZIndex
+        v39.home = Vector2.zero
+        v39.centre = Vector2.zero
+        table.insert(v_u_31, v39)
+    end
+end
+table.sort(v_u_31, function(p40, p41)
+    return p40.zIndex > p41.zIndex
+end)
+local v_u_42 = v_u_31[1] and (v_u_31[1].image.ImageTransparency or 0) or 0
+local function v_u_51()
+    -- upvalues: (copy) v_u_17, (copy) v_u_31, (copy) v_u_10, (copy) v_u_42
+    local v43 = Vector2.new(v_u_17.Position.X.Scale, v_u_17.Position.Y.Scale)
+    local v44 = Vector2.new(v_u_17.Size.X.Scale, v_u_17.Size.Y.Scale)
+    for _, v45 in v_u_31 do
+        local v46 = v43 + v44 * Vector2.new(0.2 + math.random() * 0.6, 0.08 + math.random() * 0.84)
+        v45.angle = v_u_10.Min + math.random() * (v_u_10.Max - v_u_10.Min)
+        local v47 = v45.image.Size.X.Scale * 0.45 * 2
+        local v48 = v45.angle
+        local v49 = math.rad(v48)
+        v45.home = v46 + Vector2.new(math.cos(v49), (math.sin(v49))) * (v47 * 0.2)
+        v45.centre = v45.home
+        v45.pulled = false
+        v45.moving = false
+        local v50 = v45.zIndex
+        v45.image.ZIndex = v50
+        if v45.grab then
+            v45.grab.ZIndex = v50
+        end
+        v45.image.Visible = true
+        v45.image.ImageTransparency = v_u_42
+        v45.image.Position = UDim2.fromScale(v45.centre.X, v45.centre.Y)
+        v45.image.Rotation = v45.angle
+    end
+end
+local function v_u_62(p52, p53)
+    local v54 = p52.angle
+    local v55 = math.rad(v54)
+    local v56 = Vector2.new(math.cos(v55), (math.sin(v55))) * (p52.image.Size.X.Scale * 0.45)
+    local v57 = p52.centre - v56
+    local v58 = p52.centre + v56 - v57
+    local v59 = (p53 - v57):Dot(v58)
+    local v60 = v58:Dot(v58)
+    local v61 = v59 / math.max(v60, 1e-6)
+    return (p53 - (v57 + v58 * math.clamp(v61, 0, 1))).Magnitude
+end
+local v_u_63 = v_u_15.Position
+local v_u_64 = {
+    ["dragOffset"] = Vector2.zero,
+    ["trail"] = {},
+    ["flying"] = {},
+    ["connections"] = {},
+    ["mouseBehavior"] = v_u_9.MouseBehavior,
+    ["mouseIcon"] = v_u_9.MouseIconEnabled,
+    ["closeNow"] = function() end
+}
+local function v_u_66()
+    -- upvalues: (copy) v_u_13, (copy) v_u_64
+    local v65 = v_u_13.Character
+    if v65 then
+        v65 = v65:FindFirstChildOfClass("Humanoid")
+    end
+    if v65 then
+        v_u_64.frozen = {
+            ["humanoid"] = v65,
+            ["walkSpeed"] = v65.WalkSpeed,
+            ["jumpPower"] = v65.JumpPower,
+            ["jumpHeight"] = v65.JumpHeight
+        }
+        v65.WalkSpeed = 0
+        v65.JumpPower = 0
+        v65.JumpHeight = 0
+    end
+end
+local function v_u_70()
+    -- upvalues: (copy) v_u_64, (copy) v_u_3, (copy) v_u_8, (copy) v_u_30, (copy) v_u_7
+    if v_u_64.blur then
+        v_u_64.blur:Destroy()
+    end
+    local v67 = Instance.new("BlurEffect")
+    v67.Name = "UfoVentBlur"
+    v67.Size = 0
+    v67.Parent = v_u_3
+    v_u_64.blur = v67
+    v_u_8:Create(v67, TweenInfo.new(0.3), {}):Play()
+    if v_u_64.loop then
+        v_u_64.loop:Destroy()
+    end
+    local v68 = v_u_30("LightBuzzLooped")
+    if v68 then
+        local v69 = v68:Clone()
+        v69.Looped = true
+        v69.Volume = 0
+        v69.Parent = v_u_7
+        v69:Play()
+        v_u_64.loop = v69
+        v_u_8:Create(v69, TweenInfo.new(0.3), {
+            ["Volume"] = v68.Volume
+        }):Play()
+    end
+end
+local function v_u_76()
+    -- upvalues: (copy) v_u_64, (copy) v_u_8
+    local v_u_71 = v_u_64.blur
+    local v_u_72 = v_u_64.loop
+    local v73 = v_u_64
+    v_u_64.blur = nil
+    v73.loop = nil
+    if v_u_71 then
+        local v74 = v_u_8:Create(v_u_71, TweenInfo.new(0.3), {})
+        v74.Completed:Once(function()
+            -- upvalues: (copy) v_u_71
+            v_u_71:Destroy()
+        end)
+        v74:Play()
+    end
+    if v_u_72 then
+        local v75 = v_u_8:Create(v_u_72, TweenInfo.new(0.8), {})
+        v75.Completed:Once(function()
+            -- upvalues: (copy) v_u_72
+            v_u_72:Destroy()
+        end)
+        v75:Play()
+    end
+end
+local function v_u_84(p77)
+    -- upvalues: (copy) v_u_64, (copy) v_u_42
+    for v78 = #v_u_64.flying, 1, -1 do
+        local v79 = v_u_64.flying[v78]
+        v79.age = v79.age + p77
+        v79.velocity = v79.velocity + Vector2.new(0, 2.2) * p77
+        v79.position = v79.position + v79.velocity * p77
+        v79.rotation = v79.rotation + v79.spin * p77
+        v79.object.Position = UDim2.fromScale(v79.position.X, v79.position.Y)
+        v79.object.Rotation = v79.rotation
+        local v80
+        if v79.strand then
+            v80 = 0
+        else
+            local v81 = (v79.age / v79.life - 0.66) / 0.34
+            v80 = math.clamp(v81, 0, 1)
+        end
+        if v79.object:IsA("ImageLabel") then
+            v79.object.ImageTransparency = v_u_42 + (1 - v_u_42) * v80
+        else
+            v79.object.BackgroundTransparency = v80
+        end
+        local v82 = (v79.object.Size.X.Scale + v79.object.Size.Y.Scale) * 0.5
+        local v83 = (v79.position.Y > 1 + v82 or v79.position.X > 1 + v82) and true or v79.position.X < -v82
+        if v79.age >= v79.life or v83 then
+            if v79.strand then
+                v79.object.Visible = false
+                v79.strand.moving = false
+            else
+                v79.object:Destroy()
+            end
+            table.remove(v_u_64.flying, v78)
+        end
+    end
+end
+local function v_u_86()
+    -- upvalues: (copy) v_u_64
+    for _, v85 in v_u_64.flying do
+        if v85.strand then
+            v85.object.Visible = false
+            v85.strand.moving = false
+        else
+            v85.object:Destroy()
+        end
+    end
+    table.clear(v_u_64.flying)
+end
+local function v_u_93(p87, p88)
+    -- upvalues: (copy) v_u_20, (copy) v_u_16, (copy) v_u_64
+    if v_u_20 and v_u_20:IsA("GuiObject") then
+        for _ = 1, 6 do
+            local v89 = v_u_20:Clone()
+            v89.Name = "Bit"
+            v89.Visible = true
+            v89.Parent = v_u_16
+            local v90 = Vector2.new((math.random() - 0.3) * 1.4, (math.random() - 0.7) * 1.6)
+            local v91 = v_u_64.flying
+            local v92 = {
+                ["object"] = v89,
+                ["position"] = p87,
+                ["velocity"] = p88 * 0.5 + v90,
+                ["spin"] = (math.random() - 0.5) * 900,
+                ["rotation"] = math.random() * 180,
+                ["life"] = 0.5 + math.random() * 0.4
+            }
+            table.insert(v91, v92)
+        end
+    end
+end
+local function v_u_96()
+    -- upvalues: (copy) v_u_64, (copy) v_u_21, (copy) v_u_36, (copy) v_u_23, (copy) v_u_8, (copy) v_u_26, (ref) v_u_32, (copy) v_u_76, (copy) v_u_15, (copy) v_u_63
+    if not v_u_64.finishing then
+        v_u_64.finishing = true
+        if v_u_21 and v_u_21:IsA("GuiObject") then
+            v_u_21.Visible = false
+        end
+        v_u_36("CablesFinish")
+        if v_u_23 then
+            v_u_23.Scale = 1.06
+            v_u_8:Create(v_u_23, TweenInfo.new(0.3, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+        end
+        task.delay(0.8, function()
+            -- upvalues: (ref) v_u_64, (ref) v_u_26, (ref) v_u_32, (ref) v_u_76, (ref) v_u_8, (ref) v_u_15, (ref) v_u_63
+            if v_u_64.open then
+                local v94 = v_u_26:FindFirstChild("PuzzleDone")
+                if v_u_32 and v94 then
+                    v94:FireServer(v_u_32)
+                end
+                v_u_32 = nil
+                v_u_76()
+                local v95 = v_u_8:Create(v_u_15, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.In), {
+                    ["Position"] = v_u_63 + UDim2.fromScale(0, 1.2)
+                })
+                v95.Completed:Once(function()
+                    -- upvalues: (ref) v_u_64
+                    v_u_64.closeNow()
+                end)
+                v95:Play()
+            end
+        end)
+    end
+end
+local function v_u_115(p97, p98)
+    -- upvalues: (copy) v_u_36, (copy) v_u_64, (copy) v_u_93, (copy) v_u_19, (copy) v_u_31, (copy) v_u_96
+    p97.pulled = true
+    p97.moving = true
+    p97.image.ZIndex = 60
+    if p97.grab then
+        p97.grab.ZIndex = 60
+    end
+    v_u_36("HayCollect")
+    local v99 = p98 * 0.55
+    local v100 = v99.Magnitude
+    if v100 < 0.45 then
+        local v101
+        if v100 > 0.001 then
+            v101 = v99.Unit
+        else
+            local v102 = p97.angle
+            local v103 = math.rad(v102)
+            v101 = Vector2.new(math.cos(v103), (math.sin(v103)))
+        end
+        v99 = v101 * 0.45
+    elseif v100 > 2.4 then
+        v99 = v99.Unit * 2.4
+    end
+    local v104 = v_u_64.flying
+    local v105 = {
+        ["object"] = p97.image,
+        ["strand"] = p97,
+        ["position"] = p97.centre,
+        ["velocity"] = v99,
+        ["spin"] = v99.X * 140 + (math.random() - 0.5) * 60,
+        ["rotation"] = p97.angle
+    }
+    table.insert(v104, v105)
+    local v106 = v_u_93
+    local v107 = p97.home
+    local v108 = p97.angle
+    local v109 = math.rad(v108)
+    v106(v107 - Vector2.new(math.cos(v109), (math.sin(v109))) * 0.04, v99.Unit)
+    if v_u_19 and v_u_19:IsA("TextLabel") then
+        local v110 = v_u_19
+        local v111 = 0
+        for _, v112 in v_u_31 do
+            if not v112.pulled then
+                v111 = v111 + 1
+            end
+        end
+        v110.Text = v111 .. " LEFT"
+    end
+    local v113 = 0
+    for _, v114 in v_u_31 do
+        if not v114.pulled then
+            v113 = v113 + 1
+        end
+    end
+    if v113 == 0 then
+        v_u_96()
+    end
+end
+local function v_u_118()
+    -- upvalues: (copy) v_u_9, (copy) v_u_31, (copy) v_u_2
+    if v_u_9:GetLastInputType().Name:sub(1, 7) ~= "Gamepad" then
+        return
+    end
+    for _, v117 in v_u_31 do
+        if not (v117.pulled or v117.moving) then
+            goto l7
+        end
+    end
+    local v117 = nil
+    ::l7::
+    v_u_2.SelectedObject = v117 and v117.grab or nil
+end
+local function v_u_124()
+    -- upvalues: (copy) v_u_64
+    local v119 = v_u_64.trail
+    local v120 = v119[#v119]
+    if v120 then
+        local v121 = v120
+        for v122 = #v119, 1, -1 do
+            v121 = v119[v122]
+            if v120.at - v121.at >= 0.12 then
+                break
+            end
+        end
+        local v123 = v120.at - v121.at
+        if v123 <= 0.001 or os.clock() - v120.at > 0.12 then
+            return Vector2.zero
+        else
+            return (v120.point - v121.point) / v123
+        end
+    else
+        return Vector2.zero
+    end
+end
+local function v_u_135()
+    -- upvalues: (copy) v_u_21, (copy) v_u_64, (copy) v_u_31, (copy) v_u_22
+    if not v_u_21 or (not v_u_21:IsA("GuiObject") or (v_u_64.finishing or (v_u_64.autoSolving or v_u_64.dragging))) then
+        if v_u_21 and v_u_21:IsA("GuiObject") then
+            v_u_21.Visible = false
+        end
+        return
+    end
+    local v125 = os.clock() - v_u_64.lastActivity
+    for _, v134 in v_u_31 do
+        if not (v134.pulled or v134.moving) then
+            ::l14::
+            if v125 < 3 or not v134 then
+                if v_u_21 and v_u_21:IsA("GuiObject") then
+                    v_u_21.Visible = false
+                end
+            else
+                v_u_21.Visible = true
+                local v127 = ((v125 - 3) % 1.9 - 0.5) / 0.9
+                local v128 = math.clamp(v127, 0, 1)
+                local v129 = v128 * v128 * (3 - v128 * 2)
+                local v130 = v134.centre
+                local v131 = v134.angle
+                local v132 = math.rad(v131)
+                local v133 = v130:Lerp(v130 + Vector2.new(math.cos(v132), (math.sin(v132))) * 0.26, v129)
+                if v_u_22 and v_u_22:IsA("GuiObject") then
+                    v_u_22.Position = UDim2.fromScale(v133.X, v133.Y)
+                end
+            end
+        end
+    end
+    local v134 = nil
+    goto l14
+end
+local function v_u_139()
+    -- upvalues: (copy) v_u_64, (copy) v_u_14, (copy) v_u_15, (copy) v_u_63, (copy) v_u_21, (copy) v_u_86, (copy) v_u_76, (copy) v_u_1, (copy) v_u_2, (copy) v_u_9
+    if v_u_64.open then
+        v_u_64.open = false
+        v_u_64.finishing = false
+        v_u_64.dragging = nil
+        v_u_14.Enabled = false
+        v_u_15.Position = v_u_63
+        if v_u_21 and v_u_21:IsA("GuiObject") then
+            v_u_21.Visible = false
+        end
+        v_u_86()
+        v_u_76()
+        for _, v136 in v_u_64.connections do
+            v136:Disconnect()
+        end
+        table.clear(v_u_64.connections)
+        v_u_1:UnbindAction("UfoVentPadThrow")
+        local v137 = v_u_64.frozen
+        v_u_64.frozen = nil
+        if v137 and v137.humanoid.Parent then
+            if v137.humanoid.WalkSpeed == 0 then
+                v137.humanoid.WalkSpeed = v137.walkSpeed
+            end
+            if v137.humanoid.JumpPower == 0 then
+                v137.humanoid.JumpPower = v137.jumpPower
+            end
+            if v137.humanoid.JumpHeight == 0 then
+                v137.humanoid.JumpHeight = v137.jumpHeight
+            end
+        end
+        local v138 = v_u_2.SelectedObject
+        if v138 and v138:IsDescendantOf(v_u_14) then
+            v_u_2.SelectedObject = nil
+        end
+        v_u_9.MouseBehavior = v_u_64.mouseBehavior
+        v_u_9.MouseIconEnabled = v_u_64.mouseIcon
+    end
+end
+v_u_64.closeNow = v_u_139
+local function v_u_192()
+    -- upvalues: (copy) v_u_64, (copy) v_u_139, (copy) v_u_15, (copy) v_u_63, (copy) v_u_86, (copy) v_u_51, (copy) v_u_19, (copy) v_u_31, (copy) v_u_21, (copy) v_u_23, (copy) v_u_8, (copy) v_u_9, (copy) v_u_66, (copy) v_u_70, (copy) v_u_14, (copy) v_u_118, (copy) v_u_1, (copy) v_u_2, (copy) v_u_62, (copy) v_u_115, (copy) v_u_12, (copy) v_u_124, (copy) v_u_6, (copy) v_u_84, (copy) v_u_135
+    if v_u_64.open then
+        v_u_139()
+    end
+    v_u_64.open = true
+    v_u_64.finishing = false
+    v_u_64.autoSolving = false
+    v_u_64.dragging = nil
+    v_u_15.Position = v_u_63
+    v_u_86()
+    v_u_51()
+    if v_u_19 and v_u_19:IsA("TextLabel") then
+        local v140 = v_u_19
+        local v141 = 0
+        for _, v142 in v_u_31 do
+            if not v142.pulled then
+                v141 = v141 + 1
+            end
+        end
+        v140.Text = v141 .. " LEFT"
+    end
+    v_u_64.lastActivity = os.clock()
+    if v_u_21 and v_u_21:IsA("GuiObject") then
+        v_u_21.Visible = false
+    end
+    if v_u_23 then
+        v_u_23.Scale = 0.85
+        v_u_8:Create(v_u_23, TweenInfo.new(0.35, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+    end
+    v_u_64.mouseBehavior = v_u_9.MouseBehavior
+    v_u_64.mouseIcon = v_u_9.MouseIconEnabled
+    v_u_66()
+    v_u_70()
+    v_u_14.Enabled = true
+    task.defer(v_u_118)
+    local v143 = v_u_12
+    v_u_1:BindActionAtPriority("UfoVentPadThrow", function(_, p144)
+        -- upvalues: (ref) v_u_64, (ref) v_u_2, (ref) v_u_31, (ref) v_u_9, (ref) v_u_15, (ref) v_u_62, (ref) v_u_21, (ref) v_u_115, (ref) v_u_118
+        if p144 ~= Enum.UserInputState.Begin then
+            return Enum.ContextActionResult.Sink
+        end
+        if v_u_64.finishing or v_u_64.autoSolving then
+            return Enum.ContextActionResult.Sink
+        end
+        local v145 = v_u_2.SelectedObject
+        local v155 = nil
+        for _, v147 in v_u_31 do
+            if not v147.pulled and (not v147.moving and (v145 and v147.grab == v145)) then
+                v155 = v147
+                break
+            end
+        end
+        if not v155 then
+            local v148 = v_u_9:GetMouseLocation() - v_u_2:GetGuiInset() - v_u_15.AbsolutePosition
+            local v149 = v_u_15.AbsoluteSize.Y
+            local v150 = v148 / math.max(v149, 1)
+            for _, v151 in v_u_31 do
+                if not v151.pulled and (not v151.moving and v_u_62(v151, v150) <= 0.035) then
+                    v155 = v151
+                    break
+                end
+            end
+        end
+        if v155 then
+            ::l23::
+            if v155 then
+                v_u_64.lastActivity = os.clock()
+                if v_u_21 and v_u_21:IsA("GuiObject") then
+                    v_u_21.Visible = false
+                end
+                if not (v155.pulled or v155.moving) then
+                    local v152 = v_u_115
+                    local v153 = v155.angle
+                    local v154 = math.rad(v153)
+                    v152(v155, (Vector2.new(math.cos(v154), (math.sin(v154))) * 1.3 + Vector2.new(0, -0.5)) / 0.55)
+                end
+                task.defer(v_u_118)
+            end
+            return Enum.ContextActionResult.Sink
+        else
+            for _, v155 in v_u_31 do
+                if not (v155.pulled or v155.moving) then
+                    goto l23
+                end
+            end
+            v155 = nil
+            goto l23
+        end
+    end, false, 3000, table.unpack(v143))
+    local v156 = v_u_64.connections
+    local v157 = v_u_9.InputBegan
+    local function v165(p158)
+        -- upvalues: (ref) v_u_64, (ref) v_u_15, (ref) v_u_31, (ref) v_u_62, (ref) v_u_21
+        if v_u_64.finishing or (v_u_64.autoSolving or v_u_64.dragging) then
+            return
+        end
+        if p158.UserInputType ~= Enum.UserInputType.MouseButton1 and p158.UserInputType ~= Enum.UserInputType.Touch then
+            return
+        end
+        local v159 = v_u_15.AbsoluteSize.Y
+        local v160 = math.max(v159, 1)
+        local v161 = (Vector2.new(p158.Position.X, p158.Position.Y) - v_u_15.AbsolutePosition) / v160
+        for _, v162 in v_u_31 do
+            if not v162.pulled and (not v162.moving and v_u_62(v162, v161) <= 0.035) then
+                v_u_64.dragging = v162
+                v_u_64.dragOffset = v162.centre - v161
+                table.clear(v_u_64.trail)
+                local v163 = v_u_64.trail
+                local v164 = {
+                    ["at"] = os.clock(),
+                    ["point"] = v161
+                }
+                table.insert(v163, v164)
+                v162.image.ZIndex = 60
+                if v162.grab then
+                    v162.grab.ZIndex = 60
+                end
+                v_u_64.lastActivity = os.clock()
+                if v_u_21 and v_u_21:IsA("GuiObject") then
+                    v_u_21.Visible = false
+                    return
+                end
+                break
+            end
+        end
+    end
+    table.insert(v156, v157:Connect(v165))
+    local v166 = v_u_64.connections
+    local v167 = v_u_9.InputChanged
+    local function v175(p168)
+        -- upvalues: (ref) v_u_64, (ref) v_u_15, (ref) v_u_21
+        local v169 = v_u_64.dragging
+        if v169 and (p168.UserInputType == Enum.UserInputType.MouseMovement or p168.UserInputType == Enum.UserInputType.Touch) then
+            local v170 = v_u_15.AbsoluteSize.Y
+            local v171 = math.max(v170, 1)
+            local v172 = (Vector2.new(p168.Position.X, p168.Position.Y) - v_u_15.AbsolutePosition) / v171
+            v169.centre = v172 + v_u_64.dragOffset
+            v169.image.Position = UDim2.fromScale(v169.centre.X, v169.centre.Y)
+            v169.image.Rotation = v169.angle
+            local v173 = v_u_64.trail
+            local v174 = {
+                ["at"] = os.clock(),
+                ["point"] = v172
+            }
+            table.insert(v173, v174)
+            if #v_u_64.trail > 24 then
+                table.remove(v_u_64.trail, 1)
+            end
+            v_u_64.lastActivity = os.clock()
+            if v_u_21 and v_u_21:IsA("GuiObject") then
+                v_u_21.Visible = false
+            end
+        end
+    end
+    table.insert(v166, v167:Connect(v175))
+    local v176 = v_u_64.connections
+    local v177 = v_u_9.InputEnded
+    local function v183(p178)
+        -- upvalues: (ref) v_u_64, (ref) v_u_21, (ref) v_u_115, (ref) v_u_124, (ref) v_u_8
+        local v_u_179 = v_u_64.dragging
+        if v_u_179 and (p178.UserInputType == Enum.UserInputType.MouseButton1 or p178.UserInputType == Enum.UserInputType.Touch) then
+            v_u_64.dragging = nil
+            v_u_64.lastActivity = os.clock()
+            if v_u_21 and v_u_21:IsA("GuiObject") then
+                v_u_21.Visible = false
+            end
+            if (v_u_179.centre - v_u_179.home).Magnitude >= 0.2 then
+                v_u_115(v_u_179, (v_u_124()))
+            else
+                v_u_179.moving = true
+                v_u_179.centre = v_u_179.home
+                local v180 = v_u_8:Create(v_u_179.image, TweenInfo.new(0.18, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                    ["Position"] = UDim2.fromScale(v_u_179.home.X, v_u_179.home.Y)
+                })
+                v180.Completed:Once(function()
+                    -- upvalues: (copy) v_u_179
+                    local v181 = v_u_179
+                    local v182 = v_u_179.zIndex
+                    v181.image.ZIndex = v182
+                    if v181.grab then
+                        v181.grab.ZIndex = v182
+                    end
+                    v_u_179.moving = false
+                end)
+                v180:Play()
+            end
+        else
+            return
+        end
+    end
+    table.insert(v176, v177:Connect(v183))
+    local v184 = v_u_64.connections
+    local v185 = v_u_6.RenderStepped
+    local function v191(p186)
+        -- upvalues: (ref) v_u_9, (ref) v_u_84, (ref) v_u_64, (ref) v_u_21, (ref) v_u_31, (ref) v_u_115, (ref) v_u_135
+        v_u_9.MouseBehavior = Enum.MouseBehavior.Default
+        v_u_9.MouseIconEnabled = true
+        v_u_84(p186)
+        if not v_u_64.finishing and (not v_u_64.autoSolving and (os.clock() - v_u_64.lastActivity >= 20 and not (v_u_64.autoSolving or v_u_64.finishing))) then
+            v_u_64.autoSolving = true
+            v_u_64.dragging = nil
+            if v_u_21 and v_u_21:IsA("GuiObject") then
+                v_u_21.Visible = false
+            end
+            task.spawn(function()
+                -- upvalues: (ref) v_u_31, (ref) v_u_64, (ref) v_u_115
+                for _, v187 in v_u_31 do
+                    if not v_u_64.open or v_u_64.finishing then
+                        break
+                    end
+                    if not (v187.pulled or v187.moving) then
+                        if not (v187.pulled or v187.moving) then
+                            local v188 = v_u_115
+                            local v189 = v187.angle
+                            local v190 = math.rad(v189)
+                            v188(v187, (Vector2.new(math.cos(v190), (math.sin(v190))) * 1.3 + Vector2.new(0, -0.5)) / 0.55)
+                        end
+                        task.wait(0.12)
+                    end
+                end
+            end)
+        end
+        v_u_135()
+    end
+    table.insert(v184, v185:Connect(v191))
+end
+v27.OnClientEvent:Connect(function(p193, p194)
+    -- upvalues: (ref) v_u_32, (copy) v_u_192
+    task.wait(tonumber(p194) or 0)
+    v_u_32 = p193
+    v_u_192()
+end)
+v_u_13.CharacterRemoving:Connect(v_u_139)
+if v_u_6:IsStudio() then
+    local v_u_195 = v_u_26:WaitForChild("StudioGiveLight", 10)
+    if v_u_195 then
+        v_u_9.InputBegan:Connect(function(p196, p197)
+            -- upvalues: (copy) v_u_11, (copy) v_u_195
+            if not p197 and p196.KeyCode == v_u_11 then
+                v_u_195:FireServer("Vent")
+            end
+        end)
+    end
+    local v198 = Instance.new("BindableEvent")
+    v198.Name = "StudioOpen"
+    v198.Event:Connect(v_u_192)
+    v198.Parent = script
+end

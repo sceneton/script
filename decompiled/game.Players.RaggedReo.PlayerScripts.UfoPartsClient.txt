@@ -1,0 +1,741 @@
+-- Decompiled game.Players.RaggedReo.PlayerScripts.UfoPartsClient
+
+local v_u_1 = game:GetService("CollectionService")
+local v_u_2 = game:GetService("Debris")
+local v3 = game:GetService("Players")
+local v_u_4 = game:GetService("ReplicatedStorage")
+local v_u_5 = game:GetService("RunService")
+game:GetService("TweenService")
+local v_u_6 = game:GetService("UserInputService")
+local v_u_7 = game:GetService("Workspace")
+local v8 = v_u_7:FindFirstChild("Local")
+if not v8 then
+    v8 = Instance.new("Folder")
+    v8.Name = "Local"
+    v8.Parent = v_u_7
+end
+if not v8:FindFirstChild("Beams") then
+    local v9 = Instance.new("Folder")
+    v9.Name = "Beams"
+    v9.Parent = v8
+end
+local v_u_10 = require(v_u_4:WaitForChild("Packages"):WaitForChild("ArrowBeamClient"))
+local v_u_11 = require(script.Parent:WaitForChild("ActionHint"))
+local v_u_12 = require(script.Parent:WaitForChild("HotbarSlots"))
+local v_u_13 = require(script.Parent:WaitForChild("MobileAction"))
+local v_u_14 = require(script.Parent:WaitForChild("Notify"))
+local v_u_15 = v_u_4:WaitForChild("Shared"):WaitForChild("Services"):WaitForChild("SoundService"):WaitForChild("SoundServiceClient")
+local v_u_16 = require(v_u_15)
+local v_u_17 = CFrame.new(0.95, -1, -2.3) * CFrame.Angles(-0.20943951023931956, 0.4188790204786391, 0.17453292519943295)
+local v_u_18 = v3.LocalPlayer
+local v_u_19 = v_u_7:WaitForChild("UfoSplitted")
+local v20 = v_u_4:WaitForChild("UfoCrash"):WaitForChild("Remotes")
+local v_u_21 = v20:WaitForChild("PickUpPart")
+local v_u_22 = v20:WaitForChild("ReturnPart")
+local v23 = v20:WaitForChild("PartFlew")
+local v_u_24 = v20:WaitForChild("EquipPart")
+local v_u_25 = RaycastParams.new()
+v_u_25.FilterType = Enum.RaycastFilterType.Exclude
+v_u_25.IgnoreWater = true
+v_u_25.FilterDescendantsInstances = { v_u_18.Character or Instance.new("Model"), v_u_7.CurrentCamera }
+v_u_18.CharacterAdded:Connect(function()
+    -- upvalues: (copy) v_u_25, (copy) v_u_18, (copy) v_u_7
+    v_u_25.FilterDescendantsInstances = { v_u_18.Character or Instance.new("Model"), v_u_7.CurrentCamera }
+end)
+local function v_u_28(p26)
+    local v27 = p26 ~= nil and p26:IsA("BasePart")
+    if v27 then
+        if p26:GetAttribute("UfoPiece") == true and (p26:GetAttribute("Revealed") == true and p26:GetAttribute("Returned") ~= true) then
+            v27 = p26:GetAttribute("HeldBy") == nil
+        else
+            v27 = false
+        end
+    end
+    return v27
+end
+local function v_u_36(p29)
+    -- upvalues: (copy) v_u_18, (copy) v_u_7, (copy) v_u_13, (copy) v_u_6, (copy) v_u_25, (copy) v_u_19, (copy) v_u_28
+    if v_u_18:GetAttribute("CutsceneActive") or v_u_18:GetAttribute("NeedleInputLocked") then
+        return nil, nil
+    else
+        local v30 = v_u_18.Character
+        if v30 then
+            v30 = v30:FindFirstChild("HumanoidRootPart")
+        end
+        local v31 = v30 and v30.Position or nil
+        if v31 then
+            if not p29 then
+                local v32 = v_u_7.CurrentCamera
+                if v_u_13.isTouchDevice() and v32 then
+                    p29 = v32.ViewportSize * 0.5
+                else
+                    p29 = v_u_6:GetMouseLocation()
+                end
+            end
+            local v33 = v_u_7.CurrentCamera
+            local v34
+            if v33 then
+                local v35 = v33:ScreenPointToRay(p29.X, p29.Y)
+                v34 = v_u_7:Raycast(v35.Origin, v35.Direction * 500, v_u_25)
+            else
+                v34 = nil
+            end
+            if v34 then
+                v34 = v34.Instance
+            end
+            if v34 then
+                if v_u_18:GetAttribute("CarryingUfoPart") ~= nil then
+                    if v34:IsDescendantOf(v_u_19) and (v31 - v_u_19:GetPivot().Position).Magnitude <= 30 then
+                        return "RETURN", nil
+                    else
+                        return nil, nil
+                    end
+                elseif v_u_28(v34) and (v31 - v34.Position).Magnitude <= 14 then
+                    return "TAKE", v34
+                else
+                    return nil, nil
+                end
+            else
+                return nil, nil
+            end
+        else
+            return nil, nil
+        end
+    end
+end
+v_u_6.InputBegan:Connect(function(p37, p38)
+    -- upvalues: (copy) v_u_36, (copy) v_u_21, (copy) v_u_22
+    if p38 or p37.UserInputType ~= Enum.UserInputType.MouseButton1 and p37.UserInputType ~= Enum.UserInputType.Touch and p37.KeyCode ~= Enum.KeyCode.ButtonX then
+        return
+    else
+        local v39
+        if p37.UserInputType == Enum.UserInputType.Touch then
+            v39 = Vector2.new(p37.Position.X, p37.Position.Y)
+        else
+            v39 = nil
+        end
+        local v40, v41 = v_u_36(v39)
+        if v40 == "TAKE" and v41 then
+            v_u_21:FireServer(v41)
+        elseif v40 == "RETURN" then
+            v_u_22:FireServer()
+        end
+    end
+end)
+v_u_13.Pressed:Connect(function(p42)
+    -- upvalues: (copy) v_u_36, (copy) v_u_21, (copy) v_u_22
+    if p42 == "TAKE" or p42 == "RETURN" then
+        local v43, v44 = v_u_36(nil)
+        if v43 == "TAKE" and v44 then
+            v_u_21:FireServer(v44)
+            return
+        end
+        if v43 == "RETURN" then
+            v_u_22:FireServer()
+        end
+    end
+end)
+local v_u_45 = Instance.new("Highlight")
+v_u_45.Name = "UfoCarryHighlight"
+v_u_45.FillColor = Color3.fromRGB(120, 255, 140)
+v_u_45.OutlineColor = Color3.fromRGB(180, 255, 190)
+v_u_45.FillTransparency = 0.8
+v_u_45.OutlineTransparency = 0
+v_u_45.DepthMode = Enum.HighlightDepthMode.AlwaysOnTop
+v_u_45.Adornee = v_u_19
+v_u_45.Enabled = false
+v_u_45.Parent = v_u_19
+local v_u_46 = v_u_19:FindFirstChild("Main") or v_u_19
+local v_u_47 = nil
+local function v_u_49()
+    -- upvalues: (ref) v_u_47, (copy) v_u_18, (copy) v_u_10, (copy) v_u_46
+    if v_u_47 then
+        v_u_47:Destroy()
+        v_u_47 = nil
+    end
+    local v48 = v_u_18.Character
+    if v48 then
+        v48 = v48:FindFirstChild("HumanoidRootPart")
+    end
+    if v48 then
+        v_u_47 = v_u_10.new(v48, {})
+        v_u_47:setTarget(v_u_46)
+    end
+end
+local function v_u_51(p50)
+    -- upvalues: (copy) v_u_18, (copy) v_u_45, (copy) v_u_1, (copy) v_u_19, (ref) v_u_47, (copy) v_u_49
+    if p50 then
+        p50 = v_u_18:GetAttribute("CutsceneActive") ~= true
+    end
+    v_u_45.Enabled = p50
+    if p50 then
+        v_u_1:AddTag(v_u_19, "MouseHighlight")
+        if not v_u_47 then
+            v_u_49()
+            return
+        end
+    else
+        v_u_1:RemoveTag(v_u_19, "MouseHighlight")
+        if v_u_47 then
+            v_u_47:Destroy()
+            v_u_47 = nil
+        end
+    end
+end
+local v_u_52 = 0
+local v_u_53 = 0
+local v_u_54 = 0.36
+local function v_u_60(p55, p56)
+    -- upvalues: (copy) v_u_4, (ref) v_u_53, (ref) v_u_52, (ref) v_u_54
+    if require(v_u_4:WaitForChild("Shared"):WaitForChild("Configs"):WaitForChild("SettingsConfig")).get("CameraShake") then
+        local v57 = v_u_53
+        v_u_53 = math.max(v57, p55)
+        local v58 = v_u_52
+        local v59 = os.clock() + p56
+        v_u_52 = math.max(v58, v59)
+        v_u_54 = p56
+    end
+end
+v_u_5:BindToRenderStep("UfoPartCameraShake", Enum.RenderPriority.Camera.Value + 3, function()
+    -- upvalues: (ref) v_u_52, (ref) v_u_53, (copy) v_u_7, (ref) v_u_54
+    local v61 = os.clock()
+    if v_u_52 <= v61 then
+        v_u_53 = 0
+        return
+    else
+        local v62 = v_u_7.CurrentCamera
+        if v62 then
+            local v63 = v_u_54
+            local v64 = (v_u_52 - v61) / math.max(v63, 0.01)
+            local v65 = math.clamp(v64, 0, 1)
+            local v66 = v_u_53 * v65 * v65
+            v62.CFrame = v62.CFrame * CFrame.new((math.random() - 0.5) * v66 * 0.05, (math.random() - 0.5) * v66 * 0.04, (math.random() - 0.5) * v66 * 0.03) * CFrame.Angles((math.random() - 0.5) * v66 * 0.06, (math.random() - 0.5) * v66 * 0.06, (math.random() - 0.5) * v66 * 0.04)
+        end
+    end
+end)
+local function v_u_76(p67, p68)
+    -- upvalues: (copy) v_u_18, (copy) v_u_60, (copy) v_u_7, (copy) v_u_2
+    local v69 = p68 >= 1
+    local v70 = v_u_18.Character
+    if v70 then
+        v70 = v70:FindFirstChild("HumanoidRootPart")
+    end
+    local v71 = v70 and v70.Position or nil
+    local v72 = not v71 and (1 / 0) or (v71 - p67).Magnitude
+    if v72 < 90 then
+        v_u_60((v69 and 1.4 or 0.57) * (0.35 + 0.65 * (1 - v72 / 90)), v69 and 0.7 or 0.36)
+    end
+    local v73 = Instance.new("Part")
+    v73.Name = "UfoPartImpact"
+    v73.Anchored = true
+    v73.CanCollide = false
+    v73.CanTouch = false
+    v73.CanQuery = false
+    v73.CastShadow = false
+    v73.Transparency = 1
+    v73.Size = Vector3.new(1, 1, 1)
+    v73.CFrame = CFrame.new(p67)
+    v73.Parent = v_u_7
+    local v74 = Instance.new("ParticleEmitter")
+    v74.Color = ColorSequence.new(Color3.fromRGB(180, 255, 190), Color3.fromRGB(70, 200, 110))
+    v74.LightEmission = 1
+    v74.LightInfluence = 0
+    v74.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.45), NumberSequenceKeypoint.new(1, 0) })
+    v74.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0), NumberSequenceKeypoint.new(1, 1) })
+    v74.Speed = NumberRange.new(14, 30)
+    v74.Lifetime = NumberRange.new(0.3, 0.7)
+    v74.SpreadAngle = Vector2.new(180, 180)
+    v74.Acceleration = Vector3.new(0, -50, 0)
+    v74.Drag = 2
+    v74.Rate = 0
+    v74.Parent = v73
+    local v75 = Instance.new("ParticleEmitter")
+    v75.Color = ColorSequence.new(Color3.fromRGB(235, 255, 240))
+    v75.LightEmission = 0.8
+    v75.LightInfluence = 0
+    v75.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 1.2), NumberSequenceKeypoint.new(1, 5) })
+    v75.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.45), NumberSequenceKeypoint.new(1, 1) })
+    v75.Speed = NumberRange.new(2, 5)
+    v75.Lifetime = NumberRange.new(0.25, 0.4)
+    v75.SpreadAngle = Vector2.new(180, 180)
+    v75.Rate = 0
+    v75.Parent = v73
+    v74:Emit(v69 and 70 or 34)
+    v75:Emit(v69 and 14 or 7)
+    v_u_2:AddItem(v73, 2)
+end
+local function v_u_114(p_u_77, p_u_78, p_u_79, p80, p_u_81)
+    -- upvalues: (copy) v_u_19, (copy) v_u_5, (copy) v_u_76
+    local v82 = (p_u_79.Position - p_u_78.Position).Magnitude
+    if v82 >= 0.05 and p_u_81 > 0 then
+        local v83 = v_u_19
+        local v84 = tonumber(v83:GetAttribute("PartsTotal")) or 7
+        local v85 = v_u_19
+        local v86 = ((tonumber(v85:GetAttribute("PartsReturned")) or 0) + 1) / v84
+        local v_u_87 = math.clamp(v86, 0, 1)
+        local v_u_88 = p_u_77.Size
+        local v_u_89 = p80 or v_u_88
+        local v90 = p_u_77:FindFirstChild("CarryWeld")
+        if v90 then
+            v90:Destroy()
+        end
+        p_u_77.Anchored = true
+        local v91 = p_u_78.Position:Lerp(p_u_79.Position, 0.5)
+        local v92 = v82 * 0.35
+        local v93 = math.max(5, v92)
+        local v_u_94 = v91 + Vector3.new(0, v93, 0)
+        local v_u_95 = p_u_78 - p_u_78.Position
+        local v_u_96 = p_u_79 - p_u_79.Position
+        local v_u_97 = os.clock()
+        local v_u_98 = nil
+        v_u_98 = v_u_5.RenderStepped:Connect(function()
+            -- upvalues: (copy) p_u_77, (ref) v_u_98, (copy) v_u_97, (copy) p_u_81, (copy) v_u_88, (copy) p_u_79, (ref) v_u_76, (copy) v_u_87, (ref) v_u_5, (copy) p_u_78, (copy) v_u_94, (copy) v_u_95, (copy) v_u_96, (copy) v_u_89
+            if p_u_77.Parent == nil then
+                v_u_98:Disconnect()
+                return
+            else
+                local v99 = (os.clock() - v_u_97) / p_u_81
+                local v100 = math.clamp(v99, 0, 1)
+                if v100 >= 1 then
+                    p_u_77.Size = v_u_88
+                    p_u_77.CFrame = p_u_79
+                    v_u_98:Disconnect()
+                    v_u_76(p_u_79.Position, v_u_87)
+                    local v_u_101 = p_u_77
+                    local v_u_102 = v_u_88
+                    local v_u_103 = os.clock()
+                    local v_u_104 = nil
+                    v_u_104 = v_u_5.RenderStepped:Connect(function()
+                        -- upvalues: (copy) v_u_101, (ref) v_u_104, (copy) v_u_103, (copy) v_u_102
+                        if v_u_101.Parent == nil then
+                            v_u_104:Disconnect()
+                            return
+                        else
+                            local v105 = (os.clock() - v_u_103) / 0.17
+                            local v106 = math.clamp(v105, 0, 1)
+                            if v106 >= 1 then
+                                v_u_101.Size = v_u_102
+                                v_u_104:Disconnect()
+                            else
+                                local v107 = v_u_101
+                                local v108 = v_u_102
+                                local v109 = (1 - v106) * 0.13
+                                local v110 = v106 * 3.141592653589793 * 1.5
+                                v107.Size = v108 * (v109 * math.cos(v110) + 1)
+                            end
+                        end
+                    end)
+                else
+                    local v111 = v100 ^ 1.4
+                    local v112 = p_u_78.Position:Lerp(v_u_94, v111):Lerp(v_u_94:Lerp(p_u_79.Position, v111), v111)
+                    local v113 = v_u_95:Lerp(v_u_96, v111) * CFrame.Angles(0, 6.283185307179586 * v111, 0)
+                    if v_u_89 ~= v_u_88 then
+                        p_u_77.Size = v_u_89:Lerp(v_u_88, v111)
+                    end
+                    p_u_77.CFrame = CFrame.new(v112) * v113
+                end
+            end
+        end)
+    end
+end
+v23.OnClientEvent:Connect(function(p115, p116, p117, p118, p119)
+    -- upvalues: (copy) v_u_114
+    if typeof(p115) == "Instance" and (p115:IsA("BasePart") and (typeof(p116) == "CFrame" and typeof(p117) == "CFrame")) then
+        local v120 = v_u_114
+        if typeof(p118) ~= "Vector3" then
+            p118 = nil
+        end
+        v120(p115, p116, p117, p118, tonumber(p119) or 0.85)
+    end
+end)
+local v_u_121 = v_u_12.claim(7, {})
+local function v_u_124(p122)
+    for _, v123 in p122:GetChildren() do
+        if v123:IsA("JointInstance") or v123:IsA("Constraint") then
+            v123:Destroy()
+        end
+    end
+end
+local function v_u_133(p125, p126)
+    -- upvalues: (copy) v_u_124, (copy) v_u_1
+    local v127 = p125:Clone()
+    v_u_124(v127)
+    v_u_1:RemoveTag(v127, "MouseHighlight")
+    for _, v128 in {
+        "UfoPiece",
+        "Revealed",
+        "Returned",
+        "HeldBy",
+        "RevealAt"
+    } do
+        v127:SetAttribute(v128, nil)
+    end
+    local v129 = v127.Size
+    local v130 = v129.X
+    local v131 = v129.Y
+    local v132 = v129.Z
+    v127.Size = v129 * (p126 / math.max(v130, v131, v132, 0.01))
+    v127.Transparency = 0
+    v127.Anchored = true
+    v127.CanCollide = false
+    v127.CanTouch = false
+    v127.CanQuery = false
+    v127.CastShadow = false
+    return v127
+end
+local v_u_134 = nil
+local function v_u_140(p135)
+    -- upvalues: (ref) v_u_134, (copy) v_u_121, (copy) v_u_133
+    if v_u_134 then
+        v_u_134:Destroy()
+        v_u_134 = nil
+    end
+    if v_u_121 and v_u_121.icon then
+        v_u_121.icon.Visible = true
+    end
+    if v_u_121 and p135 then
+        if v_u_121.icon then
+            v_u_121.icon.Visible = false
+        end
+        local v136 = Instance.new("ViewportFrame")
+        v136.Name = "UfoPartIcon"
+        v136.AnchorPoint = Vector2.new(0.5, 0.5)
+        v136.Position = UDim2.fromScale(0.5, 0.5)
+        v136.Size = UDim2.fromScale(0.94, 0.94)
+        v136.BackgroundTransparency = 1
+        v136.Ambient = Color3.fromRGB(190, 190, 200)
+        v136.LightColor = Color3.fromRGB(255, 255, 255)
+        v136.Rotation = -v_u_121.button.Rotation
+        v136.ZIndex = v_u_121.icon and v_u_121.icon.ZIndex or 1
+        local v137 = v_u_133(p135, 1)
+        v137.CFrame = CFrame.new()
+        v137.Parent = v136
+        local v138 = Instance.new("Camera")
+        v138.FieldOfView = 40
+        local v139 = v137.Size.Magnitude * 0.5 / 0.36397023426620234 * 0.62
+        v138.CFrame = CFrame.lookAt((Vector3.new(0.4, 0.82, 0.58)).Unit * v139, Vector3.new(0, 0, 0))
+        v138.Parent = v136
+        v136.CurrentCamera = v138
+        v136.Parent = v_u_121.button
+        v_u_134 = v136
+    end
+end
+local v_u_141 = nil
+local v_u_142 = nil
+local v_u_143 = nil
+local function v_u_148()
+    -- upvalues: (copy) v_u_18, (copy) v_u_19, (copy) v_u_12, (ref) v_u_142, (ref) v_u_141, (copy) v_u_7, (copy) v_u_133, (copy) v_u_17, (ref) v_u_143, (copy) v_u_24
+    local v144 = v_u_18:GetAttribute("CarryingUfoPart")
+    if v144 then
+        v144 = v_u_19:FindFirstChild(v144)
+    end
+    if not (v144 and v144:IsA("BasePart")) then
+        v144 = nil
+    end
+    local v145
+    if v144 == nil then
+        v145 = false
+    else
+        v145 = v_u_12.getEquipped() == 7
+    end
+    if v144 and v145 then
+        if v_u_142 ~= v144 or not (v_u_141 and v_u_141.Parent) then
+            if v_u_141 then
+                v_u_141:Destroy()
+                v_u_141 = nil
+            end
+            v_u_142 = nil
+            local v146 = v_u_7.CurrentCamera
+            if v146 then
+                local v147 = v_u_133(v144, 1.5)
+                v147.Name = "UfoPartViewmodel"
+                v147.Massless = true
+                v147.CFrame = v146.CFrame * v_u_17
+                v147.Parent = v146
+                v_u_141 = v147
+                v_u_142 = v144
+            end
+        end
+    else
+        if v_u_141 then
+            v_u_141:Destroy()
+            v_u_141 = nil
+        end
+        v_u_142 = nil
+    end
+    if v_u_143 ~= v145 then
+        v_u_143 = v145
+        v_u_24:FireServer(v145)
+    end
+end
+v_u_12.EquippedChanged:Connect(v_u_148)
+local v_u_149 = {}
+local function v_u_154(p150)
+    -- upvalues: (copy) v_u_18, (copy) v_u_149
+    local v151 = v_u_18:FindFirstChildOfClass("PlayerGui")
+    if v151 then
+        v151 = v151:FindFirstChild("HUD")
+    end
+    if v151 then
+        v151 = v151:FindFirstChild("Objectives")
+    end
+    if v151 then
+        v151 = v151:FindFirstChild("ObjectiveList")
+    end
+    if v151 then
+        v151 = v151:FindFirstChild(p150)
+    end
+    if v151 then
+        local v152 = v151:FindFirstChildWhichIsA("TextLabel")
+        local v153 = v151:FindFirstChild("Checkmark", true)
+        if v152 and not v_u_149[p150] then
+            v_u_149[p150] = v152.Text
+        end
+        if v153 and v153:IsA("GuiObject") then
+            return v152, v153
+        else
+            return v152, nil
+        end
+    else
+        return nil, nil
+    end
+end
+local function v_u_161()
+    -- upvalues: (copy) v_u_19, (copy) v_u_28
+    local v155 = v_u_19
+    local v156 = tonumber(v155:GetAttribute("PartsTotal")) or 0
+    local v157 = v_u_19
+    local v158 = tonumber(v157:GetAttribute("PartsReturned")) or 0
+    local v159 = 0
+    for _, v160 in v_u_19:GetChildren() do
+        if v_u_28(v160) then
+            v159 = v159 + 1
+        end
+    end
+    return v158, v156, v159
+end
+local function v_u_164()
+    -- upvalues: (copy) v_u_19
+    local v162 = 0
+    for _, v163 in v_u_19:GetChildren() do
+        if v163:IsA("BasePart") and (v163:GetAttribute("UfoPiece") and (v163:GetAttribute("Returned") == true or v163:GetAttribute("HeldBy") ~= nil)) then
+            v162 = v162 + 1
+        end
+    end
+    return v162
+end
+local function v_u_178()
+    -- upvalues: (copy) v_u_161, (copy) v_u_19, (copy) v_u_18, (copy) v_u_164, (copy) v_u_154, (copy) v_u_149, (copy) v_u_51
+    local _, v165 = v_u_161()
+    local v166 = v_u_19:GetAttribute("Repaired") == true
+    local v167 = v_u_18:GetAttribute("CarryingUfoPart")
+    local v168 = v_u_164()
+    local v169
+    if v165 > 0 then
+        v169 = v165 <= v168
+    else
+        v169 = false
+    end
+    local v170 = string.format(" (%d/%d)", v168, v165)
+    local v171, v172 = v_u_154("Objective1")
+    if v171 then
+        v171.Text = (v_u_149.Objective1 or v171.Text) .. (v170 or "")
+    end
+    if v172 then
+        v172.Visible = v169
+    end
+    local v173 = v166 and " (1/1)" or " (0/1)"
+    local v174, v175 = v_u_154("Objective2")
+    if v174 then
+        v174.Text = (v_u_149.Objective2 or v174.Text) .. (v173 or "")
+    end
+    if v175 then
+        v175.Visible = v166
+    end
+    local v176 = v_u_51
+    local v177
+    if v167 == nil then
+        v177 = false
+    else
+        v177 = not v166
+    end
+    v176(v177)
+end
+local v_u_179 = 0
+v_u_5.RenderStepped:Connect(function(p180)
+    -- upvalues: (ref) v_u_179, (copy) v_u_45, (ref) v_u_141, (copy) v_u_7, (copy) v_u_17
+    v_u_179 = v_u_179 + p180
+    if v_u_45.Enabled then
+        local v181 = v_u_179 * 4
+        v_u_45.FillTransparency = 0.9 - (math.sin(v181) * 0.5 + 0.5) * 0.35
+    end
+    local v182 = v_u_141 and (v_u_141.Parent and v_u_7.CurrentCamera)
+    if v182 then
+        local v183 = CFrame.new
+        local v184 = v_u_179 * 1.7
+        local v185 = v183(0, math.sin(v184) * 0.022, 0)
+        local v186 = CFrame.Angles
+        local v187 = v_u_179 * 0.9
+        local v188 = math.sin(v187) * 0.02
+        local v189 = v_u_179 * 1.3
+        local v190 = math.sin(v189) * 0.016
+        local v191 = v_u_179 * 1.1
+        local v192 = v185 * v186(v188, v190, math.sin(v191) * 0.024)
+        v_u_141.CFrame = v182.CFrame * v_u_17 * v192
+    end
+end)
+local v_u_193 = v_u_47
+local v_u_194 = v_u_141
+local v_u_195 = v_u_142
+local v_u_196 = v_u_134
+for _, v_u_197 in v_u_19:GetChildren() do
+    if v_u_197:IsA("BasePart") and v_u_197:GetAttribute("UfoPiece") then
+        v_u_197:GetAttributeChangedSignal("Revealed"):Connect(function()
+            -- upvalues: (copy) v_u_197, (copy) v_u_14, (copy) v_u_16, (copy) v_u_178
+            if v_u_197:GetAttribute("Revealed") == true and v_u_197:GetAttribute("Returned") ~= true then
+                local v198 = {
+                    ["text"] = "A " .. v_u_14.tint("UFO part", "name") .. " surfaced in the hay! Take it to the UFO."
+                }
+                v_u_14.push(v198)
+                v_u_16:PlaySound("Pop")
+            end
+            v_u_178()
+        end)
+        v_u_197:GetAttributeChangedSignal("HeldBy"):Connect(v_u_178)
+        v_u_197:GetAttributeChangedSignal("Returned"):Connect(v_u_178)
+    end
+end
+v_u_18:GetAttributeChangedSignal("CarryingUfoPart"):Connect(function()
+    -- upvalues: (copy) v_u_18, (copy) v_u_14, (copy) v_u_140, (copy) v_u_19, (copy) v_u_121, (copy) v_u_12, (copy) v_u_148, (ref) v_u_196, (copy) v_u_178
+    if v_u_18:GetAttribute("CarryingUfoPart") then
+        local v199 = {
+            ["text"] = "Got a " .. v_u_14.tint("UFO part", "name") .. "! Bring it to the " .. v_u_14.tint("UFO", "money") .. " and click it."
+        }
+        v_u_14.push(v199)
+        local v200 = v_u_140
+        local v201 = v_u_18:GetAttribute("CarryingUfoPart")
+        if v201 then
+            v201 = v_u_19:FindFirstChild(v201)
+        end
+        if not (v201 and v201:IsA("BasePart")) then
+            v201 = nil
+        end
+        v200(v201)
+        if v_u_121 then
+            task.spawn(function()
+                -- upvalues: (ref) v_u_18, (ref) v_u_121, (ref) v_u_12, (ref) v_u_148
+                for _ = 1, 24 do
+                    if v_u_18:GetAttribute("CarryingUfoPart") == nil then
+                        return
+                    end
+                    if v_u_18:GetAttribute("UfoPartOwned") == true then
+                        v_u_121.equip(true)
+                        if v_u_12.getEquipped() == 7 then
+                            v_u_148()
+                            return
+                        end
+                    end
+                    task.wait(0.05)
+                end
+            end)
+        end
+    else
+        if v_u_196 then
+            v_u_196:Destroy()
+            v_u_196 = nil
+        end
+        if v_u_121 and v_u_121.icon then
+            v_u_121.icon.Visible = true
+        end
+    end
+    v_u_148()
+    v_u_178()
+end)
+v_u_19:GetAttributeChangedSignal("PartsReturned"):Connect(function()
+    -- upvalues: (copy) v_u_161, (copy) v_u_14, (copy) v_u_16, (copy) v_u_15, (copy) v_u_178
+    local v202, v203 = v_u_161()
+    if v202 > 0 and v202 < v203 then
+        local v204 = {
+            ["text"] = "Part attached! " .. v_u_14.tint(v202 .. "/" .. v203, "count") .. " UFO parts back on."
+        }
+        v_u_14.push(v204)
+        local v205 = v_u_16
+        local v206 = "Place"
+        local v207 = v_u_15:FindFirstChild("Place")
+        local v208
+        if v207 and v207:IsA("Sound") then
+            v208 = v207.Volume * 0.5
+        else
+            v208 = nil
+        end
+        v205:PlaySound(v206, v208)
+    end
+    v_u_178()
+end)
+v_u_19:GetAttributeChangedSignal("Repaired"):Connect(function()
+    -- upvalues: (copy) v_u_19, (copy) v_u_14, (copy) v_u_16, (copy) v_u_178
+    if v_u_19:GetAttribute("Repaired") == true then
+        local v209 = {
+            ["text"] = v_u_14.tint("The UFO is repaired!", "money")
+        }
+        v_u_14.push(v209)
+        v_u_16:PlaySound("Complete")
+    end
+    v_u_178()
+end)
+v_u_18.CharacterAdded:Connect(function()
+    -- upvalues: (copy) v_u_149, (ref) v_u_193, (ref) v_u_194, (ref) v_u_195, (copy) v_u_178, (copy) v_u_148
+    table.clear(v_u_149)
+    if v_u_193 then
+        v_u_193:Destroy()
+        v_u_193 = nil
+    end
+    if v_u_194 then
+        v_u_194:Destroy()
+        v_u_194 = nil
+    end
+    v_u_195 = nil
+    task.defer(function()
+        -- upvalues: (ref) v_u_178, (ref) v_u_148
+        v_u_178()
+        v_u_148()
+    end)
+end)
+v_u_18:GetAttributeChangedSignal("CutsceneActive"):Connect(v_u_178)
+local v_u_210 = false
+local v_u_211 = nil
+v_u_5.RenderStepped:Connect(function()
+    -- upvalues: (copy) v_u_36, (ref) v_u_211, (copy) v_u_18, (copy) v_u_11, (ref) v_u_210
+    local v212 = v_u_36()
+    if v212 ~= v_u_211 then
+        v_u_211 = v212
+        v_u_18:SetAttribute("UfoPartAction", v212)
+        if v212 == "TAKE" then
+            v_u_11.setOverride("Take UFO part")
+            v_u_210 = true
+            return
+        end
+        if v212 == "RETURN" then
+            v_u_11.setOverride("Attach part to UFO")
+            v_u_210 = true
+            return
+        end
+        if v_u_210 then
+            v_u_11.setOverride(nil)
+            v_u_210 = false
+        end
+    end
+end)
+if v_u_19:GetAttribute("PartsTotal") == nil then
+    v_u_19:GetAttributeChangedSignal("PartsTotal"):Wait()
+end
+v_u_178()
+local v213 = v_u_18:GetAttribute("CarryingUfoPart")
+if v213 then
+    v213 = v_u_19:FindFirstChild(v213)
+end
+if not (v213 and v213:IsA("BasePart")) then
+    v213 = nil
+end
+v_u_140(v213)
+v_u_148()

@@ -1,0 +1,310 @@
+-- Decompiled game.Players.RaggedReo.PlayerScripts.ClassDebugClient
+
+local v1 = game:GetService("Players")
+local v2 = game:GetService("ReplicatedStorage")
+local v3 = game:GetService("RunService")
+local v_u_4 = game:GetService("UserInputService")
+local v5 = v1.LocalPlayer
+if v3:IsStudio() or ({
+    [2454028600] = true,
+    [2525551552] = true,
+    [455391071] = true
+})[v5.UserId] then
+    local v_u_6 = require(v2.Shared.Configs.ClassConfig)
+    local v_u_7 = v2:WaitForChild("NeedleHaystack"):WaitForChild("ClassDebug")
+    local v8 = v5:WaitForChild("PlayerGui")
+    local v_u_9 = 1
+    local v_u_10 = false
+    local v11 = Instance.new("ScreenGui")
+    v11.Name = "ClassDebugUI"
+    v11.ResetOnSpawn = false
+    v11.IgnoreGuiInset = false
+    v11.DisplayOrder = 120
+    v11.Parent = v8
+    local v12 = Instance.new("TextButton")
+    v12.Name = "Toggle"
+    v12.Position = UDim2.fromOffset(12, 82)
+    v12.Size = UDim2.fromOffset(166, 36)
+    v12.BackgroundColor3 = Color3.fromRGB(32, 38, 45)
+    v12.BorderSizePixel = 0
+    v12.Text = "CLASS TEST  [F6]"
+    v12.TextColor3 = Color3.new(1, 1, 1)
+    v12.TextSize = 16
+    v12.Font = Enum.Font.GothamBold
+    v12.AutoButtonColor = true
+    v12.Parent = v11
+    Instance.new("UICorner", v12).CornerRadius = UDim.new(0, 8)
+    local v13 = Instance.new("UIStroke", v12)
+    v13.Color = Color3.fromRGB(255, 190, 55)
+    v13.Thickness = 2
+    local v_u_14 = Instance.new("Frame")
+    v_u_14.Name = "Panel"
+    v_u_14.Position = UDim2.fromOffset(12, 126)
+    v_u_14.Size = UDim2.fromOffset(390, 410)
+    v_u_14.BackgroundColor3 = Color3.fromRGB(20, 24, 29)
+    v_u_14.BackgroundTransparency = 0.06
+    v_u_14.BorderSizePixel = 0
+    v_u_14.Visible = v3:IsStudio()
+    v_u_14.Parent = v11
+    Instance.new("UICorner", v_u_14).CornerRadius = UDim.new(0, 10)
+    local v15 = Instance.new("UIStroke", v_u_14)
+    v15.Color = Color3.fromRGB(255, 190, 55)
+    v15.Thickness = 2
+    local v16 = Instance.new("TextLabel")
+    v16.BackgroundTransparency = 1
+    v16.Position = UDim2.fromOffset(14, 8)
+    v16.Size = UDim2.new(1, -28, 0, 28)
+    v16.Text = "GAMEPLAY CLASS TESTER"
+    v16.TextColor3 = Color3.fromRGB(255, 215, 95)
+    v16.TextSize = 20
+    v16.Font = Enum.Font.GothamBlack
+    v16.TextXAlignment = Enum.TextXAlignment.Left
+    v16.Parent = v_u_14
+    local v17 = Instance.new("TextLabel")
+    v17.BackgroundTransparency = 1
+    v17.Position = UDim2.fromOffset(14, 34)
+    v17.Size = UDim2.new(1, -28, 0, 20)
+    v17.Text = "Session only \226\128\148 your saved lobby class is not changed."
+    v17.TextColor3 = Color3.fromRGB(175, 182, 190)
+    v17.TextSize = 12
+    v17.Font = Enum.Font.Gotham
+    v17.TextXAlignment = Enum.TextXAlignment.Left
+    v17.Parent = v_u_14
+    local v18 = Instance.new("TextButton")
+    v18.Name = "PreviousClass"
+    v18.Position = UDim2.fromOffset(14, 62)
+    v18.Size = UDim2.fromOffset(46, 42)
+    v18.Text = "<"
+    v18.TextSize = 24
+    v18.Font = Enum.Font.GothamBlack
+    v18.TextColor3 = Color3.new(1, 1, 1)
+    v18.BackgroundColor3 = Color3.fromRGB(52, 61, 72)
+    v18.BorderSizePixel = 0
+    v18.Parent = v_u_14
+    Instance.new("UICorner", v18).CornerRadius = UDim.new(0, 8)
+    local v_u_19 = Instance.new("TextLabel")
+    v_u_19.Position = UDim2.fromOffset(68, 62)
+    v_u_19.Size = UDim2.new(1, -136, 0, 42)
+    v_u_19.BackgroundColor3 = Color3.fromRGB(35, 42, 50)
+    v_u_19.BorderSizePixel = 0
+    v_u_19.Text = "Loading..."
+    v_u_19.TextColor3 = Color3.new(1, 1, 1)
+    v_u_19.TextSize = 20
+    v_u_19.Font = Enum.Font.GothamBlack
+    v_u_19.Parent = v_u_14
+    Instance.new("UICorner", v_u_19).CornerRadius = UDim.new(0, 8)
+    local v20 = v18:Clone()
+    v20.Name = "NextClass"
+    v20.Position = UDim2.new(1, -60, 0, 62)
+    v20.Text = ">"
+    v20.Parent = v_u_14
+    local v_u_21 = Instance.new("TextLabel")
+    v_u_21.BackgroundTransparency = 1
+    v_u_21.Position = UDim2.fromOffset(14, 108)
+    v_u_21.Size = UDim2.new(1, -28, 0, 20)
+    v_u_21.Text = ""
+    v_u_21.TextColor3 = Color3.fromRGB(210, 215, 220)
+    v_u_21.TextSize = 13
+    v_u_21.Font = Enum.Font.GothamMedium
+    v_u_21.Parent = v_u_14
+    local v22 = Instance.new("TextButton")
+    v22.Name = "TriggerSpecial"
+    v22.Position = UDim2.fromOffset(14, 134)
+    v22.Size = UDim2.new(1, -28, 0, 42)
+    v22.BackgroundColor3 = Color3.fromRGB(213, 126, 35)
+    v22.BorderSizePixel = 0
+    v22.Text = "TRIGGER SPECIAL  [L]"
+    v22.TextColor3 = Color3.new(1, 1, 1)
+    v22.TextSize = 17
+    v22.Font = Enum.Font.GothamBlack
+    v22.Parent = v_u_14
+    Instance.new("UICorner", v22).CornerRadius = UDim.new(0, 8)
+    local v_u_23 = Instance.new("TextLabel")
+    v_u_23.BackgroundColor3 = Color3.fromRGB(27, 32, 38)
+    v_u_23.BorderSizePixel = 0
+    v_u_23.Position = UDim2.fromOffset(14, 184)
+    v_u_23.Size = UDim2.new(1, -28, 0, 164)
+    v_u_23.Text = "Waiting for server stats..."
+    v_u_23.TextColor3 = Color3.fromRGB(230, 234, 238)
+    v_u_23.TextSize = 13
+    v_u_23.Font = Enum.Font.Code
+    v_u_23.TextXAlignment = Enum.TextXAlignment.Left
+    v_u_23.TextYAlignment = Enum.TextYAlignment.Top
+    v_u_23.TextWrapped = false
+    v_u_23.Parent = v_u_14
+    Instance.new("UICorner", v_u_23).CornerRadius = UDim.new(0, 7)
+    local v_u_24 = Instance.new("TextLabel")
+    v_u_24.BackgroundTransparency = 1
+    v_u_24.Position = UDim2.fromOffset(14, 354)
+    v_u_24.Size = UDim2.new(1, -28, 0, 42)
+    v_u_24.Text = "J: previous    K: next class    L: trigger special"
+    v_u_24.TextColor3 = Color3.fromRGB(160, 200, 255)
+    v_u_24.TextSize = 12
+    v_u_24.Font = Enum.Font.GothamMedium
+    v_u_24.TextWrapped = true
+    v_u_24.Parent = v_u_14
+    local function v_u_95(p25)
+        -- upvalues: (copy) v_u_24, (copy) v_u_6, (ref) v_u_9, (copy) v_u_19, (copy) v_u_21, (copy) v_u_23
+        if type(p25) == "table" then
+            v_u_24.Text = p25.message or ""
+            v_u_24.TextColor3 = p25.success == false and Color3.fromRGB(255, 110, 90) or Color3.fromRGB(160, 220, 170)
+            local v26 = p25.state
+            if type(v26) == "table" then
+                local v27 = v_u_6.normalize(v26.className)
+                local v28 = table.find(v_u_6.Order, v27)
+                if v28 then
+                    v_u_9 = v28
+                end
+                local v29 = v_u_6.get(v27)
+                v_u_19.Text = v27
+                v_u_19.TextColor3 = v29.Color
+                local v30 = v_u_21
+                local v31 = string.format
+                local v32 = v29.Weight
+                v30.Text = v31("Roll chance: %s%%    |    %s", tostring(v32), v29.Special or "No special ability")
+                local v33 = v_u_23
+                local v34 = table.concat
+                local v35 = {}
+                local v36 = v26.capacityClass
+                local v37 = tonumber(v36) or 0
+                local v38 = string.format("%." .. tostring(2) .. "f", v37)
+                local v39 = v26.hayValueClass
+                local v40 = tonumber(v39) or 0
+                local v41 = string.format("%." .. tostring(2) .. "f", v40)
+                local v42 = v26.gemChanceClass
+                local v43 = tonumber(v42) or 0
+                local v44 = "  Capacity x" .. v38 .. "   Sell x" .. v41 .. "   Gems x" .. string.format("%." .. tostring(2) .. "f", v43)
+                local v45 = v26.pitchforkScoopClass
+                local v46 = tonumber(v45) or 0
+                local v47 = string.format("%." .. tostring(2) .. "f", v46)
+                local v48 = v26.pitchforkCostClass
+                local v49 = tonumber(v48) or 0
+                local v50 = "  Pitch scoop x" .. v47 .. "   Pitch cost x" .. string.format("%." .. tostring(2) .. "f", v49)
+                local v51 = v26.blastRadiusClass
+                local v52 = tonumber(v51) or 0
+                local v53 = string.format("%." .. tostring(2) .. "f", v52)
+                local v54 = v26.toolSpeed
+                local v55 = tonumber(v54) or 0
+                local v56 = "  TNT radius x" .. v53 .. "   Tool speed x" .. string.format("%." .. tostring(2) .. "f", v55)
+                local v57 = v26.droneSpeedClass
+                local v58 = tonumber(v57) or 0
+                local v59 = string.format("%." .. tostring(2) .. "f", v58)
+                local v60 = v26.droneCapacityClass
+                local v61 = tonumber(v60) or 0
+                local v62 = "  Drone speed x" .. v59 .. "   Capacity x" .. string.format("%." .. tostring(2) .. "f", v61) .. "   Free: " .. (v26.droneRoundAccess and "yes" or "no")
+                local v63 = v26.hayCapacity or "?"
+                local v64 = tostring(v63)
+                local v65 = v26.hayValue
+                local v66 = tonumber(v65) or 0
+                local v67 = "  Bag: " .. v64 .. "   Sell: x" .. string.format("%." .. tostring(2) .. "f", v66)
+                local v68 = v26.handCooldown
+                local v69 = tonumber(v68) or 0
+                local v70 = string.format("%." .. tostring(2) .. "f", v69)
+                local v71 = v26.grabRadius
+                local v72 = tonumber(v71) or 0
+                local v73 = "  Hand: " .. v70 .. "s" .. "   Grab radius: " .. string.format("%." .. tostring(2) .. "f", v72)
+                local v74 = v26.tntCooldown
+                local v75 = tonumber(v74) or 0
+                local v76 = string.format("%." .. tostring(2) .. "f", v75)
+                local v77 = v26.tntRadius
+                local v78 = tonumber(v77) or 0
+                local v79 = "  TNT: " .. v76 .. "s" .. "   Radius: " .. string.format("%." .. tostring(2) .. "f", v78)
+                local v80 = v26.pitchforkCooldown
+                local v81 = tonumber(v80) or 0
+                local v82 = string.format("%." .. tostring(2) .. "f", v81)
+                local v83 = v26.pitchforkReach
+                local v84 = tonumber(v83) or 0
+                local v85 = string.format("%." .. tostring(2) .. "f", v84)
+                local v86 = v26.pitchforkScoop or "?"
+                local v87 = "  Pitchfork: " .. v82 .. "s" .. "   Reach: " .. v85 .. "   Scoop: " .. tostring(v86)
+                local v88 = v26.droneFlightSpeed
+                local v89 = tonumber(v88) or 0
+                local v90 = string.format("%." .. tostring(1) .. "f", v89)
+                local v91 = v26.droneCapacity or "?"
+                local v92 = "  Drone: " .. v90 .. " speed" .. "   " .. tostring(v91) .. " capacity" .. "   " .. (v26.droneOwned and "owned" or "locked")
+                local v93 = v26.walkSpeed
+                local v94 = tonumber(v93) or 0
+                __set_list(v35, 1, {"CLASS MULTIPLIERS", v44, v50, v56, v62, "", "LIVE RESOLVED STATS", v67, v73, v79, v87, v92, "  Walk: " .. string.format("%." .. tostring(1) .. "f", v94) .. "   Golden: " .. (v26.goldenActive and "ACTIVE" or "off")})
+                v33.Text = v34(v35, "\n")
+            end
+        else
+            v_u_24.Text = "No response from the class test server."
+            v_u_24.TextColor3 = Color3.fromRGB(255, 110, 90)
+            return
+        end
+    end
+    local function v_u_100(p_u_96, p_u_97)
+        -- upvalues: (ref) v_u_10, (copy) v_u_7, (copy) v_u_95
+        if v_u_10 then
+            return
+        else
+            v_u_10 = true
+            local v98, v99 = pcall(function()
+                -- upvalues: (ref) v_u_7, (copy) p_u_96, (copy) p_u_97
+                return v_u_7:InvokeServer(p_u_96, p_u_97)
+            end)
+            v_u_10 = false
+            if v98 then
+                v_u_95(v99)
+            else
+                v_u_95({
+                    ["message"] = "Class test request failed: " .. tostring(v99)
+                })
+            end
+        end
+    end
+    v18.Activated:Connect(function()
+        -- upvalues: (ref) v_u_9, (copy) v_u_6, (copy) v_u_100
+        v_u_9 = (v_u_9 - 1 + -1) % #v_u_6.Order + 1
+        v_u_100("set", v_u_6.Order[v_u_9])
+    end)
+    v20.Activated:Connect(function()
+        -- upvalues: (ref) v_u_9, (copy) v_u_6, (copy) v_u_100
+        v_u_9 = (v_u_9 - 1 + 1) % #v_u_6.Order + 1
+        v_u_100("set", v_u_6.Order[v_u_9])
+    end)
+    v22.Activated:Connect(function()
+        -- upvalues: (copy) v_u_100
+        v_u_100("special")
+    end)
+    v12.Activated:Connect(function()
+        -- upvalues: (copy) v_u_14, (copy) v_u_100
+        v_u_14.Visible = not v_u_14.Visible
+        if v_u_14.Visible then
+            v_u_100("get")
+        end
+    end)
+    v_u_4.InputBegan:Connect(function(p101, p102)
+        -- upvalues: (copy) v_u_4, (copy) v_u_14, (copy) v_u_100, (ref) v_u_9, (copy) v_u_6
+        if not (p102 or v_u_4:GetFocusedTextBox()) then
+            if p101.KeyCode == Enum.KeyCode.F6 then
+                v_u_14.Visible = not v_u_14.Visible
+                if v_u_14.Visible then
+                    v_u_100("get")
+                    return
+                end
+            else
+                if p101.KeyCode == Enum.KeyCode.J then
+                    v_u_9 = (v_u_9 - 1 + -1) % #v_u_6.Order + 1
+                    v_u_100("set", v_u_6.Order[v_u_9])
+                    return
+                end
+                if p101.KeyCode == Enum.KeyCode.K then
+                    v_u_9 = (v_u_9 - 1 + 1) % #v_u_6.Order + 1
+                    v_u_100("set", v_u_6.Order[v_u_9])
+                    return
+                end
+                if p101.KeyCode == Enum.KeyCode.L then
+                    v_u_100("special")
+                end
+            end
+        end
+    end)
+    v5:GetAttributeChangedSignal("ActiveClass"):Connect(function()
+        -- upvalues: (copy) v_u_14, (ref) v_u_10, (copy) v_u_100
+        if v_u_14.Visible and not v_u_10 then
+            task.defer(v_u_100, "get")
+        end
+    end)
+    task.defer(v_u_100, "get")
+end

@@ -1,0 +1,723 @@
+-- Decompiled game.StarterPlayer.StarterPlayerScripts.BossFightClient.BossHitFeedback
+
+local v1 = game:GetService("Players")
+local v2 = game:GetService("ReplicatedStorage")
+local v_u_3 = game:GetService("RunService")
+local v_u_4 = game:GetService("TweenService")
+local v_u_5 = game:GetService("Debris")
+local v6 = game:GetService("SoundService")
+local v_u_7 = v1.LocalPlayer
+local v_u_8 = workspace:WaitForChild("HayGolem_Rig")
+local v_u_9 = v_u_8:WaitForChild("RootPart")
+local v10 = v2:WaitForChild("BossFight")
+local v_u_11 = require(v10:WaitForChild("SoundPalette"))
+local v_u_12 = require(v10:WaitForChild("Config"))
+local v_u_13 = require(script.Parent:WaitForChild("BossCameraShake"))
+local v_u_14 = Font.new("rbxasset://fonts/families/LuckiestGuy.json")
+local v_u_15 = Font.new("rbxasset://fonts/families/SpecialElite.json", Enum.FontWeight.Bold)
+local v16 = Color3.new(1, 1, 1)
+local v_u_17 = Color3.fromRGB(28, 18, 10)
+local v_u_18 = Color3.fromRGB(255, 201, 74)
+local v_u_19 = Color3.fromRGB(255, 122, 58)
+local v_u_20 = Color3.fromRGB(255, 232, 150)
+local v_u_21 = Color3.fromRGB(241, 194, 86)
+local v_u_22 = {
+    ["Normal"] = {
+        ["color"] = v16
+    },
+    ["Crit"] = {
+        ["color"] = v_u_18
+    },
+    ["Weak"] = {
+        ["color"] = v_u_19
+    },
+    ["Break"] = {
+        ["color"] = v_u_19
+    }
+}
+local v_u_23 = Random.new()
+local v24 = workspace
+local v_u_25 = Instance.new("Folder")
+local v_u_26 = {}
+local v_u_27 = {}
+local v_u_28 = false
+for v29, v30 in pairs({}) do
+    v_u_25[v29] = v30
+end
+v_u_25.Parent = v24
+local v_u_31 = Instance.new("Folder")
+for v32, v33 in pairs({}) do
+    v_u_31[v32] = v33
+end
+v_u_31.Parent = v6
+local v_u_34 = {}
+for _, v35 in {
+    "HitTick",
+    "Crit",
+    "WeakSpot",
+    "WeakBreak"
+} do
+    local v36 = v_u_11[v35]
+    if v36 then
+        local v37 = {
+            ["Name"] = v35,
+            ["SoundId"] = v36.Id,
+            ["Volume"] = v36.Volume,
+            ["PlaybackSpeed"] = v36.Speed or 1
+        }
+        local v38 = Instance.new("Sound")
+        for v39, v40 in pairs(v37) do
+            v38[v39] = v40
+        end
+        v38.Parent = v_u_31
+        v_u_34[v35] = v38
+    end
+end
+local v_u_41 = {}
+local v42 = v_u_7:WaitForChild("PlayerGui")
+local v_u_43 = Instance.new("ScreenGui")
+local function v_u_48(p44, p45)
+    -- upvalues: (copy) v_u_34, (copy) v_u_41, (copy) v_u_23, (copy) v_u_31, (copy) v_u_5, (copy) v_u_11
+    local v46 = v_u_34[p44]
+    if v46 and os.clock() - (v_u_41[p44] or 0) >= 0.06 then
+        v_u_41[p44] = os.clock()
+        local v47 = v46:Clone()
+        v47.PlaybackSpeed = v47.PlaybackSpeed * (p45 or v_u_23:NextNumber(0.96, 1.04))
+        v47.Parent = v_u_31
+        v47:Play()
+        v_u_5:AddItem(v47, (v_u_11[p44] and v_u_11[p44].Life or 1) + 0.2)
+    end
+end
+for v49, v50 in pairs({}) do
+    v_u_43[v49] = v50
+end
+v_u_43.Parent = v42
+local v51 = {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromOffset(60, 60)
+}
+local v_u_52 = Instance.new("Frame")
+for v53, v54 in pairs(v51) do
+    v_u_52[v53] = v54
+end
+v_u_52.Parent = v_u_43
+local v_u_55 = Instance.new("UIScale")
+for v56, v57 in pairs({}) do
+    v_u_55[v56] = v57
+end
+v_u_55.Parent = v_u_52
+local v_u_58 = {}
+local v_u_59 = {}
+for v60 = 0, 3 do
+    local v61 = v60 * 90 + 45
+    local v62 = math.rad(v61)
+    local v63 = {
+        ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+        ["Size"] = UDim2.fromOffset(14, 4),
+        ["Position"] = UDim2.new(0.5, math.cos(v62) * 14, 0.5, math.sin(v62) * 14),
+        ["Rotation"] = math.deg(v62),
+        ["BackgroundColor3"] = v16
+    }
+    local v64 = Instance.new("Frame")
+    for v65, v66 in pairs(v63) do
+        v64[v65] = v66
+    end
+    v64.Parent = v_u_52
+    local v67 = {
+        ["CornerRadius"] = UDim.new(1, 0)
+    }
+    local v68 = Instance.new("UICorner")
+    for v69, v70 in pairs(v67) do
+        v68[v69] = v70
+    end
+    v68.Parent = v64
+    table.insert(v_u_58, v64)
+    local v71 = {
+        ["Color"] = v_u_17,
+        ["ApplyStrokeMode"] = Enum.ApplyStrokeMode.Border
+    }
+    local v72 = Instance.new("UIStroke")
+    for v73, v74 in pairs(v71) do
+        v72[v73] = v74
+    end
+    v72.Parent = v64
+    table.insert(v_u_59, v72)
+end
+local v_u_75 = 0
+local function v_u_82(p76)
+    -- upvalues: (copy) v_u_22, (ref) v_u_75, (copy) v_u_52, (copy) v_u_55, (copy) v_u_4, (copy) v_u_58, (copy) v_u_59
+    local v77 = v_u_22[p76] or v_u_22.Normal
+    v_u_75 = v_u_75 + 1
+    local v_u_78 = v_u_75
+    v_u_52.Visible = true
+    v_u_55.Scale = v77.marker * 1.4
+    v_u_4:Create(v_u_55, TweenInfo.new(0.12, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        ["Scale"] = v77.marker
+    }):Play()
+    local v79 = TweenInfo.new(p76 and 0.32 or 0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.In, 0, false, 0.06)
+    for v80, v81 in v_u_58 do
+        v81.BackgroundColor3 = v77.color
+        v81.BackgroundTransparency = 0
+        v_u_59[v80].Transparency = 0
+        v_u_4:Create(v81, v79, {
+            ["BackgroundTransparency"] = 1
+        }):Play()
+        v_u_4:Create(v_u_59[v80], v79, {
+            ["Transparency"] = 1
+        }):Play()
+    end
+    task.delay(v79.Time + v79.DelayTime + 0.03, function()
+        -- upvalues: (copy) v_u_78, (ref) v_u_75, (ref) v_u_52
+        if v_u_78 == v_u_75 then
+            v_u_52.Visible = false
+        end
+    end)
+end
+local function v_u_116(p83, p84)
+    -- upvalues: (copy) v_u_22, (copy) v_u_25, (copy) v_u_17, (copy) v_u_4, (copy) v_u_5
+    local v85 = v_u_22[p84] or v_u_22.Normal
+    local v86 = v_u_25
+    local v87 = Instance.new("Part")
+    for v88, v89 in pairs({
+        ["Position"] = p83
+    }) do
+        v87[v88] = v89
+    end
+    v87.Parent = v86
+    local v90 = 46 * v85.marker
+    local v91 = {
+        ["Size"] = UDim2.fromOffset(v90, v90)
+    }
+    local v92 = Instance.new("BillboardGui")
+    for v93, v94 in pairs(v91) do
+        v92[v93] = v94
+    end
+    v92.Parent = v87
+    local v95 = {
+        ["Size"] = UDim2.fromScale(1, 1)
+    }
+    local v96 = Instance.new("Frame")
+    for v97, v98 in pairs(v95) do
+        v96[v97] = v98
+    end
+    v96.Parent = v92
+    local v99 = Instance.new("UIScale")
+    for v100, v101 in pairs({}) do
+        v99[v100] = v101
+    end
+    v99.Parent = v96
+    local v102 = TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.In, 0, false, 0.14)
+    for _, v103 in { 45, -45 } do
+        local v104 = {
+            ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+            ["Position"] = UDim2.fromScale(0.5, 0.5),
+            ["Size"] = UDim2.new(0.9, 0, 0, 7),
+            ["Rotation"] = v103,
+            ["BackgroundColor3"] = v85.color
+        }
+        local v105 = Instance.new("Frame")
+        for v106, v107 in pairs(v104) do
+            v105[v106] = v107
+        end
+        v105.Parent = v96
+        local v108 = {
+            ["CornerRadius"] = UDim.new(1, 0)
+        }
+        local v109 = Instance.new("UICorner")
+        for v110, v111 in pairs(v108) do
+            v109[v110] = v111
+        end
+        v109.Parent = v105
+        local v112 = {
+            ["Color"] = v_u_17,
+            ["ApplyStrokeMode"] = Enum.ApplyStrokeMode.Border
+        }
+        local v113 = Instance.new("UIStroke")
+        for v114, v115 in pairs(v112) do
+            v113[v114] = v115
+        end
+        v113.Parent = v105
+        v_u_4:Create(v105, v102, {
+            ["BackgroundTransparency"] = 1
+        }):Play()
+        v_u_4:Create(v113, v102, {
+            ["Transparency"] = 1
+        }):Play()
+    end
+    v_u_4:Create(v99, TweenInfo.new(0.14, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+    v_u_5:AddItem(v87, 0.5)
+end
+local function v_u_162(p117, p118, p119, p120)
+    -- upvalues: (copy) v_u_22, (copy) v_u_25, (copy) v_u_23, (copy) v_u_14, (copy) v_u_17, (copy) v_u_4, (copy) v_u_15, (copy) v_u_5
+    local v121 = v_u_22[p119] or v_u_22.Normal
+    local v122 = v121.size * (p120 and 1 or 0.7)
+    local v123 = v_u_25
+    local v124 = Instance.new("Part")
+    local v125 = p120 and 0 or 0.25
+    for v126, v127 in pairs({
+        ["Position"] = p118
+    }) do
+        v124[v126] = v127
+    end
+    v124.Parent = v123
+    local v128 = v_u_23:NextNumber(-1.3, 1.3)
+    local v129 = v_u_23:NextNumber(0.4, 1.2)
+    local v130 = v_u_23
+    local v131 = Vector3.new(v128, v129, v130:NextNumber(-1.3, 1.3))
+    local v132 = {
+        ["Size"] = UDim2.fromOffset(220, 96),
+        ["StudsOffsetWorldSpace"] = v131
+    }
+    local v133 = Instance.new("BillboardGui")
+    for v134, v135 in pairs(v132) do
+        v133[v134] = v135
+    end
+    v133.Parent = v124
+    local v136 = {
+        ["Size"] = UDim2.fromScale(1, 1)
+    }
+    local v137 = Instance.new("Frame")
+    for v138, v139 in pairs(v136) do
+        v137[v138] = v139
+    end
+    v137.Parent = v133
+    local v140 = Instance.new("UIScale")
+    for v141, v142 in pairs({}) do
+        v140[v141] = v142
+    end
+    v140.Parent = v137
+    local v143 = TweenInfo.new(0.35, Enum.EasingStyle.Quad, Enum.EasingDirection.In, 0, false, 0.6)
+    local v144 = {
+        ["FontFace"] = v_u_14,
+        ["Text"] = tostring(p117),
+        ["TextSize"] = v122,
+        ["TextColor3"] = v121.color,
+        ["TextTransparency"] = v125,
+        ["AnchorPoint"] = Vector2.new(0.5, 1),
+        ["Position"] = UDim2.fromScale(0.5, 1),
+        ["Size"] = UDim2.new(1, 0, 0, v122 + 6)
+    }
+    local v145 = Instance.new("TextLabel")
+    for v146, v147 in pairs(v144) do
+        v145[v146] = v147
+    end
+    v145.Parent = v137
+    local v148 = {
+        ["Color"] = v_u_17
+    }
+    local v149 = v122 / 12
+    v148.Thickness = math.max(2, v149)
+    v148.Transparency = v125
+    local v150 = Instance.new("UIStroke")
+    for v151, v152 in pairs(v148) do
+        v150[v151] = v152
+    end
+    v150.Parent = v145
+    v_u_4:Create(v145, v143, {
+        ["TextTransparency"] = 1
+    }):Play()
+    v_u_4:Create(v150, v143, {
+        ["Transparency"] = 1
+    }):Play()
+    if v121.tag then
+        local v153 = {
+            ["FontFace"] = v_u_15,
+            ["Text"] = v121.tag
+        }
+        local v154 = v122 * 0.5
+        v153.TextSize = math.floor(v154)
+        v153.TextColor3 = v121.color
+        v153.TextTransparency = v125
+        v153.AnchorPoint = Vector2.new(0.5, 1)
+        v153.Position = UDim2.new(0.5, 0, 1, -(v122 + 2))
+        v153.Size = UDim2.new(1, 0, 0, v122 * 0.55)
+        local v155 = Instance.new("TextLabel")
+        for v156, v157 in pairs(v153) do
+            v155[v156] = v157
+        end
+        v155.Parent = v137
+        local v158 = {
+            ["Color"] = v_u_17,
+            ["Transparency"] = v125
+        }
+        local v159 = Instance.new("UIStroke")
+        for v160, v161 in pairs(v158) do
+            v159[v160] = v161
+        end
+        v159.Parent = v155
+        v_u_4:Create(v155, v143, {
+            ["TextTransparency"] = 1
+        }):Play()
+        v_u_4:Create(v159, v143, {
+            ["Transparency"] = 1
+        }):Play()
+    end
+    v_u_4:Create(v140, TweenInfo.new(0.28, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+    v_u_4:Create(v133, TweenInfo.new(0.95, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+        ["StudsOffsetWorldSpace"] = v131 + Vector3.new(0, 2.6, 0)
+    }):Play()
+    v_u_5:AddItem(v124, 1.05)
+end
+local v_u_163 = {}
+local v164 = {
+    ["Size"] = UDim2.fromScale(2.6, 2.6)
+}
+local v_u_165 = Instance.new("BillboardGui")
+local function v_u_194(p_u_166, p167, p168, p169)
+    -- upvalues: (copy) v_u_25, (copy) v_u_23, (copy) v_u_3
+    for _ = 1, p167 do
+        local v170 = v_u_25
+        local v171 = {}
+        local v172 = v_u_23
+        v171.Size = Vector3.new(0.1, 0.1, v172:NextNumber(0.35, 0.8))
+        v171.Color = p169[v_u_23:NextInteger(1, #p169)]
+        v171.Material = Enum.Material.Neon
+        v171.CFrame = CFrame.new(p_u_166)
+        local v_u_173 = Instance.new("WedgePart")
+        for v174, v175 in pairs(v171) do
+            v_u_173[v174] = v175
+        end
+        v_u_173.Parent = v170
+        local v176 = v_u_23:NextNumber(-1, 1)
+        local v177 = v_u_23:NextNumber(0.2, 1.2)
+        local v178 = v_u_23
+        local v_u_179 = Vector3.new(v176, v177, v178:NextNumber(-1, 1)).Unit * p168
+        local v180 = v_u_23:NextNumber(-9, 9)
+        local v181 = v_u_23:NextNumber(-9, 9)
+        local v182 = v_u_23
+        local v_u_183 = Vector3.new(v180, v181, v182:NextNumber(-9, 9))
+        local v_u_184 = os.clock()
+        local v_u_185 = v_u_23:NextNumber(0.5, 0.9)
+        local v_u_186 = nil
+        v_u_186 = v_u_3.RenderStepped:Connect(function()
+            -- upvalues: (copy) v_u_184, (copy) v_u_185, (copy) v_u_173, (ref) v_u_186, (copy) p_u_166, (copy) v_u_179, (copy) v_u_183
+            local v187 = os.clock() - v_u_184
+            if v_u_185 <= v187 or not v_u_173.Parent then
+                v_u_186:Disconnect()
+                v_u_173:Destroy()
+            else
+                local v188 = v_u_173
+                local v189 = CFrame.new
+                local v190 = p_u_166 + v_u_179 * v187
+                local v191 = 16 * v187 * v187
+                v188.CFrame = v189(v190 - Vector3.new(0, v191, 0)) * CFrame.Angles(v_u_183.X * v187, v_u_183.Y * v187, v_u_183.Z * v187)
+                local v192 = v_u_173
+                local v193 = (v187 / v_u_185 - 0.5) * 2
+                v192.Transparency = math.clamp(v193, 0, 1)
+            end
+        end)
+    end
+end
+local function v_u_203(p195, p196, p197, p198, p199)
+    -- upvalues: (copy) v_u_7, (copy) v_u_163, (copy) v_u_26, (copy) v_u_162, (copy) v_u_82, (copy) v_u_116, (copy) v_u_48, (copy) v_u_22, (copy) v_u_13
+    local v200 = p195 == v_u_7.UserId
+    if p198 == "Vacuum" then
+        local v201 = v_u_163[p195]
+        if not v201 then
+            v201 = {
+                ["since"] = os.clock(),
+                ["mine"] = v200
+            }
+            v_u_163[p195] = v201
+        end
+        v201.amount = v201.amount + p196
+        v201.position = p197
+        if (v_u_26[p199 or "Normal"] or 0) > (v_u_26[v201.kind or "Normal"] or 0) then
+            v201.kind = p199
+        end
+    else
+        v_u_162(p196, p197, p199, v200)
+    end
+    if v200 then
+        v_u_82(p199)
+        v_u_116(p197, p199)
+        v_u_48("HitTick")
+        local v202 = v_u_22[p199 or "Normal"]
+        if v202 and v202.sound then
+            v_u_48(v202.sound)
+            v_u_13.add(p199 == "Crit" and 0.12 or 0.2)
+        end
+    end
+end
+for v204, v205 in pairs(v164) do
+    v_u_165[v204] = v205
+end
+v_u_165.Parent = v_u_25
+local v_u_206 = Instance.new("UIScale")
+for v207, v208 in pairs({}) do
+    v_u_206[v207] = v208
+end
+v_u_206.Parent = v_u_165
+local v209 = {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromScale(1.15, 1.15),
+    ["BackgroundColor3"] = v_u_19
+}
+local v_u_210 = Instance.new("Frame")
+for v211, v212 in pairs(v209) do
+    v_u_210[v211] = v212
+end
+v_u_210.Parent = v_u_165
+local v213 = {
+    ["CornerRadius"] = UDim.new(1, 0)
+}
+local v214 = Instance.new("UICorner")
+for v215, v216 in pairs(v213) do
+    v214[v215] = v216
+end
+v214.Parent = v_u_210
+local v217 = {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromScale(0.9, 0.9)
+}
+local v218 = Instance.new("Frame")
+for v219, v220 in pairs(v217) do
+    v218[v219] = v220
+end
+v218.Parent = v_u_165
+local v221 = {
+    ["CornerRadius"] = UDim.new(1, 0)
+}
+local v222 = Instance.new("UICorner")
+for v223, v224 in pairs(v221) do
+    v222[v223] = v224
+end
+v222.Parent = v218
+local v225 = {
+    ["Color"] = v_u_19,
+    ["StrokeSizingMode"] = Enum.StrokeSizingMode.ScaledSize
+}
+local v_u_226 = Instance.new("UIStroke")
+for v227, v228 in pairs(v225) do
+    v_u_226[v227] = v228
+end
+v_u_226.Parent = v218
+local v229 = {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromScale(0.5, 0.5)
+}
+local v230 = Instance.new("Frame")
+for v231, v232 in pairs(v229) do
+    v230[v231] = v232
+end
+v230.Parent = v_u_165
+local v233 = {
+    ["CornerRadius"] = UDim.new(1, 0)
+}
+local v234 = Instance.new("UICorner")
+for v235, v236 in pairs(v233) do
+    v234[v235] = v236
+end
+v234.Parent = v230
+local v237 = {
+    ["Color"] = v_u_18,
+    ["StrokeSizingMode"] = Enum.StrokeSizingMode.ScaledSize
+}
+local v_u_238 = Instance.new("UIStroke")
+for v239, v240 in pairs(v237) do
+    v_u_238[v239] = v240
+end
+v_u_238.Parent = v230
+local v241 = {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromScale(0.16, 0.16),
+    ["BackgroundColor3"] = v_u_20
+}
+local v_u_242 = Instance.new("Frame")
+for v243, v244 in pairs(v241) do
+    v_u_242[v243] = v244
+end
+v_u_242.Parent = v_u_165
+local v245 = {
+    ["CornerRadius"] = UDim.new(1, 0)
+}
+local v246 = Instance.new("UICorner")
+for v247, v248 in pairs(v245) do
+    v246[v247] = v248
+end
+v246.Parent = v_u_242
+local v249 = {
+    ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+    ["Position"] = UDim2.fromScale(0.5, 0.5),
+    ["Size"] = UDim2.fromScale(1, 1)
+}
+local v_u_250 = Instance.new("Frame")
+for v251, v252 in pairs(v249) do
+    v_u_250[v251] = v252
+end
+v_u_250.Parent = v_u_165
+for v253 = 0, 3 do
+    local v254 = v253 * 90
+    local v255 = math.rad(v254)
+    local v256 = {
+        ["AnchorPoint"] = Vector2.new(0.5, 0.5),
+        ["Position"] = UDim2.fromScale(math.cos(v255) * 0.56 + 0.5, math.sin(v255) * 0.56 + 0.5),
+        ["Size"] = UDim2.fromScale(0.22, 0.07),
+        ["Rotation"] = math.deg(v255),
+        ["BackgroundColor3"] = v_u_19
+    }
+    local v257 = Instance.new("Frame")
+    for v258, v259 in pairs(v256) do
+        v257[v258] = v259
+    end
+    v257.Parent = v_u_250
+    local v260 = {
+        ["CornerRadius"] = UDim.new(1, 0)
+    }
+    local v261 = Instance.new("UICorner")
+    for v262, v263 in pairs(v260) do
+        v261[v262] = v263
+    end
+    v261.Parent = v257
+end
+local v_u_264 = {}
+local function v_u_267(p265)
+    -- upvalues: (copy) v_u_264, (copy) v_u_9
+    if v_u_264[p265] and v_u_264[p265]:IsDescendantOf(v_u_9) then
+        return v_u_264[p265]
+    end
+    for _, v266 in v_u_9:GetDescendants() do
+        if v266:IsA("Bone") and v266.Name == p265 then
+            v_u_264[p265] = v266
+            return v266
+        end
+    end
+end
+local v_u_268 = nil
+local v_u_269 = -10
+local function v275()
+    -- upvalues: (copy) v_u_8, (copy) v_u_267, (ref) v_u_268, (ref) v_u_269, (copy) v_u_9, (copy) v_u_48, (copy) v_u_165, (copy) v_u_226, (copy) v_u_18, (copy) v_u_19, (copy) v_u_210, (copy) v_u_250
+    local v270 = v_u_8:GetAttribute("BossWeakPoint")
+    local v271 = type(v270) == "string" and v_u_267(v270) or nil
+    if v271 and v271 ~= v_u_268 then
+        v_u_269 = os.clock()
+        local v272 = workspace.CurrentCamera
+        if v272 and (v272.CFrame.Position - v_u_9.Position).Magnitude < 90 then
+            v_u_48("WeakSpot", 1.3)
+        end
+    end
+    v_u_268 = v271
+    v_u_165.Adornee = v271
+    local v273 = v_u_8:GetAttribute("BossWeakPointDizzy") == true
+    v_u_165.Size = v273 and UDim2.fromScale(3.8, 3.8) or UDim2.fromScale(2.6, 2.6)
+    v_u_226.Color = v273 and v_u_18 or v_u_19
+    v_u_210.BackgroundColor3 = v273 and v_u_18 or v_u_19
+    for _, v274 in v_u_250:GetChildren() do
+        v274.BackgroundColor3 = v273 and v_u_18 or v_u_19
+    end
+end
+local v_u_276 = {}
+local v277 = v_u_8:GetAttributeChangedSignal("BossWeakPoint")
+table.insert(v_u_276, v277:Connect(v275))
+local v278 = v_u_8:GetAttributeChangedSignal("BossWeakPointDizzy")
+table.insert(v_u_276, v278:Connect(v275))
+v275()
+local v279 = v10:WaitForChild("Feedback").OnClientEvent
+table.insert(v_u_276, v279:Connect(function(p280, p281, p282, p283, p284, p285)
+    -- upvalues: (ref) v_u_28, (copy) v_u_7, (copy) v_u_203, (copy) v_u_194, (copy) v_u_21, (copy) v_u_19, (copy) v_u_20, (copy) v_u_13
+    if v_u_28 then
+        return
+    elseif p280 == "Hit" then
+        if typeof(p283) == "Vector3" then
+            local v286 = workspace.CurrentCamera
+            if p281 == v_u_7.UserId or (not v286 or (v286.CFrame.Position - p283).Magnitude <= 110) then
+                v_u_203(p281, tonumber(p282) or 0, p283, p284, p285)
+            end
+        else
+            return
+        end
+    else
+        if p280 == "BossEvent" and (p281 == "WeakBreak" and type(p282) == "table") then
+            local v287 = p282.position
+            if typeof(v287) == "Vector3" then
+                local v288 = { v_u_21, v_u_19, v_u_20 }
+                v_u_194(p282.position, 26, 16, v288)
+                if p282.userId == v_u_7.UserId then
+                    v_u_13.add(0.3)
+                    return
+                end
+                v_u_13.impact(p282.position, 0.2, 50)
+            end
+        end
+        return
+    end
+end))
+local v_u_289 = 0
+local v290 = v_u_3.RenderStepped
+local function v314(p291)
+    -- upvalues: (ref) v_u_289, (copy) v_u_163, (copy) v_u_162, (copy) v_u_165, (copy) v_u_27, (copy) v_u_8, (copy) v_u_9, (copy) v_u_12, (ref) v_u_269, (copy) v_u_206, (copy) v_u_250, (copy) v_u_226, (copy) v_u_238, (copy) v_u_242
+    v_u_289 = v_u_289 + p291
+    for v292, v293 in pairs(v_u_163) do
+        if os.clock() - v293.since >= 0.3 then
+            v_u_163[v292] = nil
+            if v293.amount > 0 and v293.position then
+                v_u_162(v293.amount, v293.position, v293.kind, v293.mine)
+            end
+        end
+    end
+    local v294 = workspace.CurrentCamera
+    local v295 = v_u_165.Adornee
+    local v296
+    if v295 == nil or (v_u_27[v_u_8:GetAttribute("BossState")] ~= true or v294 == nil) then
+        v296 = false
+    else
+        v296 = (v294.CFrame.Position - v_u_9.Position).Magnitude < 130
+    end
+    v_u_165.Enabled = v296
+    if v296 then
+        local v297 = v_u_165
+        local v298 = (v294.CFrame.Position - v295.TransformedWorldCFrame.Position).Magnitude * 0.45
+        local v299 = math.clamp(v298, 0.4, 2.4)
+        v297.StudsOffset = Vector3.new(0, 0, v299)
+        local v300 = v_u_12.WeakPoint and v_u_12.WeakPoint.Lifetime or 6
+        local v301 = v_u_8
+        local v302 = tonumber(v301:GetAttribute("BossWeakPointEndsAt"))
+        local v303
+        if v302 then
+            v303 = v302 - workspace:GetServerTimeNow() or v300
+        else
+            v303 = v300
+        end
+        local v304 = v303 / v300
+        local v305 = math.clamp(v304, 0, 1)
+        local v306 = v_u_8:GetAttribute("BossWeakPointDizzy") == true
+        local v307 = (os.clock() - v_u_269) / 0.3
+        local v308 = math.clamp(v307, 0, 1)
+        local v309
+        if v308 < 1 then
+            local v310 = v308 * 3.141592653589793
+            v309 = v308 * (math.sin(v310) * 0.5 + 1) or 1
+        else
+            v309 = 1
+        end
+        local v311 = v_u_289 * (v306 and 9 or 6)
+        v_u_206.Scale = (math.sin(v311) * 0.08 + 1) * (v305 * 0.2 + 0.8) * v309
+        v_u_250.Rotation = v_u_289 * 90 % 360
+        local v312
+        if v306 or v303 >= 1.5 then
+            v312 = 0
+        else
+            local v313 = v_u_289 * 30
+            v312 = math.sin(v313) > 0 and 0.45 or 0
+        end
+        v_u_226.Transparency = v312
+        v_u_238.Transparency = v312
+        v_u_242.BackgroundTransparency = v312
+    end
+end
+table.insert(v_u_276, v290:Connect(v314))
+script.Destroying:Connect(function()
+    -- upvalues: (ref) v_u_28, (copy) v_u_276, (copy) v_u_43, (copy) v_u_25, (copy) v_u_31
+    v_u_28 = true
+    for _, v315 in v_u_276 do
+        v315:Disconnect()
+    end
+    v_u_43:Destroy()
+    v_u_25:Destroy()
+    v_u_31:Destroy()
+end)

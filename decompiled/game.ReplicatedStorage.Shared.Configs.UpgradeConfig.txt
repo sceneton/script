@@ -1,0 +1,121 @@
+-- Decompiled game.ReplicatedStorage.Shared.Configs.UpgradeConfig
+
+local v_u_22 = {
+    ["Scope"] = {},
+    ["Upgrades"] = {
+        {
+            ["Prices"] = {
+                25,
+                50,
+                75,
+                100,
+                150,
+                450,
+                750,
+                1200,
+                1800
+            },
+            ["Color"] = Color3.fromRGB(255, 255, 255)
+        },
+        {
+            ["Prices"] = {
+                50,
+                120,
+                240,
+                500,
+                750,
+                1000,
+                1500
+            },
+            ["Color"] = Color3.fromRGB(255, 255, 255)
+        },
+        {
+            ["Prices"] = {
+                150,
+                400,
+                800,
+                1400,
+                2500
+            },
+            ["Color"] = Color3.fromRGB(255, 255, 255)
+        },
+        {
+            ["Prices"] = {
+                20,
+                40,
+                60,
+                100,
+                150,
+                450,
+                750,
+                1200
+            },
+            ["Color"] = Color3.fromRGB(255, 255, 255)
+        }
+    },
+    ["Effects"] = {
+        ["HayCapacity"] = {},
+        ["HayGrabCount"] = {},
+        ["HayValueMultiplier"] = {},
+        ["GemMultiplier"] = {}
+    },
+    ["getUpgrade"] = function(p1)
+        -- upvalues: (copy) v_u_22
+        for _, v2 in v_u_22.Upgrades do
+            if v2.Id == p1 then
+                return v2
+            end
+        end
+        return nil
+    end,
+    ["getByScope"] = function(p3)
+        -- upvalues: (copy) v_u_22
+        local v4 = {}
+        for _, v5 in v_u_22.Upgrades do
+            if v5.Scope == p3 then
+                table.insert(v4, v5)
+            end
+        end
+        table.sort(v4, function(p6, p7)
+            return p6.LayoutOrder < p7.LayoutOrder
+        end)
+        return v4
+    end,
+    ["getByEffect"] = function(p8)
+        -- upvalues: (copy) v_u_22
+        local v9 = {}
+        for _, v10 in v_u_22.Upgrades do
+            if v10.Effect == p8 then
+                table.insert(v9, v10)
+            end
+        end
+        return v9
+    end,
+    ["getMaxLevel"] = function(p11)
+        return #p11.Prices
+    end,
+    ["getPrice"] = function(p12, p13)
+        return p12.Prices[p13 + 1]
+    end,
+    ["getValue"] = function(p14, p15)
+        return p14.ValuePerLevel * p15
+    end,
+    ["formatValue"] = function(p16, p17)
+        -- upvalues: (copy) v_u_22
+        return string.format(p16.ValueFormat, v_u_22.getValue(p16, p17))
+    end,
+    ["applyStacking"] = function(p18, p19, p20)
+        -- upvalues: (copy) v_u_22
+        local v21 = v_u_22.Effects[p18]
+        if v21 and p20 ~= 0 then
+            if v21.Stacking == "Percent" then
+                return p19 * (p20 / 100 + 1)
+            else
+                return p19 + p20
+            end
+        else
+            return p19
+        end
+    end
+}
+return v_u_22

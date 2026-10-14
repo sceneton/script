@@ -1,0 +1,53 @@
+-- Decompiled game.StarterPlayer.StarterPlayerScripts.NeedleRoundTimerClient
+
+local v1 = game:GetService("Players")
+local v2 = game:GetService("ReplicatedStorage")
+local v_u_3 = v1.LocalPlayer:WaitForChild("PlayerGui")
+local v4 = v2:WaitForChild("NeedleHaystack")
+local v5 = nil
+local function v9()
+    -- upvalues: (copy) v_u_3
+    local v6 = v_u_3:FindFirstChild("HUD")
+    if v6 then
+        local v7 = v6:FindFirstChild("BottomRight")
+        if v7 then
+            v7 = v7:FindFirstChild("Timer")
+        end
+        if v7 and v7:IsA("TextLabel") then
+            return v7
+        else
+            local v8 = v6:FindFirstChild("Timer", true)
+            if v8 and v8:IsA("TextLabel") then
+                return v8
+            else
+                return nil
+            end
+        end
+    else
+        return nil
+    end
+end
+while true do
+    if not (v5 and v5.Parent) then
+        v5 = v9()
+    end
+    if v5 then
+        local v10 = v4:GetAttribute("RoundStartedAt")
+        local v11 = v4:GetAttribute("RoundFinishedElapsed")
+        local v12 = 0
+        if typeof(v11) == "number" then
+            v12 = v11
+        elseif typeof(v10) == "number" then
+            v12 = workspace:GetServerTimeNow() - v10
+        end
+        local v13 = math.floor(v12 or 0)
+        local v14 = math.max(0, v13)
+        local v15 = v14 / 3600
+        local v16 = math.floor(v15)
+        local v17 = v14 / 60
+        local v18 = math.floor(v17) % 60
+        local v19 = v14 % 60
+        v5.Text = string.format("%02d:%02d:%02d", v16, v18, v19)
+    end
+    task.wait(0.1)
+end

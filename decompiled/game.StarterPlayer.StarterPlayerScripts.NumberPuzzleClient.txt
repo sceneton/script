@@ -1,0 +1,1128 @@
+-- Decompiled game.StarterPlayer.StarterPlayerScripts.NumberPuzzleClient
+
+local v_u_1 = game:GetService("CollectionService")
+local v_u_2 = game:GetService("GuiService")
+local v3 = game:GetService("Players")
+local v4 = game:GetService("ReplicatedStorage")
+local v_u_5 = game:GetService("RunService")
+local v_u_6 = game:GetService("TweenService")
+local v_u_7 = game:GetService("UserInputService")
+local v_u_8 = game:GetService("Workspace")
+local v_u_9 = v3.LocalPlayer
+local v10 = v_u_9:WaitForChild("PlayerGui")
+local v11 = v4:WaitForChild("Puzzles")
+local v_u_12 = require(v11:WaitForChild("PuzzleConfig"))
+local v_u_13 = v11:WaitForChild("PuzzleAction")
+local v14 = v11:WaitForChild("PuzzleState")
+local v15 = v11:WaitForChild("PuzzleFeedback")
+local v_u_16 = require(script.Parent:WaitForChild("HotbarSlots"))
+local v17 = require(script.Parent:WaitForChild("MobileAction"))
+local v_u_18 = require(script.Parent:WaitForChild("PuzzlePointer"))
+local v_u_19 = require(v4:WaitForChild("Shared"):WaitForChild("Services"):WaitForChild("SoundService"):WaitForChild("SoundServiceClient"))
+local v_u_20 = v_u_12.Puzzles.NumberPuzzle
+if not v_u_20 then
+    warn("[NumberPuzzleClient]: PuzzleConfig has no NumberPuzzle")
+    return
+end
+local v_u_21 = 0.8333
+local v_u_22 = Color3.fromRGB(66, 38, 18)
+local v_u_23 = Font.new("rbxasset://fonts/families/SpecialElite.json", Enum.FontWeight.Regular)
+local v_u_24 = v_u_8:WaitForChild("Puzzles", 60)
+if v_u_24 then
+    v_u_24 = v_u_24:WaitForChild(v_u_20.Folder, 60)
+end
+local v_u_25
+if v_u_24 then
+    v_u_25 = v_u_24:WaitForChild(v_u_20.Posters, 60)
+else
+    v_u_25 = v_u_24
+end
+if v_u_24 then
+    v_u_24 = v_u_24:WaitForChild(v_u_20.Keypad, 60)
+end
+if not (v_u_25 and v_u_24) then
+    warn("[NumberPuzzleClient]: the number puzzle did not stream in")
+    return
+end
+local v_u_26 = {}
+local v_u_27 = {}
+local function v32()
+    -- upvalues: (copy) v_u_25, (copy) v_u_12, (copy) v_u_26, (copy) v_u_27
+    local v28 = 0
+    local v29 = 0
+    for _, v30 in ipairs(v_u_25:GetChildren()) do
+        if v30:IsA("BasePart") then
+            v28 = v28 + 1
+            local v31 = v30:GetAttribute(v_u_12.PosterIndexAttribute)
+            if type(v31) == "number" then
+                v_u_26[v31] = v30
+                v_u_27[v30] = v31
+                v29 = v29 + 1
+            end
+        end
+    end
+    return v29, v28
+end
+local v33, v34 = v32()
+for _ = 1, 100 do
+    if v34 > 0 and v33 == v34 then
+        break
+    end
+    task.wait(0.1)
+    v33, v34 = v32()
+end
+if v33 < v34 then
+    warn(("[NumberPuzzleClient]: %d of %d flyers never got a %s"):format(v33, v34, v_u_12.PosterIndexAttribute))
+end
+local v35 = nil
+for v36 in pairs(v_u_27) do
+    v36.CanQuery = true
+    v35 = v35 or v36
+end
+if v35 and v35.Size.Y > 0 then
+    v_u_21 = v35.Size.X / v35.Size.Y
+end
+if not v_u_1:HasTag(v_u_24, "MouseHighlight") then
+    v_u_1:AddTag(v_u_24, "MouseHighlight")
+end
+local v_u_37 = Color3.fromRGB(255, 246, 214)
+local v_u_38 = Instance.new("SelectionBox")
+v_u_38.Name = "PosterHover"
+v_u_38.Color3 = Color3.new(1, 1, 1)
+v_u_38.LineThickness = 0.035
+v_u_38.SurfaceColor3 = Color3.new(1, 1, 1)
+v_u_38.SurfaceTransparency = 0.86
+v_u_38.Transparency = 0
+v_u_38.Visible = false
+v_u_38.Parent = v_u_8.CurrentCamera
+local v39 = nil
+local v40 = nil
+local v41 = nil
+local v_u_42 = v41
+local v_u_43 = v39
+local v_u_44 = v40
+local v_u_45 = ""
+for _, v46 in ipairs((v35 or v_u_24):GetChildren()) do
+    if v46:IsA("Decal") then
+        v_u_45 = v46.Texture
+        break
+    end
+end
+local v_u_47 = {
+    ["taken"] = {}
+}
+local v_u_48 = nil
+local v_u_49 = nil
+local function v_u_52()
+    -- upvalues: (copy) v_u_26, (ref) v_u_47, (ref) v_u_43, (ref) v_u_44, (ref) v_u_42, (copy) v_u_38, (copy) v_u_27, (copy) v_u_1, (copy) v_u_24
+    for v50 in pairs(v_u_26) do
+        if v_u_47.taken[v50] == true or v_u_47.completed then
+            local v51 = v_u_26[v50]
+            if v51 then
+                if v_u_43 == v51 and v_u_43 ~= nil then
+                    if v_u_44 and v_u_44.Parent then
+                        v_u_44.Color3 = v_u_42
+                    end
+                    v_u_44 = nil
+                    v_u_42 = nil
+                    v_u_43 = nil
+                    v_u_38.Adornee = nil
+                    v_u_38.Visible = false
+                end
+                v_u_27[v51] = nil
+                v_u_26[v50] = nil
+                v51:Destroy()
+            end
+        end
+    end
+    if v_u_47.completed and v_u_1:HasTag(v_u_24, "MouseHighlight") then
+        v_u_1:RemoveTag(v_u_24, "MouseHighlight")
+    end
+end
+local function v_u_60(p53)
+    -- upvalues: (ref) v_u_47, (copy) v_u_52, (ref) v_u_48, (ref) v_u_49
+    v_u_47 = p53
+    local v54 = {}
+    local v55 = p53.taken
+    if type(v55) == "table" then
+        for v56, v57 in pairs(p53.taken) do
+            local v58 = tonumber(v56)
+            if v58 and v57 then
+                v54[v58] = true
+            end
+        end
+    end
+    v_u_47.taken = v54
+    v_u_52()
+    if v_u_47.completed then
+        if v_u_48 ~= nil then
+            v_u_48 = nil
+            v_u_49()
+            return
+        end
+    else
+        local v59 = v_u_47.code
+        if type(v59) == "string" and v_u_47.code ~= v_u_48 then
+            v_u_48 = v_u_47.code
+            v_u_49()
+        end
+    end
+end
+v14.OnClientEvent:Connect(function(p61)
+    -- upvalues: (copy) v_u_60
+    local v62
+    if type(p61) == "table" then
+        v62 = p61.NumberPuzzle
+    else
+        v62 = false
+    end
+    if type(v62) == "table" then
+        v_u_60(v62)
+    end
+end)
+local function v67(p63, p64)
+    -- upvalues: (ref) v_u_45, (copy) v_u_23, (copy) v_u_22
+    local v65 = Instance.new("ImageLabel")
+    v65.Name = "Paper"
+    v65.AnchorPoint = Vector2.new(0.5, 0.5)
+    v65.BackgroundTransparency = 1
+    v65.Image = v_u_45
+    v65.ZIndex = p64
+    v65.Parent = p63
+    local v66 = Instance.new("TextLabel")
+    v66.Name = "Code"
+    v66.AnchorPoint = Vector2.new(0.5, 0.5)
+    v66.BackgroundTransparency = 1
+    v66.FontFace = v_u_23
+    v66.Position = UDim2.fromScale(0.5, 0.5)
+    v66.Size = UDim2.fromScale(0.56, 0.2)
+    v66.Text = ""
+    v66.TextColor3 = v_u_22
+    v66.TextScaled = true
+    v66.Visible = false
+    v66.ZIndex = p64 + 1
+    v66.Parent = v65
+    return v65, v66
+end
+local v_u_68 = Instance.new("ScreenGui")
+v_u_68.Name = "NumberPuzzleNote"
+v_u_68.DisplayOrder = 60
+v_u_68.IgnoreGuiInset = true
+v_u_68.ResetOnSpawn = false
+v_u_68.Enabled = false
+v_u_68.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+v_u_68.Parent = v10
+local v_u_69, v_u_70 = v67(v_u_68, 2)
+v_u_69.Image = v_u_20.CodeImage
+v_u_69.AnchorPoint = Vector2.new(0, 0.5)
+v_u_69.Position = UDim2.new(0, -600, 0.5, 30)
+v_u_69.Rotation = -4
+v_u_70.Visible = true
+local v71 = v_u_16.claim(7, {
+    ["icon"] = v_u_20.CodeImage
+})
+if v71 and (v71.icon and v71.icon:IsA("ImageLabel")) then
+    v71.icon.ScaleType = Enum.ScaleType.Fit
+    v71.icon.Rotation = -(v71.frame.Rotation + v71.button.Rotation) + 180
+    v71.icon.Visible = true
+end
+local v_u_72
+if v71 and v71.icon then
+    v_u_72 = Instance.new("TextLabel")
+    v_u_72.Name = "NoteCode"
+    v_u_72.AnchorPoint = Vector2.new(0.5, 0.5)
+    v_u_72.BackgroundTransparency = 1
+    v_u_72.FontFace = v_u_23
+    v_u_72.Position = UDim2.fromScale(0.5, 0.5)
+    v_u_72.Size = UDim2.fromScale(0.78, 0.34)
+    v_u_72.Text = ""
+    v_u_72.TextColor3 = v_u_22
+    v_u_72.TextScaled = true
+    v_u_72.ZIndex = (v71.icon.ZIndex or 1) + 1
+    v_u_72.Parent = v71.icon
+else
+    v_u_72 = nil
+end
+local v_u_73 = nil
+local v_u_74 = 216
+local function v_u_80()
+    -- upvalues: (copy) v_u_8, (ref) v_u_74, (ref) v_u_21, (copy) v_u_69, (copy) v_u_68
+    local v75 = v_u_8.CurrentCamera
+    if v75 then
+        v75 = v_u_8.CurrentCamera.ViewportSize
+    end
+    if v75 and v75.Y > 0 then
+        local v76 = v75.X * 0.135
+        local v77 = math.clamp(v76, 118, 190)
+        local v78 = math.round(v77)
+        local v79 = v78 / v_u_21
+        v_u_74 = math.round(v79)
+        v_u_69.Size = UDim2.fromOffset(v78, v_u_74)
+        if not v_u_68.Enabled then
+            v_u_69.Position = UDim2.new(0, -(v_u_74 + 80), 0.5, 20)
+        end
+    end
+end
+v_u_49 = function()
+    -- upvalues: (ref) v_u_48, (copy) v_u_70, (ref) v_u_72, (copy) v_u_9
+    local v81 = v_u_48
+    local v82 = type(v81) == "string"
+    v_u_70.Text = v_u_48 or ""
+    if v_u_72 then
+        v_u_72.Text = v_u_48 or ""
+    end
+    v_u_9:SetAttribute("NumberPuzzleNoteOwned", v82 or nil)
+end
+local function v_u_94(p83)
+    -- upvalues: (ref) v_u_73, (copy) v_u_80, (copy) v_u_68, (copy) v_u_69, (ref) v_u_74, (copy) v_u_6, (copy) v_u_19, (copy) v_u_16
+    if v_u_73 then
+        v_u_73:Cancel()
+        v_u_73 = nil
+    end
+    if p83 then
+        v_u_80()
+        v_u_68.Enabled = true
+        v_u_69.Position = UDim2.new(0, -(v_u_74 + 80), 0.5, 20)
+        local v84 = v_u_69
+        local v85 = {
+            ["Position"] = UDim2.new(0, 14, 0.5, 20)
+        }
+        local v86 = Enum.EasingStyle.Back
+        local v87 = Enum.EasingDirection.Out
+        local v88 = v_u_6:Create(v84, TweenInfo.new(0.34, v86 or Enum.EasingStyle.Quad, v87 or Enum.EasingDirection.Out), v85)
+        v88:Play()
+        v_u_73 = v88
+        v_u_19:PlaySound("Paper")
+        return
+    elseif v_u_68.Enabled then
+        local v89 = v_u_69
+        local v90 = {
+            ["Position"] = UDim2.new(0, -(v_u_74 + 80), 0.5, 20)
+        }
+        local v91 = Enum.EasingStyle.Quad
+        local v92 = Enum.EasingDirection.In
+        local v93 = v_u_6:Create(v89, TweenInfo.new(0.18, v91 or Enum.EasingStyle.Quad, v92 or Enum.EasingDirection.Out), v90)
+        v93:Play()
+        v_u_73 = v93
+        v_u_73.Completed:Once(function()
+            -- upvalues: (ref) v_u_16, (ref) v_u_68
+            if v_u_16.getEquipped() ~= 7 then
+                v_u_68.Enabled = false
+            end
+        end)
+    end
+end
+local function v98()
+    -- upvalues: (copy) v_u_94, (copy) v_u_16, (ref) v_u_48
+    local v95 = v_u_94
+    local v96
+    if v_u_16.getEquipped() == 7 then
+        local v97 = v_u_48
+        v96 = type(v97) == "string"
+    else
+        v96 = false
+    end
+    v95(v96)
+end
+v_u_16.EquippedChanged:Connect(v98)
+v_u_49()
+v_u_80()
+local v_u_99 = Instance.new("ScreenGui")
+v_u_99.Name = "NumberPuzzlePoster"
+v_u_99.DisplayOrder = 250
+v_u_99.IgnoreGuiInset = true
+v_u_99.ResetOnSpawn = false
+v_u_99.Enabled = false
+v_u_99.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+v_u_99.Parent = v10
+local v_u_100 = Instance.new("Frame")
+v_u_100.Name = "Backdrop"
+v_u_100.Active = true
+v_u_100.BackgroundColor3 = Color3.new(0, 0, 0)
+v_u_100.BackgroundTransparency = 1
+v_u_100.BorderSizePixel = 0
+v_u_100.Size = UDim2.fromScale(1, 1)
+v_u_100.ZIndex = 1
+v_u_100.Parent = v_u_99
+local v_u_101, v_u_102 = v67(v_u_100, 2)
+local v_u_103 = {}
+local function v_u_107()
+    -- upvalues: (copy) v_u_103, (copy) v_u_100, (copy) v_u_6, (copy) v_u_101, (copy) v_u_102, (copy) v_u_99, (copy) v_u_9, (copy) v_u_8, (copy) v_u_7
+    if v_u_103.open then
+        v_u_103.open = false
+        local v104 = v_u_103
+        v104.run = v104.run + 1
+        v_u_6:Create(v_u_100, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        v_u_6:Create(v_u_101, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        v_u_6:Create(v_u_102, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        local v_u_105 = v_u_103.run
+        task.delay(0.17, function()
+            -- upvalues: (ref) v_u_103, (copy) v_u_105, (ref) v_u_99, (ref) v_u_101, (ref) v_u_102, (ref) v_u_9, (ref) v_u_8, (ref) v_u_7
+            if v_u_103.run == v_u_105 then
+                v_u_99.Enabled = false
+                v_u_101.ImageTransparency = 0
+                v_u_101.Rotation = 0
+                v_u_102.TextTransparency = 0
+                v_u_102.Visible = false
+                v_u_9:SetAttribute("NeedleInputLocked", v_u_103.lock)
+                v_u_103.lock = nil
+                local v106 = v_u_8.CurrentCamera
+                if v106 and v_u_9:GetAttribute("CutsceneActive") ~= true then
+                    v106.CameraType = Enum.CameraType.Custom
+                    if v_u_7.MouseEnabled and v_u_9.CameraMode == Enum.CameraMode.LockFirstPerson then
+                        v_u_7.MouseBehavior = Enum.MouseBehavior.LockCenter
+                    end
+                end
+            end
+        end)
+    end
+end
+local function v_u_149(p108)
+    -- upvalues: (copy) v_u_26, (copy) v_u_8, (copy) v_u_103, (copy) v_u_9, (copy) v_u_13, (copy) v_u_19, (copy) v_u_2, (copy) v_u_101, (ref) v_u_45, (ref) v_u_21, (copy) v_u_102, (copy) v_u_99, (copy) v_u_100, (copy) v_u_6, (copy) v_u_5, (copy) v_u_107, (copy) v_u_20, (ref) v_u_48
+    local v109 = v_u_26[p108]
+    local v_u_110 = v_u_8.CurrentCamera
+    if not v_u_103.open and (v109 and v_u_110) then
+        local v111 = v_u_103
+        v111.run = v111.run + 1
+        v_u_103.open = true
+        v_u_103.index = p108
+        v_u_103.result = nil
+        v_u_103.readyAt = os.clock() + 0.2
+        v_u_103.lock = v_u_9:GetAttribute("NeedleInputLocked")
+        v_u_9:SetAttribute("NeedleInputLocked", true)
+        v_u_9:SetAttribute("PosterInteractReady", false)
+        v_u_9:SetAttribute("KeypadInteractReady", false)
+        v_u_13:FireServer("NumberPuzzle", "Poster", p108)
+        v_u_19:PlaySound("Paper")
+        local v112 = v_u_110:WorldToViewportPoint(v109.Position)
+        local v113 = v_u_2:GetGuiInset()
+        local v_u_114 = v112.X
+        local v_u_115 = v112.Y + v113.Y
+        local v116 = v_u_110.ViewportSize.Y * 0.1
+        local v117 = math.max(70, v116)
+        v_u_101.Image = v_u_45
+        v_u_101.ImageTransparency = 0
+        v_u_101.Rotation = -14
+        local v118 = v_u_101
+        local v119 = UDim2.fromOffset
+        local v120 = v117 * v_u_21
+        v118.Size = v119(math.round(v120), (math.round(v117)))
+        v_u_101.Position = UDim2.fromOffset(math.round(v_u_114), (math.round(v_u_115)))
+        v_u_102.Visible = false
+        v_u_102.Text = ""
+        v_u_102.TextTransparency = 0
+        v_u_99.Enabled = true
+        v_u_100.BackgroundTransparency = 1
+        v_u_6:Create(v_u_100, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        local v_u_121 = v_u_103.run
+        task.spawn(function()
+            -- upvalues: (copy) v_u_110, (ref) v_u_103, (copy) v_u_121, (ref) v_u_5, (ref) v_u_107, (ref) v_u_6, (ref) v_u_101, (ref) v_u_20, (ref) v_u_102, (ref) v_u_48, (ref) v_u_19, (ref) v_u_21, (copy) v_u_114, (copy) v_u_115
+            local v122 = v_u_110.ViewportSize
+            local v123 = v122.Y * 0.1
+            local v124 = math.max(70, v123)
+            local v125 = v122.Y * 0.78
+            local v126 = v122.X * 0.5
+            local v127 = v122.Y * 0.5
+            local v128 = 0
+            local v129 = false
+            local v130 = 0
+            while v_u_103.run == v_u_121 do
+                local v131 = v_u_5.RenderStepped:Wait()
+                if v_u_103.run ~= v_u_121 then
+                    return
+                end
+                if v_u_103.result == nil and v128 >= 0.25 then
+                    v130 = v130 + v131
+                    if v130 >= 1.5 then
+                        v_u_107()
+                        return
+                    end
+                else
+                    v128 = v128 + v131
+                end
+                local v132 = v128 / 0.5
+                local v133 = math.clamp(v132, 0, 1)
+                local v134 = v_u_6:GetValue(v133, Enum.EasingStyle.Quart, Enum.EasingDirection.Out)
+                local v135 = v_u_6:GetValue(v133, Enum.EasingStyle.Quad, Enum.EasingDirection.InOut)
+                if not v129 and (v_u_103.result ~= nil and v133 >= 0.5) then
+                    v129 = true
+                    if v_u_103.result then
+                        v_u_101.Image = v_u_20.CodeImage
+                        v_u_102.Text = v_u_48 or ""
+                        v_u_102.Visible = true
+                        v_u_19:PlaySound("GoldPop")
+                    else
+                        v_u_101.Image = v_u_20.WrongImage
+                        v_u_19:PlaySound("Pop")
+                    end
+                end
+                local v136 = v124 + (v125 - v124) * v134
+                local v137 = v135 * 3.141592653589793
+                local v138 = math.cos(v137)
+                local v139 = math.abs(v138)
+                local v140 = v_u_101
+                local v141 = UDim2.fromOffset
+                local v142 = v136 * v_u_21 * v139
+                local v143 = math.round(v142)
+                v140.Size = v141(math.max(2, v143), (math.round(v136)))
+                local v144 = v_u_101
+                local v145 = UDim2.fromOffset
+                local v146 = v_u_114 + (v126 - v_u_114) * v134
+                local v147 = math.round(v146)
+                local v148 = v_u_115 + (v127 - v_u_115) * v134
+                v144.Position = v145(v147, (math.round(v148)))
+                v_u_101.Rotation = (1 - v134) * -14
+                if v133 >= 1 then
+                    break
+                end
+            end
+        end)
+    end
+end
+local v150 = Color3.fromRGB(58, 62, 66)
+local v151 = Color3.fromRGB(26, 28, 30)
+local v152 = Color3.fromRGB(28, 29, 31)
+local v153 = Color3.fromRGB(88, 92, 96)
+local v154 = Color3.fromRGB(9, 20, 10)
+local v_u_155 = Color3.fromRGB(104, 255, 130)
+local v_u_156 = Color3.fromRGB(28, 74, 34)
+local v_u_157 = Color3.fromRGB(255, 96, 88)
+local v_u_158 = v_u_47
+local v_u_159 = v_u_48
+local v_u_160 = v_u_49
+local v_u_161 = {}
+local v162 = {
+    "1",
+    "2",
+    "3",
+    "4",
+    "5",
+    "6",
+    "7",
+    "8",
+    "9",
+    "clear",
+    "0",
+    "enter"
+}
+for v163, v164 in ipairs({
+    "Zero",
+    "One",
+    "Two",
+    "Three",
+    "Four",
+    "Five",
+    "Six",
+    "Seven",
+    "Eight",
+    "Nine"
+}) do
+    local v165 = v163 - 1
+    local v166 = tostring(v165)
+    v_u_161[Enum.KeyCode[v164]] = v166
+    v_u_161[Enum.KeyCode["Keypad" .. v164]] = v166
+end
+local v_u_167 = Instance.new("ScreenGui")
+v_u_167.Name = "NumberPuzzleKeypad"
+v_u_167.DisplayOrder = 240
+v_u_167.IgnoreGuiInset = true
+v_u_167.ResetOnSpawn = false
+v_u_167.Enabled = false
+v_u_167.ZIndexBehavior = Enum.ZIndexBehavior.Sibling
+v_u_167.Parent = v10
+local v_u_168 = Instance.new("TextButton")
+v_u_168.Name = "Backdrop"
+v_u_168.AutoButtonColor = false
+v_u_168.BackgroundColor3 = Color3.new(0, 0, 0)
+v_u_168.BackgroundTransparency = 1
+v_u_168.BorderSizePixel = 0
+v_u_168.Modal = true
+v_u_168.Size = UDim2.fromScale(1, 1)
+v_u_168.Text = ""
+v_u_168.ZIndex = 1
+v_u_168.Parent = v_u_167
+local v_u_169 = Instance.new("Frame")
+v_u_169.Name = "Panel"
+v_u_169.AnchorPoint = Vector2.new(0.5, 0.5)
+v_u_169.BackgroundColor3 = v150
+v_u_169.BorderSizePixel = 0
+v_u_169.Position = UDim2.fromScale(0.5, 0.5)
+v_u_169.ZIndex = 2
+v_u_169.Parent = v_u_168
+local v170 = Instance.new("UICorner")
+v170.CornerRadius = UDim.new(0, 14)
+v170.Parent = v_u_169
+local v171 = Instance.new("UIStroke")
+v171.Color = v151
+v171.Thickness = 4
+v171.Parent = v_u_169
+local v_u_172 = Instance.new("UIScale")
+v_u_172.Parent = v_u_169
+local v_u_173 = Instance.new("Frame")
+v_u_173.Name = "Display"
+v_u_173.BackgroundColor3 = v154
+v_u_173.BorderSizePixel = 0
+v_u_173.ZIndex = 3
+v_u_173.Parent = v_u_169
+local v174 = Instance.new("UICorner")
+v174.CornerRadius = UDim.new(0, 8)
+v174.Parent = v_u_173
+local v_u_175 = Instance.new("UIStroke")
+v_u_175.Color = v_u_156
+v_u_175.Thickness = 2
+v_u_175.Parent = v_u_173
+local v_u_176 = Instance.new("TextLabel")
+v_u_176.Name = "Readout"
+v_u_176.AnchorPoint = Vector2.new(0.5, 0.5)
+v_u_176.BackgroundTransparency = 1
+v_u_176.Font = Enum.Font.Code
+v_u_176.Position = UDim2.fromScale(0.5, 0.5)
+v_u_176.Size = UDim2.fromScale(0.86, 0.7)
+v_u_176.Text = ""
+v_u_176.TextColor3 = v_u_155
+v_u_176.TextScaled = true
+v_u_176.ZIndex = 4
+v_u_176.Parent = v_u_173
+local v_u_177 = Instance.new("Frame")
+v_u_177.Name = "Keys"
+v_u_177.BackgroundTransparency = 1
+v_u_177.ZIndex = 3
+v_u_177.Parent = v_u_169
+local v_u_178 = Instance.new("UIGridLayout")
+v_u_178.FillDirectionMaxCells = 3
+v_u_178.SortOrder = Enum.SortOrder.LayoutOrder
+v_u_178.Parent = v_u_177
+local v_u_179 = {
+    ["buttons"] = {}
+}
+for v180, v181 in ipairs(v162) do
+    local v182 = Instance.new("TextButton")
+    v182.Name = v181
+    v182.AutoButtonColor = false
+    v182.BackgroundColor3 = v152
+    v182.BorderSizePixel = 0
+    v182.FontFace = v_u_23
+    v182.LayoutOrder = v180
+    v182.Text = v181 == "clear" and "X" or (v181 == "enter" and "\226\156\147" or v181)
+    local v183
+    if v181 == "clear" then
+        v183 = Color3.fromRGB(238, 84, 76)
+    elseif v181 == "enter" then
+        v183 = Color3.fromRGB(96, 220, 108)
+    else
+        v183 = Color3.fromRGB(244, 244, 244)
+    end
+    v182.TextColor3 = v183
+    v182.TextScaled = true
+    v182.ZIndex = 4
+    v182.Parent = v_u_177
+    local v184 = Instance.new("UICorner")
+    v184.CornerRadius = UDim.new(0, 7)
+    v184.Parent = v182
+    local v185 = Instance.new("UIStroke")
+    v185.Color = v153
+    v185.Thickness = 2
+    v185.Transparency = 0.45
+    v185.Parent = v182
+    local v186 = Instance.new("UIScale")
+    v186.Parent = v182
+    local v187 = Instance.new("UIPadding")
+    v187.PaddingBottom = UDim.new(0.16, 0)
+    v187.PaddingTop = UDim.new(0.16, 0)
+    v187.Parent = v182
+    v_u_179.buttons[v181] = {
+        ["button"] = v182,
+        ["scale"] = v186,
+        ["stroke"] = v185
+    }
+end
+for v188, v189 in ipairs(v162) do
+    local v190 = v_u_179.buttons[v189].button
+    local v191 = (v188 - 1) % 3
+    local v192
+    if v191 > 0 then
+        v192 = v_u_179.buttons[v162[v188 - 1]].button or nil
+    else
+        v192 = nil
+    end
+    v190.NextSelectionLeft = v192
+    local v193
+    if v191 < 2 then
+        v193 = v_u_179.buttons[v162[v188 + 1]].button or nil
+    else
+        v193 = nil
+    end
+    v190.NextSelectionRight = v193
+    local v194
+    if v162[v188 - 3] then
+        v194 = v_u_179.buttons[v162[v188 - 3]].button or nil
+    else
+        v194 = nil
+    end
+    v190.NextSelectionUp = v194
+    local v195
+    if v162[v188 + 3] then
+        v195 = v_u_179.buttons[v162[v188 + 3]].button or nil
+    else
+        v195 = nil
+    end
+    v190.NextSelectionDown = v195
+end
+local function v_u_217()
+    -- upvalues: (copy) v_u_8, (copy) v_u_169, (copy) v_u_173, (copy) v_u_177, (copy) v_u_178
+    local v196 = v_u_8.CurrentCamera
+    if v196 then
+        v196 = v196.ViewportSize
+    end
+    if v196 and v196.Y > 0 then
+        local v197 = v196.Y * 0.68
+        local v198 = math.clamp(v197, 320, 660)
+        local v199 = v198 * 0.7
+        local v200 = math.round(v199)
+        local v201 = v200 * 0.075
+        local v202 = math.round(v201)
+        local v203 = v198 * 0.15
+        local v204 = math.round(v203)
+        local v205 = v202 + v204
+        local v206 = v198 * 0.035
+        local v207 = v205 + math.round(v206)
+        local v208 = math.round(v198) - v207 - v202
+        local v209 = math.round(v200) - v202 * 2
+        local v210 = v200 * 0.035
+        local v211 = math.round(v210)
+        v_u_169.Size = UDim2.fromOffset(math.round(v200), (math.round(v198)))
+        v_u_173.Position = UDim2.fromOffset(v202, v202)
+        v_u_173.Size = UDim2.fromOffset(v209, v204)
+        v_u_177.Position = UDim2.fromOffset(v202, v207)
+        v_u_177.Size = UDim2.fromOffset(v209, v208)
+        v_u_178.CellPadding = UDim2.fromOffset(v211, v211)
+        local v212 = v_u_178
+        local v213 = UDim2.fromOffset
+        local v214 = (v209 - v211 * 2) / 3
+        local v215 = math.floor(v214)
+        local v216 = (v208 - v211 * 3) / 4
+        v212.CellSize = v213(v215, (math.floor(v216)))
+    end
+end
+local function v_u_223(p218)
+    -- upvalues: (copy) v_u_20, (copy) v_u_179, (copy) v_u_176, (copy) v_u_155
+    local v219 = {}
+    for v220 = 1, v_u_20.CodeLength do
+        local v221 = v_u_179.entry
+        table.insert(v219, v221:sub(v220, v220))
+    end
+    for v222 = 1, v_u_20.CodeLength do
+        if v219[v222] == "" then
+            v219[v222] = "-"
+        end
+    end
+    v_u_176.Text = table.concat(v219, " ")
+    v_u_176.TextColor3 = p218 or v_u_155
+end
+local function v_u_229(p224)
+    -- upvalues: (copy) v_u_179, (copy) v_u_6
+    local v225 = v_u_179.buttons[p224]
+    if v225 then
+        v225.scale.Scale = 0.88
+        local v226 = v225.scale
+        local v227 = Enum.EasingStyle.Back
+        local v228 = Enum.EasingDirection.Out
+        v_u_6:Create(v226, TweenInfo.new(0.22, v227 or Enum.EasingStyle.Quad, v228 or Enum.EasingDirection.Out), {}):Play()
+        v225.stroke.Transparency = 0
+        v_u_6:Create(v225.stroke, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+    end
+end
+local function v_u_235()
+    -- upvalues: (copy) v_u_179, (copy) v_u_2, (copy) v_u_167, (copy) v_u_168, (copy) v_u_6, (copy) v_u_172, (copy) v_u_9
+    if v_u_179.open then
+        v_u_179.open = false
+        local v230 = v_u_179
+        v230.run = v230.run + 1
+        local v_u_231 = v_u_179.run
+        local v232 = v_u_2.SelectedObject
+        if v232 and v232:IsDescendantOf(v_u_167) then
+            v_u_2.SelectedObject = nil
+        end
+        v_u_6:Create(v_u_168, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        local v233 = v_u_172
+        local v234 = Enum.EasingStyle.Quart
+        v_u_6:Create(v233, TweenInfo.new(0.15, v234 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        task.delay(0.17, function()
+            -- upvalues: (ref) v_u_179, (copy) v_u_231, (ref) v_u_167, (ref) v_u_9
+            if v_u_179.run == v_u_231 then
+                v_u_167.Enabled = false
+                v_u_9:SetAttribute("NeedleInputLocked", v_u_179.lock)
+                v_u_179.lock = nil
+            end
+        end)
+    end
+end
+local function v_u_248()
+    -- upvalues: (copy) v_u_179, (copy) v_u_19, (copy) v_u_223, (copy) v_u_157, (copy) v_u_175, (copy) v_u_6, (copy) v_u_169, (copy) v_u_5, (copy) v_u_156
+    v_u_179.busy = true
+    local v_u_236 = v_u_179.run
+    v_u_19:PlaySound("Error")
+    v_u_223(v_u_157)
+    local v237 = {
+        ["Color"] = v_u_157
+    }
+    v_u_6:Create(v_u_175, TweenInfo.new(0.1, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v237):Play()
+    local v_u_238 = v_u_169.Position
+    task.spawn(function()
+        -- upvalues: (ref) v_u_5, (ref) v_u_179, (copy) v_u_236, (ref) v_u_169, (copy) v_u_238, (ref) v_u_223, (ref) v_u_175, (ref) v_u_156, (ref) v_u_6
+        local v239 = 0
+        while v239 < 0.3 do
+            v239 = v239 + v_u_5.RenderStepped:Wait()
+            if v_u_179.run ~= v_u_236 then
+                v_u_169.Position = v_u_238
+                return
+            end
+            local v240 = v239 / 0.3
+            local v241 = 1 - math.clamp(v240, 0, 1)
+            local v242 = v_u_169
+            local v243 = v_u_238
+            local v244 = UDim2.fromOffset
+            local v245 = v239 * 58
+            local v246 = math.sin(v245) * 11 * v241
+            v242.Position = v243 + v244(math.round(v246), 0)
+        end
+        v_u_169.Position = v_u_238
+        if v_u_179.run == v_u_236 then
+            v_u_179.entry = ""
+            v_u_179.busy = false
+            v_u_223()
+            local v247 = {
+                ["Color"] = v_u_156
+            }
+            v_u_6:Create(v_u_175, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v247):Play()
+        end
+    end)
+end
+local function v_u_251()
+    -- upvalues: (copy) v_u_179, (copy) v_u_223, (copy) v_u_175, (copy) v_u_155, (copy) v_u_6, (copy) v_u_235
+    v_u_179.busy = true
+    local v_u_249 = v_u_179.run
+    v_u_223(Color3.fromRGB(168, 255, 186))
+    local v250 = {
+        ["Color"] = v_u_155
+    }
+    v_u_6:Create(v_u_175, TweenInfo.new(0.15, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v250):Play()
+    task.delay(0.7, function()
+        -- upvalues: (ref) v_u_179, (copy) v_u_249, (ref) v_u_235
+        if v_u_179.run == v_u_249 then
+            v_u_235()
+        end
+    end)
+end
+local function v_u_255(p252)
+    -- upvalues: (copy) v_u_179, (copy) v_u_229, (copy) v_u_19, (copy) v_u_223, (copy) v_u_20, (copy) v_u_248, (copy) v_u_13
+    if v_u_179.open and not v_u_179.busy then
+        v_u_229(p252)
+        if p252 == "clear" then
+            v_u_179.entry = ""
+            v_u_19:PlaySound("ButtonPart")
+            v_u_223()
+            return
+        elseif p252 == "enter" then
+            if #v_u_179.entry < v_u_20.CodeLength then
+                v_u_248()
+            else
+                v_u_19:PlaySound("ButtonClick")
+                v_u_179.busy = true
+                local v_u_253 = v_u_179.run
+                v_u_13:FireServer("NumberPuzzle", "Submit", v_u_179.entry)
+                task.delay(2, function()
+                    -- upvalues: (ref) v_u_179, (copy) v_u_253
+                    if v_u_179.run == v_u_253 and v_u_179.busy then
+                        v_u_179.busy = false
+                    end
+                end)
+            end
+        elseif #v_u_179.entry < v_u_20.CodeLength then
+            local v254 = v_u_179
+            v254.entry = v254.entry .. p252
+            v_u_19:PlaySound("ButtonClick")
+            v_u_223()
+        end
+    else
+        return
+    end
+end
+local v_u_256 = (-1 / 0)
+v_u_168.Activated:Connect(function()
+    -- upvalues: (ref) v_u_256, (copy) v_u_235
+    if os.clock() - v_u_256 > 0.25 then
+        v_u_235()
+    end
+end)
+local v_u_257 = v_u_256
+for v_u_258, v259 in pairs(v_u_179.buttons) do
+    v259.button.Activated:Connect(function()
+        -- upvalues: (ref) v_u_257, (copy) v_u_255, (copy) v_u_258
+        if os.clock() - v_u_257 > 0.25 then
+            v_u_255(v_u_258)
+        end
+    end)
+end
+local function v_u_266()
+    -- upvalues: (copy) v_u_179, (copy) v_u_103, (ref) v_u_158, (copy) v_u_9, (ref) v_u_257, (copy) v_u_217, (copy) v_u_223, (copy) v_u_175, (copy) v_u_156, (copy) v_u_167, (copy) v_u_168, (copy) v_u_169, (copy) v_u_172, (copy) v_u_6, (copy) v_u_19, (copy) v_u_7, (copy) v_u_2
+    if not (v_u_179.open or (v_u_103.open or v_u_158.completed)) then
+        local v260 = v_u_179
+        v260.run = v260.run + 1
+        v_u_179.open = true
+        v_u_179.busy = false
+        v_u_179.entry = ""
+        v_u_179.lock = v_u_9:GetAttribute("NeedleInputLocked")
+        v_u_257 = os.clock()
+        v_u_9:SetAttribute("NeedleInputLocked", true)
+        v_u_9:SetAttribute("PosterInteractReady", false)
+        v_u_9:SetAttribute("KeypadInteractReady", false)
+        v_u_217()
+        v_u_223()
+        v_u_175.Color = v_u_156
+        v_u_167.Enabled = true
+        v_u_168.BackgroundTransparency = 1
+        v_u_169.Rotation = -3
+        v_u_172.Scale = 0.8
+        v_u_6:Create(v_u_168, TweenInfo.new(0.2, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        local v261 = v_u_169
+        local v262 = Enum.EasingStyle.Quart
+        v_u_6:Create(v261, TweenInfo.new(0.28, v262 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+        local v263 = v_u_172
+        local v264 = Enum.EasingStyle.Back
+        local v265 = Enum.EasingDirection.Out
+        v_u_6:Create(v263, TweenInfo.new(0.32, v264 or Enum.EasingStyle.Quad, v265 or Enum.EasingDirection.Out), {}):Play()
+        v_u_19:PlaySound("ButtonPart")
+        if v_u_7:GetLastInputType().Name:match("^Gamepad") then
+            v_u_2.SelectedObject = v_u_179.buttons["5"].button
+        end
+    end
+end
+local v_u_267 = RaycastParams.new()
+v_u_267.FilterType = Enum.RaycastFilterType.Exclude
+v_u_267.IgnoreWater = true
+local function v_u_279(p268, p269)
+    -- upvalues: (copy) v_u_103, (copy) v_u_179, (copy) v_u_9, (ref) v_u_158, (copy) v_u_8, (copy) v_u_267, (copy) v_u_20, (copy) v_u_18, (copy) v_u_24, (copy) v_u_27
+    if v_u_103.open or (v_u_179.open or ((v_u_9:GetAttribute("HintViewerOpen") == true or v_u_9:GetAttribute("CutsceneActive") == true) and true or v_u_9:GetAttribute("NeedleInputLocked") == true)) or v_u_158.completed then
+        return nil, false
+    else
+        local v270 = v_u_8.CurrentCamera
+        local v271 = v_u_9.Character
+        local v272
+        if v271 then
+            v272 = v271:FindFirstChild("HumanoidRootPart")
+        else
+            v272 = v271
+        end
+        if v270 and v272 then
+            v_u_267.FilterDescendantsInstances = { v271, v270 }
+            local v273 = v_u_20.PosterDistance
+            local v274 = v_u_20.InteractDistance
+            local v275 = math.max(v273, v274) + 8
+            local v276 = v_u_18.ray(v270, p268, p269)
+            local v277 = v_u_8:Raycast(v276.Origin, v276.Direction * v275, v_u_267)
+            if v277 then
+                if v277.Instance:IsDescendantOf(v_u_24) then
+                    return nil, (v_u_24:GetPivot().Position - v272.Position).Magnitude <= v_u_20.InteractDistance
+                else
+                    local v278 = v_u_27[v277.Instance]
+                    if v278 and (not v_u_158.taken[v278] and (v277.Instance.Position - v272.Position).Magnitude <= v_u_20.PosterDistance) then
+                        return v278, false
+                    else
+                        return nil, false
+                    end
+                end
+            else
+                return nil, false
+            end
+        else
+            return nil, false
+        end
+    end
+end
+local function v_u_284(p280, p281)
+    -- upvalues: (copy) v_u_279, (copy) v_u_266, (copy) v_u_149
+    local v282, v283 = v_u_279(p280, p281)
+    if v283 then
+        v_u_266()
+    elseif v282 then
+        v_u_149(v282)
+    end
+end
+v_u_7.InputBegan:Connect(function(p285, p286)
+    -- upvalues: (copy) v_u_103, (copy) v_u_107, (copy) v_u_179, (copy) v_u_235, (copy) v_u_161, (copy) v_u_255, (copy) v_u_229, (copy) v_u_19, (copy) v_u_223, (copy) v_u_9, (copy) v_u_16, (copy) v_u_279, (copy) v_u_266, (copy) v_u_149
+    local v287 = p285.UserInputType == Enum.UserInputType.MouseButton1 and true or p285.UserInputType == Enum.UserInputType.Touch
+    local v288 = p285.KeyCode == Enum.KeyCode.E and true or p285.KeyCode == Enum.KeyCode.ButtonX
+    local v289 = p285.KeyCode == Enum.KeyCode.ButtonB and true or p285.KeyCode == Enum.KeyCode.Escape
+    if v_u_103.open then
+        if (v287 or (v288 or v289)) and os.clock() >= v_u_103.readyAt then
+            v_u_107()
+        end
+        return
+    elseif v_u_179.open then
+        if v289 then
+            v_u_235()
+            return
+        elseif p286 then
+            return
+        else
+            local v290 = v_u_161[p285.KeyCode]
+            if v290 then
+                v_u_255(v290)
+                return
+            elseif p285.KeyCode == Enum.KeyCode.Return or p285.KeyCode == Enum.KeyCode.KeypadEnter then
+                v_u_255("enter")
+            elseif (p285.KeyCode == Enum.KeyCode.Backspace or p285.KeyCode == Enum.KeyCode.Delete) and v_u_179.open then
+                if v_u_179.busy then
+                    return
+                end
+                v_u_229("clear")
+                v_u_179.entry = ""
+                v_u_19:PlaySound("ButtonPart")
+                v_u_223()
+            end
+        end
+    elseif p286 then
+        return
+    elseif p285.KeyCode == Enum.KeyCode.Seven and (v_u_9:GetAttribute("NumberPuzzleNoteOwned") == true and v_u_9:GetAttribute("NeedleInputLocked") ~= true) then
+        v_u_16.select(7)
+    elseif v287 and p285.UserInputType ~= Enum.UserInputType.Touch then
+        local v291, v292 = v_u_279(nil, nil)
+        if v292 then
+            v_u_266()
+            return
+        end
+        if v291 then
+            v_u_149(v291)
+            return
+        end
+    elseif v288 then
+        local v293, v294 = v_u_279(nil, true)
+        if v294 then
+            v_u_266()
+            return
+        end
+        if v293 then
+            v_u_149(v293)
+        end
+    end
+end)
+v17.Pressed:Connect(function(p295)
+    -- upvalues: (copy) v_u_284
+    if p295 == "TAKE_POSTER" or p295 == "USE_KEYPAD" then
+        task.defer(v_u_284, nil, true)
+    end
+end)
+v15.OnClientEvent:Connect(function(p296, p297, p298, p299, p300)
+    -- upvalues: (ref) v_u_158, (copy) v_u_26, (ref) v_u_43, (ref) v_u_44, (ref) v_u_42, (copy) v_u_38, (copy) v_u_27, (ref) v_u_159, (ref) v_u_160, (copy) v_u_103, (copy) v_u_179, (copy) v_u_251, (copy) v_u_248
+    if p296 == "NumberPuzzle" then
+        if p297 == "Poster" then
+            if type(p298) == "number" then
+                v_u_158.taken[p298] = true
+                local v301 = v_u_26[p298]
+                if v301 then
+                    if v_u_43 == v301 and v_u_43 ~= nil then
+                        if v_u_44 and v_u_44.Parent then
+                            v_u_44.Color3 = v_u_42
+                        end
+                        v_u_44 = nil
+                        v_u_42 = nil
+                        v_u_43 = nil
+                        v_u_38.Adornee = nil
+                        v_u_38.Visible = false
+                    end
+                    v_u_27[v301] = nil
+                    v_u_26[p298] = nil
+                    v301:Destroy()
+                end
+            end
+            if type(p300) == "string" and not v_u_158.completed then
+                v_u_159 = p300
+                v_u_160()
+            end
+            if v_u_103.open and p298 == v_u_103.index then
+                v_u_103.result = p299 == true
+                return
+            end
+        elseif p297 == "Submit" and v_u_179.open then
+            if p298 == true then
+                v_u_251()
+                return
+            end
+            v_u_248()
+        end
+    end
+end)
+local function v_u_302()
+    -- upvalues: (copy) v_u_80, (copy) v_u_179, (copy) v_u_217
+    v_u_80()
+    if v_u_179.open then
+        v_u_217()
+    end
+end
+local v_u_303 = nil
+v_u_8:GetPropertyChangedSignal("CurrentCamera"):Connect(function()
+    -- upvalues: (copy) v_u_8, (ref) v_u_303, (copy) v_u_38, (copy) v_u_302, (copy) v_u_80, (copy) v_u_179, (copy) v_u_217
+    local v304 = v_u_8.CurrentCamera
+    if v_u_303 then
+        v_u_303:Disconnect()
+        v_u_303 = nil
+    end
+    if v304 then
+        v_u_38.Parent = v304
+        v_u_303 = v304:GetPropertyChangedSignal("ViewportSize"):Connect(v_u_302)
+    end
+    v_u_80()
+    if v_u_179.open then
+        v_u_217()
+    end
+end)
+local v305 = v_u_8.CurrentCamera
+if v_u_303 then
+    v_u_303:Disconnect()
+    v_u_303 = nil
+end
+if v305 then
+    v_u_38.Parent = v305
+    v_u_303 = v305:GetPropertyChangedSignal("ViewportSize"):Connect(v_u_302)
+end
+v_u_80()
+if v_u_179.open then
+    v_u_217()
+end
+v_u_5.RenderStepped:Connect(function()
+    -- upvalues: (copy) v_u_279, (copy) v_u_26, (ref) v_u_43, (ref) v_u_44, (ref) v_u_42, (copy) v_u_38, (copy) v_u_37, (copy) v_u_9
+    local v306, v307 = v_u_279()
+    local v308
+    if v306 then
+        v308 = v_u_26[v306] or nil
+    else
+        v308 = nil
+    end
+    if v_u_43 ~= v308 then
+        if v_u_44 and v_u_44.Parent then
+            v_u_44.Color3 = v_u_42
+        end
+        v_u_44 = nil
+        v_u_42 = nil
+        v_u_43 = v308
+        v_u_38.Adornee = v308
+        v_u_38.Visible = v308 ~= nil
+        local v309 = v308 and v308:FindFirstChildOfClass("Decal")
+        if v309 then
+            v_u_44 = v309
+            v_u_42 = v309.Color3
+            v309.Color3 = v_u_37
+        end
+    end
+    v_u_9:SetAttribute("PosterInteractReady", v306 ~= nil)
+    v_u_9:SetAttribute("KeypadInteractReady", v307)
+end)
+v14:FireServer()
+local v310
+if v_u_16.getEquipped() == 7 then
+    v310 = type(v_u_159) == "string"
+else
+    v310 = false
+end
+v_u_94(v310)

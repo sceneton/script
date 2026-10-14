@@ -1,0 +1,3366 @@
+-- Decompiled game.Players.RaggedReo.PlayerScripts.NeedleHaystackClient
+
+local v_u_1 = game:GetService("CollectionService")
+local v_u_2 = game:GetService("Debris")
+local v3 = game:GetService("Players")
+local v_u_4 = game:GetService("ReplicatedStorage")
+local v_u_5 = game:GetService("RunService")
+local v_u_6 = game:GetService("TweenService")
+local v_u_7 = game:GetService("UserInputService")
+local v_u_8 = v3.LocalPlayer
+local v_u_9 = v_u_4:WaitForChild("NeedleHaystack")
+local v_u_10 = require(v_u_9:WaitForChild("Config"))
+local v_u_11 = require(v_u_9:WaitForChild("Surface"))
+local v_u_12 = require(script.Parent:WaitForChild("SoundManager"))
+local v_u_13 = require(script.Parent:WaitForChild("HotbarSlots"))
+local v_u_14 = require(script.Parent:WaitForChild("ActionHint"))
+local v_u_15 = require(script.Parent:WaitForChild("HandCursor"))
+local v_u_16 = require(script.Parent:WaitForChild("Notify"))
+local v_u_17 = require(script.Parent:WaitForChild("MobileAction"))
+local v_u_18 = v_u_9:WaitForChild("HayPieceTemplate")
+if v_u_10.STRAND_SCALE ~= 1 then
+    v_u_18 = v_u_18:Clone()
+    v_u_18.Size = v_u_18.Size * v_u_10.STRAND_SCALE
+end
+local v_u_19 = v_u_9:WaitForChild("PickHay")
+local v_u_20 = v_u_9:WaitForChild("PickDroppedHay")
+local v_u_21 = v_u_9:WaitForChild("DropHay")
+local v22 = v_u_9:WaitForChild("TntExploded")
+local v23 = v_u_9:WaitForChild("PitchforkDug")
+local v24 = v_u_9:WaitForChild("DroneHarvested")
+local v_u_25 = v_u_9:WaitForChild("GetHayState")
+local v_u_26 = v_u_9:WaitForChild("SellHay")
+local v27 = v_u_9:WaitForChild("HaySold")
+local v28 = v_u_9:WaitForChild("NeedleTargetChanged")
+local v29 = v_u_9:WaitForChild("NeedleFound")
+local v30 = v_u_9:WaitForChild("NeedleRoundCompleted")
+local v31 = workspace:WaitForChild("DroppedHay")
+require(v_u_4:WaitForChild("Shared"):WaitForChild("Services"):WaitForChild("CameraShakeClient"))
+local v_u_32 = v_u_11.profileHeightFraction
+local v_u_33 = v_u_11.profileSlope
+for _, v34 in ipairs({
+    "HayVisualCoreClient",
+    "HayCoreClient",
+    "HayBackingClient",
+    "HayColliderClient",
+    "HayDebrisClient"
+}) do
+    local v35 = workspace:FindFirstChild(v34)
+    if v35 then
+        v35:Destroy()
+    end
+end
+local v_u_36 = workspace.CurrentCamera
+local v_u_37 = table.create(v_u_10.RENDERED_HAY)
+local v_u_38 = {}
+local v_u_39 = {}
+local v_u_40 = nil
+local v_u_41 = nil
+local v_u_42 = {}
+local v_u_43 = setmetatable({}, {})
+local v_u_44 = {
+    ["MobileAimOffsets"] = {
+        Vector2.new(1, 0),
+        Vector2.new(-1, 0),
+        Vector2.new(0, 1),
+        Vector2.new(0, -1),
+        Vector2.new(0.7, 0.7),
+        Vector2.new(-0.7, 0.7),
+        Vector2.new(0.7, -0.7),
+        Vector2.new(-0.7, -0.7)
+    },
+    ["offsets"] = setmetatable({}, {})
+}
+local function v_u_48(p45, p46)
+    -- upvalues: (copy) v_u_43, (ref) v_u_42
+    p45:SetAttribute("BundleSeed", math.random(1, 1000000))
+    v_u_43[p45] = {
+        ["from"] = p45.CFrame,
+        ["startedAt"] = os.clock() + (p46 or 0)
+    }
+    local v47 = v_u_42
+    table.insert(v47, p45)
+end
+function v_u_44.easeOutBack(p49, p50)
+    local v51 = p49 - 1
+    return v51 * v51 * ((p50 + 1) * v51 + p50) + 1
+end
+local v_u_52 = false
+v_u_44.haySync = require(script.Parent:WaitForChild("HayStateSync")).new()
+local v_u_53 = v_u_10.TOTAL_HAY
+local v_u_54 = nil
+local v_u_55 = false
+local v_u_56 = nil
+local v_u_57 = nil
+local v_u_58 = 0
+local v_u_59 = nil
+local v_u_60 = false
+local v_u_61 = 0
+local v_u_62 = false
+local v_u_63 = 0
+local v_u_64 = 0
+local v_u_65 = Vector2.zero
+local v_u_66 = Vector2.zero
+local v_u_67 = v_u_8:WaitForChild("PlayerGui"):WaitForChild("NeedleHUD", 20)
+assert(v_u_67, "NeedleHUD did not load within 20 seconds")
+local v_u_68 = v_u_67:WaitForChild("CenterDot")
+v_u_15.set(false)
+local v_u_69 = v_u_67:FindFirstChild("Count")
+local v_u_70 = v_u_67:WaitForChild("Status")
+v_u_70.Visible = false
+local v_u_71 = v_u_67:WaitForChild("LoadingBack")
+local v_u_72 = v_u_71:WaitForChild("Fill")
+local v_u_73 = v_u_67:WaitForChild("ThrowPower")
+local v_u_74 = v_u_73:WaitForChild("Fill")
+v_u_73.Visible = false
+local function v76()
+    -- upvalues: (copy) v_u_69, (ref) v_u_53
+    if v_u_69 then
+        local v75 = v_u_53
+        v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v75):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+    end
+end
+if v_u_69 then
+    local v77 = v_u_53
+    v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v77):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+end
+local v78 = v_u_8.PlayerGui:WaitForChild("HUD", 20)
+if v78 then
+    v78 = v78:WaitForChild("BottomLeft", 10)
+end
+local v_u_79
+if v78 then
+    v_u_79 = v78:WaitForChild("CoinsWallet", 10)
+else
+    v_u_79 = v78
+end
+if v78 then
+    v78 = v78:WaitForChild("Capacity", 10)
+end
+local v_u_80
+if v_u_79 then
+    v_u_80 = v_u_79:FindFirstChild("TextLabel")
+else
+    v_u_80 = v_u_79
+end
+local v_u_81
+if v78 then
+    v_u_81 = v78:FindFirstChild("TotalCapacity", true)
+else
+    v_u_81 = v78
+end
+local v_u_82
+if v78 then
+    v_u_82 = v78:FindFirstChild("CurrentAmount", true)
+else
+    v_u_82 = v78
+end
+local v_u_83
+if v78 then
+    v_u_83 = v78:FindFirstChild("HaybaleFill", true)
+else
+    v_u_83 = v78
+end
+local v_u_84 = v_u_13.claim(1)
+local v_u_85 = false
+local function v87()
+    -- upvalues: (copy) v_u_13, (ref) v_u_85, (copy) v_u_14
+    local v86 = v_u_13.getEquipped() == 1
+    if v_u_85 ~= v86 then
+        v_u_85 = v86
+        if not v86 then
+            v_u_14.set(nil)
+        end
+    end
+end
+v_u_13.EquippedChanged:Connect(v87)
+v_u_13.setEquipped(1, false)
+local v88 = v_u_13.getEquipped() == 1
+local v_u_89
+if v_u_85 == v88 then
+    v_u_89 = v_u_85
+else
+    v_u_85 = v88
+    if v88 then
+        v_u_89 = v_u_85
+    else
+        v_u_14.set(nil)
+        v_u_89 = v_u_85
+    end
+end
+local v_u_90
+if v_u_83 then
+    local v_u_91 = v_u_83.Parent
+    local v_u_92 = v_u_83.Size
+    local v93 = v_u_83.Position
+    local v94 = v_u_83.AnchorPoint
+    v_u_90 = Instance.new("Frame")
+    v_u_90.Name = "HaybaleFillClip"
+    v_u_90.BackgroundTransparency = 1
+    v_u_90.ClipsDescendants = true
+    v_u_90.ZIndex = v_u_83.ZIndex
+    v_u_90.AnchorPoint = Vector2.new(v94.X, 1)
+    v_u_90.Position = UDim2.new(v93.X.Scale, v93.X.Offset, v93.Y.Scale + v_u_92.Y.Scale * (1 - v94.Y), v93.Y.Offset)
+    v_u_90.Size = UDim2.new(v_u_92.X.Scale, v_u_92.X.Offset, 0, 0)
+    v_u_90.Parent = v_u_91
+    v_u_83.AnchorPoint = Vector2.new(0.5, 1)
+    v_u_83.Position = UDim2.fromScale(0.5, 1)
+    v_u_83.Parent = v_u_90
+    local v95 = v_u_83:FindFirstChildOfClass("UIAspectRatioConstraint")
+    if v95 then
+        v95:Destroy()
+    end
+    local function v97()
+        -- upvalues: (copy) v_u_91, (copy) v_u_83, (copy) v_u_92
+        local v96 = v_u_91.AbsoluteSize
+        if v96.X > 0 and v96.Y > 0 then
+            v_u_83.Size = UDim2.fromOffset(v96.X * v_u_92.X.Scale, v96.Y * v_u_92.Y.Scale)
+        end
+    end
+    local v98 = v_u_91.AbsoluteSize
+    if v98.X > 0 and v98.Y > 0 then
+        v_u_83.Size = UDim2.fromOffset(v98.X * v_u_92.X.Scale, v98.Y * v_u_92.Y.Scale)
+    end
+    v_u_91:GetPropertyChangedSignal("AbsoluteSize"):Connect(v97)
+else
+    v_u_90 = nil
+end
+local v_u_99
+if v78 then
+    v_u_99 = v78:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
+else
+    v_u_99 = v78
+end
+if v_u_99 then
+    v_u_99.Parent = v78
+end
+local v_u_100 = -1
+local v_u_101 = nil
+local function v108()
+    -- upvalues: (copy) v_u_8, (ref) v_u_42, (copy) v_u_81, (copy) v_u_82, (ref) v_u_90, (ref) v_u_101, (copy) v_u_6, (copy) v_u_99, (ref) v_u_100
+    local v102 = v_u_8:GetAttribute("HayHeld") or #v_u_42
+    local v103 = v_u_8:GetAttribute("HayCapacity") or 25
+    local v104 = v_u_8:GetAttribute("InfiniteBagOwned") == true
+    local v105 = not v104
+    if v105 then
+        v105 = v103 <= v102
+    end
+    if v_u_81 then
+        v_u_81.Text = v104 and "\226\136\158" or tostring(v103):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+    end
+    if v_u_82 then
+        v_u_82.Text = tostring(v102):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")
+        v_u_82.TextColor3 = v105 and Color3.fromRGB(255, 176, 96) or Color3.fromRGB(255, 255, 255)
+    end
+    if v_u_90 then
+        local v106
+        if v103 > 0 then
+            local v107 = v102 / v103
+            v106 = math.clamp(v107, 0, 1) or 0
+        else
+            v106 = 0
+        end
+        if v_u_101 then
+            v_u_101:Cancel()
+        end
+        v_u_101 = v_u_6:Create(v_u_90, TweenInfo.new(0.28, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            ["Size"] = UDim2.new(v_u_90.Size.X.Scale, v_u_90.Size.X.Offset, v106, 0)
+        })
+        v_u_101:Play()
+    end
+    if v_u_99 and (v_u_100 >= 0 and v_u_100 < v102) then
+        v_u_99.Scale = 1.1
+        v_u_6:Create(v_u_99, TweenInfo.new(0.24, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+    end
+    v_u_100 = v102
+end
+local v_u_109 = 0
+local v_u_110 = 0
+local v_u_111 = 0
+local function v_u_114(_)
+    -- upvalues: (ref) v_u_111, (ref) v_u_110, (ref) v_u_109, (copy) v_u_12
+    local v112 = os.clock()
+    if v112 - v_u_111 >= 0.08 then
+        v_u_111 = v112
+        if v112 - v_u_110 > 0.9 then
+            v_u_109 = 0
+        end
+        v_u_110 = v112
+        local v113 = v_u_109 + 1
+        v_u_109 = math.min(v113, 14)
+        v_u_12.PlaySound("HayCollect", {
+            ["PlaybackSpeed"] = v_u_109 * 0.045 + 1.7
+        })
+    end
+end
+local function v_u_121(p115)
+    -- upvalues: (copy) v_u_2, (copy) v_u_6
+    local v116 = Instance.new("Attachment")
+    v116.Name = "PickupBurst"
+    v116.Parent = p115
+    local v117 = Instance.new("ParticleEmitter")
+    v117.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+    v117.Color = ColorSequence.new(p115.Color, Color3.fromRGB(255, 238, 151))
+    v117.LightEmission = 0.7
+    v117.Lifetime = NumberRange.new(0.18, 0.34)
+    v117.Speed = NumberRange.new(0.8, 2.3)
+    v117.Drag = 3
+    v117.Acceleration = Vector3.new(0, 2.5, 0)
+    v117.SpreadAngle = Vector2.new(180, 180)
+    v117.Rate = 0
+    v117.Rotation = NumberRange.new(-180, 180)
+    v117.RotSpeed = NumberRange.new(-140, 140)
+    v117.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.18), NumberSequenceKeypoint.new(1, 0) })
+    v117.Parent = v116
+    v117:Emit(7)
+    v_u_2:AddItem(v116, 0.55)
+    local v118 = Instance.new("BillboardGui")
+    v118.Name = "PickupPlusOne"
+    v118.AlwaysOnTop = true
+    v118.LightInfluence = 0
+    v118.Size = UDim2.fromOffset(86, 46)
+    v118.StudsOffsetWorldSpace = Vector3.new(0, 0.32, 0)
+    v118.Parent = p115
+    local v_u_119 = Instance.new("TextLabel")
+    v_u_119.BackgroundTransparency = 1
+    v_u_119.Size = UDim2.fromScale(1, 1)
+    v_u_119.Font = Enum.Font.GothamBlack
+    v_u_119.Text = "+1"
+    v_u_119.TextColor3 = Color3.fromRGB(255, 237, 145)
+    v_u_119.TextStrokeColor3 = Color3.fromRGB(62, 37, 16)
+    v_u_119.TextStrokeTransparency = 0.1
+    v_u_119.TextSize = 28
+    v_u_119.Parent = v118
+    local v120 = Instance.new("UIScale")
+    v120.Scale = 0.6
+    v120.Parent = v_u_119
+    v_u_6:Create(v120, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+    v_u_6:Create(v118, TweenInfo.new(0.55, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+    task.delay(0.28, function()
+        -- upvalues: (copy) v_u_119, (ref) v_u_6
+        if v_u_119.Parent then
+            v_u_6:Create(v_u_119, TweenInfo.new(0.25), {}):Play()
+        end
+    end)
+    v_u_2:AddItem(v118, 0.62)
+end
+v_u_8:GetAttributeChangedSignal("HayHeld"):Connect(v108)
+v_u_8:GetAttributeChangedSignal("HayCapacity"):Connect(v108)
+v_u_8:GetAttributeChangedSignal("InfiniteBagOwned"):Connect(v108)
+v108()
+task.spawn(function()
+    -- upvalues: (copy) v_u_8, (copy) v_u_80, (copy) v_u_79, (copy) v_u_6, (copy) v_u_5
+    local v_u_122 = v_u_8:WaitForChild("leaderstats", 20)
+    if v_u_122 then
+        v_u_122 = v_u_122:WaitForChild("Cash", 20)
+    end
+    if v_u_122 and v_u_80 then
+        local v_u_123 = v_u_79:FindFirstChildOfClass("UIScale") or Instance.new("UIScale")
+        v_u_123.Parent = v_u_79
+        local v_u_124 = v_u_122.Value
+        local v125 = v_u_80
+        local v126 = v_u_124
+        local v127 = (tonumber(v126) or 0) * 100
+        local v128 = math.round(v127)
+        local v129 = math.max(0, v128)
+        local v130 = v129 // 100
+        v125.Text = "$" .. tostring(v130):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "") .. string.format(".%02d", v129 % 100)
+        local v_u_131 = false
+        v_u_122:GetPropertyChangedSignal("Value"):Connect(function()
+            -- upvalues: (copy) v_u_122, (ref) v_u_124, (copy) v_u_123, (ref) v_u_6, (ref) v_u_131, (ref) v_u_80, (ref) v_u_5
+            if v_u_124 < v_u_122.Value then
+                v_u_123.Scale = 1.12
+                v_u_6:Create(v_u_123, TweenInfo.new(0.22, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {}):Play()
+            end
+            if not v_u_131 then
+                v_u_131 = true
+                task.spawn(function()
+                    -- upvalues: (ref) v_u_122, (ref) v_u_124, (ref) v_u_80, (ref) v_u_5, (ref) v_u_131
+                    while true do
+                        local v132 = v_u_122.Value - v_u_124
+                        if math.abs(v132) <= 0.005 then
+                            break
+                        end
+                        local v133 = v_u_122.Value - v_u_124
+                        local v134 = v_u_124
+                        local v135 = math.abs(v133)
+                        local v136 = math.abs(v133) * 0.18
+                        local v137 = math.max(0.01, v136)
+                        v_u_124 = v134 + math.min(v135, v137) * (v133 > 0 and 1 or -1)
+                        local v138 = v_u_80
+                        local v139 = v_u_124
+                        local v140 = (tonumber(v139) or 0) * 100
+                        local v141 = math.round(v140)
+                        local v142 = math.max(0, v141)
+                        local v143 = v142 // 100
+                        v138.Text = "$" .. tostring(v143):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "") .. string.format(".%02d", v142 % 100)
+                        v_u_5.Heartbeat:Wait()
+                    end
+                    v_u_124 = v_u_122.Value
+                    local v144 = v_u_80
+                    local v145 = v_u_124
+                    local v146 = (tonumber(v145) or 0) * 100
+                    local v147 = math.round(v146)
+                    local v148 = math.max(0, v147)
+                    local v149 = v148 // 100
+                    v144.Text = "$" .. tostring(v149):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "") .. string.format(".%02d", v148 % 100)
+                    v_u_131 = false
+                end)
+            end
+        end)
+    end
+end)
+local v_u_150 = Instance.new("Highlight")
+v_u_150.Name = "HayHover"
+v_u_150.DepthMode = v_u_17.isTouchDevice() and Enum.HighlightDepthMode.AlwaysOnTop or Enum.HighlightDepthMode.Occluded
+v_u_150.FillColor = Color3.fromRGB(255, 191, 68)
+v_u_150.FillTransparency = 0.72
+v_u_150.OutlineColor = Color3.fromRGB(255, 250, 225)
+v_u_150.OutlineTransparency = 0.02
+v_u_150.Enabled = false
+v_u_150.Parent = v_u_36
+local v151 = workspace:FindFirstChild("HaystackClient")
+if v151 then
+    v151:Destroy()
+end
+local v_u_152 = Instance.new("Folder")
+v_u_152.Name = "HaystackClient"
+v_u_152.Parent = workspace
+local v153 = workspace:FindFirstChild("HeldHayClient")
+if v153 then
+    v153:Destroy()
+end
+local v_u_154 = Instance.new("Folder")
+v_u_154.Name = "HeldHayClient"
+v_u_154.Parent = workspace
+local v155 = workspace:FindFirstChild("PickupEffectsClient")
+if v155 then
+    v155:Destroy()
+end
+local v_u_156 = Instance.new("Folder")
+v_u_156.Name = "PickupEffectsClient"
+v_u_156.Parent = workspace
+local function v_u_189(p157, p158)
+    -- upvalues: (ref) v_u_42, (copy) v_u_121, (copy) v_u_43, (copy) v_u_44, (copy) v_u_156, (copy) v_u_5, (ref) v_u_36, (copy) v_u_2
+    if #v_u_42 <= 75 then
+        if not p158 then
+            v_u_121(p157)
+        end
+        return
+    end
+    v_u_43[p157] = nil
+    p157.Transparency = 1
+    if p158 then
+        for v159 = #v_u_42, 1, -1 do
+            if v_u_42[v159] == p157 then
+                table.remove(v_u_42, v159)
+                break
+            end
+        end
+        v_u_44.offsets[p157] = nil
+        p157:Destroy()
+    else
+        local v_u_160 = p157:Clone()
+        v_u_160.Name = "OverflowPickupFlyer"
+        v_u_160.Transparency = 0
+        v_u_160.Anchored = true
+        v_u_160.CanCollide = false
+        v_u_160.CanTouch = false
+        v_u_160.CanQuery = false
+        v_u_160.Parent = v_u_156
+        v_u_121(v_u_160)
+        local v_u_161 = v_u_160.CFrame
+        local v_u_162 = os.clock()
+        local v163 = (#v_u_42 - 1) % 75 + 1
+        local v_u_164 = (v163 - 1) % 5 - 2
+        local v165 = (v163 - 1) / 5
+        local v_u_166 = math.floor(v165) % 5
+        local v167 = (v163 - 1) / 25
+        local v_u_168 = math.floor(v167)
+        local v169 = v_u_160:GetAttribute("BundleSeed") or #v_u_42
+        local v170 = v169 * 0.001 + 78.233
+        local v171 = math.sin(v170) * 43758.5453
+        local v_u_172 = (v171 - math.floor(v171)) * 2 - 1
+        local v173 = v169 * 0.001 + 156.466
+        local v174 = math.sin(v173) * 43758.5453
+        local v_u_175 = (v174 - math.floor(v174)) * 2 - 1
+        local v176 = v169 * 0.001 + 234.699
+        local v177 = math.sin(v176) * 43758.5453
+        local v_u_178 = (v177 - math.floor(v177)) * 2 - 1
+        local v_u_179 = nil
+        v_u_179 = v_u_5.RenderStepped:Connect(function()
+            -- upvalues: (copy) v_u_160, (ref) v_u_179, (copy) v_u_162, (ref) v_u_44, (ref) v_u_36, (copy) v_u_164, (copy) v_u_172, (copy) v_u_166, (copy) v_u_175, (copy) v_u_168, (copy) v_u_178, (copy) v_u_161
+            if v_u_160.Parent then
+                local v180 = (os.clock() - v_u_162) / 0.38
+                local v181 = math.clamp(v180, 0, 1)
+                local v182 = v_u_44.easeOutBack(v181, v_u_44.ArrivalOvershoot)
+                local v183 = v_u_36.CFrame * CFrame.new(v_u_164 * 0.065 + 1.45 + v_u_172 * 0.035, v_u_166 * 0.05 + -0.72 + v_u_175 * 0.035, v_u_168 * 0.045 + -3.1 + v_u_178 * 0.035) * CFrame.Angles(v_u_175 * 0.16, v_u_178 * 0.2, v_u_164 * 0.025 + -0.32 + v_u_172 * 0.35)
+                local v184 = v181 * 3.141592653589793
+                local v185 = math.sin(v184) * 0.48
+                v_u_160.CFrame = v_u_161:Lerp(v183, v182) + Vector3.new(0, v185, 0)
+                local v186 = v_u_160
+                local v187 = (v181 - 0.82) / 0.18
+                v186.Transparency = math.clamp(v187, 0, 1)
+                if v181 >= 1 then
+                    v_u_179:Disconnect()
+                    v_u_160.Transparency = 1
+                    task.delay(0.3, function()
+                        -- upvalues: (ref) v_u_160
+                        if v_u_160.Parent then
+                            v_u_160:Destroy()
+                        end
+                    end)
+                end
+            else
+                v_u_179:Disconnect()
+            end
+        end)
+        v_u_2:AddItem(v_u_160, 0.8)
+        for v188 = #v_u_42, 1, -1 do
+            if v_u_42[v188] == p157 then
+                table.remove(v_u_42, v188)
+                break
+            end
+        end
+        v_u_44.offsets[p157] = nil
+        p157:Destroy()
+    end
+end
+local v_u_190 = RaycastParams.new()
+v_u_190.FilterType = Enum.RaycastFilterType.Include
+v_u_190.FilterDescendantsInstances = { v_u_152, v31 }
+v_u_190.IgnoreWater = true
+local v_u_191 = OverlapParams.new()
+v_u_191.FilterType = Enum.RaycastFilterType.Include
+v_u_191.FilterDescendantsInstances = { v_u_152 }
+v_u_191.MaxParts = 0
+function v_u_44.resolveBackingTarget(p192)
+    -- upvalues: (copy) v_u_191, (copy) v_u_152
+    local v193 = (1 / 0)
+    local v194 = nil
+    for _, v195 in ipairs(workspace:GetPartBoundsInRadius(p192, 1.8, v_u_191)) do
+        if v195.Parent == v_u_152 and v195:GetAttribute("HayId") then
+            local v196 = (v195.Position - p192).Magnitude
+            if v196 < v193 then
+                v194 = v195
+                v193 = v196
+            end
+        end
+    end
+    return v194
+end
+function v_u_44.resolveHayRayResult(p197)
+    -- upvalues: (copy) v_u_44
+    if p197 then
+        local v198 = p197.Instance
+        if v198 and v198:GetAttribute("BackingProxy") then
+            local v199 = v_u_44.resolveBackingTarget(p197.Position)
+            return v199, v198, v199 ~= nil
+        elseif not v198 or v198:GetAttribute("HayId") or (v198:GetAttribute("IsNeedleObjective") or v198:GetAttribute("IsDroppedHay")) then
+            return v198, v198, true
+        else
+            return v198, v198, false
+        end
+    else
+        return nil, nil, false
+    end
+end
+local function v_u_205(p200, p201)
+    -- upvalues: (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_13, (copy) v_u_10, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8
+    local v202 = p201 or p200
+    if v_u_40 ~= p200 or v_u_44.hoverVisualPart ~= v202 then
+        v_u_40 = p200
+        v_u_44.hoverVisualPart = v202
+        v_u_150.Adornee = v202
+        v_u_150.Enabled = p200 ~= nil
+        local v203
+        if p200 == nil then
+            v203 = false
+        else
+            local v204 = v_u_13.getEquipped()
+            v203 = (v204 == 1 or v204 == v_u_10.PITCHFORK_SLOT_INDEX) and true or v204 == v_u_10.VACUUM_SLOT_INDEX
+        end
+        v_u_15.set(v203)
+        v_u_68.BackgroundColor3 = p200 and Color3.fromRGB(255, 184, 54) or Color3.fromRGB(255, 247, 220)
+        v_u_8:SetAttribute("HoveredHayId", p200 and p200:GetAttribute("HayId") or nil)
+    end
+end
+local function v_u_222()
+    -- upvalues: (copy) v_u_13, (copy) v_u_10, (ref) v_u_41, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8, (ref) v_u_36, (copy) v_u_190, (copy) v_u_17, (copy) v_u_205
+    local v206 = v_u_13.getEquipped()
+    if v206 ~= 1 and v206 ~= v_u_10.PITCHFORK_SLOT_INDEX and v206 ~= v_u_10.VACUUM_SLOT_INDEX then
+        v_u_41 = nil
+        if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+            v_u_40 = nil
+            v_u_44.hoverVisualPart = nil
+            v_u_150.Adornee = nil
+            v_u_150.Enabled = false
+            v_u_15.set(false)
+            v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+            v_u_8:SetAttribute("HoveredHayId", nil)
+        end
+    end
+    local v207 = workspace:Raycast(v_u_36.CFrame.Position, v_u_36.CFrame.LookVector * v_u_10.INTERACT_DISTANCE, v_u_190)
+    local v208, v209, v210 = v_u_44.resolveHayRayResult(v207)
+    if not v210 then
+        local v211 = v_u_36.ViewportSize
+        local v212
+        if v_u_17.isTouchDevice() then
+            local v213 = v211.X
+            local v214 = v211.Y
+            local v215 = math.min(v213, v214) * 0.02
+            v212 = math.clamp(v215, 10, 18) or 7
+        else
+            v212 = 7
+        end
+        for _, v216 in ipairs(v_u_44.MobileAimOffsets) do
+            local v217 = v_u_36:ViewportPointToRay(v211.X * 0.5 + v216.X * v212, v211.Y * 0.5 + v216.Y * v212)
+            local v218 = workspace:Raycast(v217.Origin, v217.Direction * v_u_10.INTERACT_DISTANCE, v_u_190)
+            local v219, v220, v221 = v_u_44.resolveHayRayResult(v218)
+            if v221 then
+                v209 = v220
+                v208 = v219
+                v207 = v218
+                v210 = true
+                break
+            end
+        end
+    end
+    if v210 then
+        v_u_41 = v207.Position
+        v_u_205(v208, v209)
+        return
+    else
+        v_u_41 = nil
+        if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+            v_u_40 = nil
+            v_u_44.hoverVisualPart = nil
+            v_u_150.Adornee = nil
+            v_u_150.Enabled = false
+            v_u_15.set(false)
+            v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+            v_u_8:SetAttribute("HoveredHayId", nil)
+        end
+    end
+end
+local v_u_223 = {}
+v_u_5.Heartbeat:Connect(function()
+    -- upvalues: (copy) v_u_223
+    local v224 = os.clock()
+    for v225 in pairs(v_u_223) do
+        if v225.Parent then
+            local v226 = (v224 * 0.55 + v225.Position.X * 0.05 + v225.Position.Z * 0.03) % 1
+            v225.Color = Color3.fromHSV(v226, 0.85, 1)
+        else
+            v_u_223[v225] = nil
+        end
+    end
+end)
+local v227 = workspace:FindFirstChild("HiddenNeedleClient")
+if v227 then
+    v227:Destroy()
+end
+local v228 = Instance.new("Folder")
+v228.Name = "HiddenNeedleClient"
+v228.Parent = workspace
+v_u_190.FilterDescendantsInstances = {
+    v_u_152,
+    v31,
+    v228,
+    workspace:WaitForChild("NeedleObjectiveServer")
+}
+workspace.ChildAdded:Connect(function(p229)
+    -- upvalues: (copy) v_u_190
+    if p229.Name == "NeedleObjectiveServer" then
+        local v230 = v_u_190.FilterDescendantsInstances
+        table.insert(v230, p229)
+        v_u_190.FilterDescendantsInstances = v230
+    end
+end)
+local v_u_231 = nil
+local v_u_232 = nil
+local v_u_233 = false
+local v_u_234 = nil
+local function v_u_238(p235)
+    -- upvalues: (ref) v_u_231, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8, (copy) v_u_6, (copy) v_u_2
+    local v236 = v_u_231
+    v_u_231 = nil
+    if v236 then
+        if v_u_40 and (v_u_40:IsDescendantOf(v236) and (v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil)) then
+            v_u_40 = nil
+            v_u_44.hoverVisualPart = nil
+            v_u_150.Adornee = nil
+            v_u_150.Enabled = false
+            v_u_15.set(false)
+            v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+            v_u_8:SetAttribute("HoveredHayId", nil)
+        end
+        if p235 then
+            for _, v237 in ipairs(v236:GetDescendants()) do
+                if v237:IsA("BasePart") then
+                    v237.CanQuery = false
+                    v237:SetAttribute("HayId", nil)
+                    v_u_6:Create(v237, TweenInfo.new(0.7, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+                        ["CFrame"] = v237.CFrame * CFrame.Angles(2.443460952792061, 4.1887902047863905, 1.3962634015954636) + Vector3.new(0, 3.2, 0)
+                    }):Play()
+                end
+            end
+            v_u_2:AddItem(v236, 0.8)
+        else
+            v236:Destroy()
+        end
+    else
+        return
+    end
+end
+local function v241(p239)
+    -- upvalues: (ref) v_u_231, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8, (ref) v_u_54, (ref) v_u_55, (copy) v_u_37
+    local v240 = v_u_231
+    v_u_231 = nil
+    if v240 then
+        if v_u_40 and (v_u_40:IsDescendantOf(v240) and (v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil)) then
+            v_u_40 = nil
+            v_u_44.hoverVisualPart = nil
+            v_u_150.Adornee = nil
+            v_u_150.Enabled = false
+            v_u_15.set(false)
+            v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+            v_u_8:SetAttribute("HoveredHayId", nil)
+        end
+        v240:Destroy()
+    end
+    v_u_54 = typeof(p239) == "number" and p239 and p239 or nil
+    if v_u_54 then
+        v_u_55 = true
+        local _ = v_u_37[v_u_54]
+    end
+end
+local function v_u_257(p242, p243, p244)
+    -- upvalues: (copy) v_u_67, (ref) v_u_36, (copy) v_u_6, (copy) v_u_12, (copy) v_u_5, (copy) v_u_2
+    local v245 = v_u_67:FindFirstChild("Announcement")
+    if v245 then
+        local v_u_246 = v245:Clone()
+        v_u_246.Name = "NeedleAnnouncementLive"
+        v_u_246.Visible = true
+        v_u_246.GroupTransparency = 1
+        v_u_246.Row.Lines.Title.Text = p242
+        v_u_246.Row.Lines.Subtitle.Text = p243
+        local v247 = v_u_246.Row:FindFirstChild("ResponsiveScale")
+        if v247 then
+            local v248 = v_u_36 and v_u_36.ViewportSize or Vector2.new(1280, 720)
+            local v249 = v248.X
+            local v250 = v248.Y
+            local v251 = math.min(v249, v250) / 720
+            v247.Scale = math.clamp(v251, 0.62, 1.15)
+        end
+        local v_u_252 = v245.Strip.Size.Y.Offset
+        v_u_246.Strip.Size = UDim2.fromOffset(0, v_u_252)
+        v_u_246.Parent = v_u_67
+        local v_u_253 = v245.Position
+        v_u_246.Position = v_u_253 - UDim2.fromOffset(0, 26)
+        v_u_6:Create(v_u_246, TweenInfo.new(0.42, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            ["Position"] = v_u_253
+        }):Play()
+        if p244 then
+            v_u_12.PlaySound(p244)
+        end
+        task.defer(function()
+            -- upvalues: (ref) v_u_5, (copy) v_u_246, (ref) v_u_6, (copy) v_u_252
+            v_u_5.Heartbeat:Wait()
+            v_u_5.Heartbeat:Wait()
+            if v_u_246.Parent then
+                local v254 = v_u_246.Row.AbsoluteSize.X + 110
+                local v255 = v_u_246.AbsoluteSize.X * 0.94
+                local v256 = math.min(v254, v255)
+                v_u_6:Create(v_u_246.Strip, TweenInfo.new(0.34, Enum.EasingStyle.Quint, Enum.EasingDirection.Out), {
+                    ["Size"] = UDim2.fromOffset(v256, v_u_252)
+                }):Play()
+            end
+        end)
+        task.delay(3.4, function()
+            -- upvalues: (copy) v_u_246, (ref) v_u_6, (copy) v_u_253, (ref) v_u_2
+            if v_u_246.Parent then
+                v_u_6:Create(v_u_246, TweenInfo.new(0.32, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+                    ["Position"] = v_u_253 - UDim2.fromOffset(0, 22)
+                }):Play()
+                v_u_2:AddItem(v_u_246, 0.4)
+            end
+        end)
+    end
+end
+local function v_u_258()
+    -- upvalues: (ref) v_u_234, (ref) v_u_232, (ref) v_u_233, (copy) v_u_8
+    if v_u_234 then
+        v_u_234:Destroy()
+        v_u_234 = nil
+    end
+    if v_u_232 then
+        v_u_232:Destroy()
+        v_u_232 = nil
+    end
+    v_u_233 = false
+    v_u_8:SetAttribute("NeedleInputLocked", false)
+end
+local function v_u_278(p259, p260)
+    -- upvalues: (ref) v_u_234, (copy) v_u_8, (copy) v_u_14, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (ref) v_u_233, (copy) v_u_67, (copy) v_u_258, (ref) v_u_36, (ref) v_u_232, (copy) v_u_6, (copy) v_u_2, (copy) v_u_12
+    if not v_u_234 then
+        v_u_8:SetAttribute("NeedleInputLocked", true)
+        v_u_14.set(nil)
+        if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+            v_u_40 = nil
+            v_u_44.hoverVisualPart = nil
+            v_u_150.Adornee = nil
+            v_u_150.Enabled = false
+            v_u_15.set(false)
+            v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+            v_u_8:SetAttribute("HoveredHayId", nil)
+        end
+        v_u_233 = true
+        local v261 = Instance.new("Frame")
+        v261.Name = "NeedleWinScreen"
+        v261.Size = UDim2.fromScale(1, 1)
+        v261.BackgroundColor3 = Color3.fromRGB(12, 8, 5)
+        v261.BackgroundTransparency = 1
+        v261.BorderSizePixel = 0
+        v261.ZIndex = 100
+        v261.Parent = v_u_67
+        v_u_234 = v261
+        local v262 = Instance.new("Frame")
+        v262.Name = "WinPanel"
+        v262.AnchorPoint = Vector2.new(0.5, 0.5)
+        v262.Position = UDim2.fromScale(0.5, 0.5)
+        v262.Size = UDim2.fromScale(0.58, 0.42)
+        v262.BackgroundColor3 = Color3.fromRGB(104, 58, 24)
+        v262.BackgroundTransparency = 1
+        v262.BorderSizePixel = 0
+        v262.ZIndex = 102
+        v262.Parent = v261
+        local v263 = Instance.new("UICorner")
+        v263.CornerRadius = UDim.new(0.1, 0)
+        v263.Parent = v262
+        local v264 = Instance.new("UIStroke")
+        v264.Color = Color3.fromRGB(243, 194, 98)
+        v264.Thickness = 4
+        v264.Transparency = 1
+        v264.Parent = v262
+        local v265 = Instance.new("UIGradient")
+        v265.Color = ColorSequence.new({ ColorSequenceKeypoint.new(0, Color3.fromRGB(132, 76, 31)), ColorSequenceKeypoint.new(1, Color3.fromRGB(68, 35, 16)) })
+        v265.Rotation = 90
+        v265.Parent = v262
+        local v266 = Instance.new("TextLabel")
+        v266.BackgroundTransparency = 1
+        v266.Position = UDim2.fromScale(0.08, 0.08)
+        v266.Size = UDim2.fromScale(0.84, 0.24)
+        v266.TextColor3 = Color3.fromRGB(255, 232, 142)
+        v266.TextStrokeColor3 = Color3.fromRGB(55, 28, 10)
+        v266.TextStrokeTransparency = 0
+        v266.Font = Enum.Font.GothamBlack
+        v266.TextScaled = true
+        v266.ZIndex = 103
+        v266.Parent = v262
+        local v267 = Instance.new("TextLabel")
+        v267.BackgroundTransparency = 1
+        v267.Position = UDim2.fromScale(0.1, 0.34)
+        v267.Size = UDim2.fromScale(0.8, 0.22)
+        v267.Text = string.format("%s wins Find a Needle!\n+$%s discovery reward", p259, (tostring(p260):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+        v267.TextColor3 = Color3.fromRGB(255, 249, 222)
+        v267.TextStrokeTransparency = 0.4
+        v267.Font = Enum.Font.GothamBold
+        v267.TextScaled = true
+        v267.ZIndex = 103
+        v267.Parent = v262
+        local v268 = Instance.new("TextButton")
+        v268.Name = "Continue"
+        v268.AnchorPoint = Vector2.new(0.5, 1)
+        v268.Position = UDim2.fromScale(0.5, 0.9)
+        v268.Size = UDim2.fromScale(0.42, 0.18)
+        v268.BackgroundColor3 = Color3.fromRGB(230, 164, 58)
+        v268.Text = "KEEP EXPLORING"
+        v268.TextColor3 = Color3.fromRGB(52, 29, 12)
+        v268.Font = Enum.Font.GothamBlack
+        v268.TextScaled = true
+        v268.AutoButtonColor = true
+        v268.ZIndex = 104
+        v268.Parent = v262
+        local v269 = Instance.new("UICorner")
+        v269.CornerRadius = UDim.new(0.24, 0)
+        v269.Parent = v268
+        v268.Activated:Connect(v_u_258)
+        local v270 = Instance.new("Part")
+        v270.Name = "WinningNeedle"
+        v270.Shape = Enum.PartType.Cylinder
+        v270.Size = Vector3.new(2.5, 0.12, 0.12)
+        v270.Color = Color3.fromRGB(230, 237, 244)
+        v270.Material = Enum.Material.Metal
+        v270.Reflectance = 0.4
+        v270.Anchored = true
+        v270.CanCollide = false
+        v270.CanTouch = false
+        v270.CanQuery = false
+        v270.CastShadow = false
+        v270.Parent = v_u_36
+        v_u_232 = v270
+        for v271 = 1, 34 do
+            local v272 = Instance.new("Frame")
+            v272.BorderSizePixel = 0
+            v272.BackgroundColor3 = Color3.fromHSV(v271 * 0.17 % 1, 0.72, 1)
+            v272.Position = UDim2.fromScale(math.random(), -0.08 - math.random() * 0.35)
+            v272.Size = UDim2.fromOffset(math.random(5, 10), math.random(10, 20))
+            v272.Rotation = math.random(-90, 90)
+            v272.ZIndex = 101
+            v272.Parent = v261
+            local v273 = v_u_6
+            local v274 = TweenInfo.new(1.5 + math.random() * 1.1, Enum.EasingStyle.Quad, Enum.EasingDirection.In)
+            local v275 = {}
+            local v276 = UDim2.fromScale
+            local v277 = v272.Position.X.Scale + (math.random() - 0.5) * 0.25
+            v275.Position = v276(math.clamp(v277, 0, 1), 1.1)
+            v275.Rotation = v272.Rotation + math.random(180, 540)
+            v273:Create(v272, v274, v275):Play()
+            v_u_2:AddItem(v272, 2.8)
+        end
+        v_u_6:Create(v261, TweenInfo.new(0.35), {}):Play()
+        v_u_6:Create(v262, TweenInfo.new(0.5, Enum.EasingStyle.Back, Enum.EasingDirection.Out), {
+            ["Size"] = UDim2.fromScale(0.64, 0.46)
+        }):Play()
+        v_u_6:Create(v264, TweenInfo.new(0.35), {}):Play()
+        v_u_12.PlaySoundAtPosition("PopCollect", v_u_36.CFrame.Position, {})
+    end
+end
+v_u_44.haySync:connect(v28, function(p279)
+    -- upvalues: (ref) v_u_56, (ref) v_u_231, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8, (ref) v_u_54, (ref) v_u_55, (copy) v_u_37
+    if v_u_56 then
+        return
+    else
+        local v280 = v_u_231
+        v_u_231 = nil
+        if v280 then
+            if v_u_40 and (v_u_40:IsDescendantOf(v280) and (v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil)) then
+                v_u_40 = nil
+                v_u_44.hoverVisualPart = nil
+                v_u_150.Adornee = nil
+                v_u_150.Enabled = false
+                v_u_15.set(false)
+                v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                v_u_8:SetAttribute("HoveredHayId", nil)
+            end
+            v280:Destroy()
+        end
+        v_u_54 = typeof(p279) == "number" and p279 and p279 or nil
+        if v_u_54 then
+            v_u_55 = true
+            local _ = v_u_37[v_u_54]
+        end
+    end
+end)
+v_u_44.haySync:connect(v29, function(p281, p282, _, p283)
+    -- upvalues: (ref) v_u_54, (copy) v_u_238, (copy) v_u_8, (copy) v_u_257, (copy) v_u_16
+    if p283 == v_u_54 then
+        v_u_54 = nil
+        v_u_238(true)
+    end
+    local v284 = p281 == v_u_8.UserId
+    v_u_257(v284 and "YOU FOUND THE NEEDLE!" or v_u_16.tint(p282 or "Another player", "name") .. " FOUND THE NEEDLE!", v284 and "Equip it and take it to the farmer" or "They are taking it to the farmer", v284 and "NeedleFound" or nil)
+end)
+v30.OnClientEvent:Connect(function(p285, p286)
+    -- upvalues: (ref) v_u_56, (ref) v_u_57
+    v_u_56 = p285
+    v_u_57 = p286
+end)
+local v287 = nil
+local v_u_288 = (1 / 0)
+local v_u_289 = false
+local v_u_290 = Instance.new("Highlight")
+v_u_290.Name = "SellHoleHover"
+v_u_290.DepthMode = Enum.HighlightDepthMode.Occluded
+v_u_290.FillColor = Color3.fromRGB(255, 214, 92)
+v_u_290.FillTransparency = 0.35
+v_u_290.OutlineColor = Color3.fromRGB(255, 248, 200)
+v_u_290.OutlineTransparency = 0
+v_u_290.Enabled = false
+v_u_290.Parent = v_u_36
+local function v_u_307(p291, p292)
+    local v293 = p291.CFrame:PointToObjectSpace(p292)
+    local v294 = p291.Size * 0.5
+    local v295 = v293.X
+    local v296 = -v294.X
+    local v297 = v294.X
+    local v298 = math.clamp(v295, v296, v297)
+    local v299 = v293.Y
+    local v300 = -v294.Y
+    local v301 = v294.Y
+    local v302 = math.clamp(v299, v300, v301)
+    local v303 = v293.Z
+    local v304 = -v294.Z
+    local v305 = v294.Z
+    local v306 = math.clamp(v303, v304, v305)
+    return (v293 - Vector3.new(v298, v302, v306)).Magnitude
+end
+local function v_u_313(p308)
+    -- upvalues: (copy) v_u_1, (copy) v_u_10, (copy) v_u_307
+    local v309 = (1 / 0)
+    local v310 = nil
+    for _, v311 in ipairs(v_u_1:GetTagged(v_u_10.SELL_PART_NAME)) do
+        if v311:IsA("BasePart") and v311:IsDescendantOf(workspace) then
+            local v312 = v_u_307(v311, p308)
+            if v312 < v309 then
+                v310 = v311
+                v309 = v312
+            end
+        end
+    end
+    return v310, v309
+end
+local function v_u_344(p314, p315, p316, p317)
+    local v318 = p317.CFrame:PointToObjectSpace(p314)
+    local v319 = p317.CFrame:VectorToObjectSpace(p315)
+    local v320 = p317.Size * 0.5
+    local v321 = 0
+    local v322 = v318.X
+    local v323 = v319.X
+    local v324 = v320.X
+    local v325, v326
+    if math.abs(v323) < 1e-6 then
+        v325 = math.abs(v322) <= v324
+        v326 = p316
+    else
+        local v327 = (-v324 - v322) / v323
+        local v328 = (v324 - v322) / v323
+        if v328 >= v327 then
+            local v329 = v327
+            v327 = v328
+            v328 = v329
+        end
+        v321 = math.max(v321, v328)
+        v326 = math.min(p316, v327)
+        if v321 <= v326 then
+            v325 = true
+        else
+            v325 = false
+        end
+    end
+    if not v325 then
+        return false
+    end
+    local v330 = v318.Y
+    local v331 = v319.Y
+    local v332 = v320.Y
+    local v333
+    if math.abs(v331) < 1e-6 then
+        v333 = math.abs(v330) <= v332
+    else
+        local v334 = (-v332 - v330) / v331
+        local v335 = (v332 - v330) / v331
+        if v335 >= v334 then
+            local v336 = v334
+            v334 = v335
+            v335 = v336
+        end
+        v321 = math.max(v321, v335)
+        v326 = math.min(v326, v334)
+        if v321 <= v326 then
+            v333 = true
+        else
+            v333 = false
+        end
+    end
+    if not v333 then
+        return false
+    end
+    local v337 = v318.Z
+    local v338 = v319.Z
+    local v339 = v320.Z
+    local v340
+    if math.abs(v338) < 1e-6 then
+        v340 = math.abs(v337) <= v339
+    else
+        local v341 = (-v339 - v337) / v338
+        local v342 = (v339 - v337) / v338
+        if v342 >= v341 then
+            local v343 = v341
+            v341 = v342
+            v342 = v343
+        end
+        v321 = math.max(v321, v342)
+        v326 = math.min(v326, v341)
+        if v321 <= v326 then
+            v340 = true
+        else
+            v340 = false
+        end
+    end
+    if v340 then
+        if v326 >= 0 then
+            v340 = v321 <= p316
+        else
+            v340 = false
+        end
+    end
+    return v340
+end
+local function v_u_349()
+    -- upvalues: (ref) v_u_289, (ref) v_u_36, (copy) v_u_10, (copy) v_u_1, (copy) v_u_344
+    if not v_u_289 then
+        return false
+    end
+    local v345 = v_u_36.CFrame.Position
+    local v346 = v_u_36.CFrame.LookVector
+    local v347 = v_u_10.SELL_INTERACT_DISTANCE + 5
+    for _, v348 in ipairs(v_u_1:GetTagged(v_u_10.SELL_PART_NAME)) do
+        if v348:IsA("BasePart") and (v348:IsDescendantOf(workspace) and v_u_344(v345, v346, v347, v348)) then
+            return true
+        end
+    end
+    return false
+end
+local v_u_350 = v_u_11.randomUnit
+local v351 = v_u_10.RENDERED_HAY
+local v352 = v_u_10.TOTAL_HAY
+local v_u_353 = math.min(v351, v352)
+local v_u_354 = {}
+local v_u_355 = {}
+local function v_u_399(p356, p357, p358, p359, p360, p361, p362, p363)
+    -- upvalues: (copy) v_u_11, (copy) v_u_10, (copy) v_u_32, (copy) v_u_33, (copy) v_u_350
+    local v364, v365 = v_u_11.slotPolar(p356, p357, p358, p359)
+    local v366 = p362 or p358
+    local v367 = v364 * v_u_10.PILE_RADIUS
+    local v368 = math.cos(v365)
+    local v369 = math.sin(v365)
+    local v370 = v367 * v368
+    local v371 = v367 * v369
+    local v372 = v_u_10.PILE_HEIGHT * v_u_32(v364)
+    local v373 = v372 - (p361 and 0 or v_u_11.digAt(v370, v371))
+    local v374 = math.max(0, v373)
+    local v375, v376
+    if p361 or p363 then
+        v375 = 0
+        v376 = 0
+    else
+        v375, v376 = v_u_11.digGradient(v370, v371)
+    end
+    local v377 = v_u_33(v364)
+    local v378 = v377 * v368 - v375
+    local v379 = math.clamp(v378, -2.1, 2.1)
+    local v380 = v377 * v369 - v376
+    local v381 = math.clamp(v380, -2.1, 2.1)
+    local v382 = -v379
+    local v383 = -v381
+    local v384 = Vector3.new(v382, 1, v383).Unit
+    local v385 = v374 * 0.6
+    local v386 = math.min(p360, v385)
+    local v387 = v_u_10.PILE_CENTER
+    local v388 = v_u_10.PILE_BASE_Y + v374
+    local v389 = v387 + Vector3.new(v370, v388, v371) - v384 * v386
+    local v390 = -v369
+    local v391 = Vector3.new(v390, 0, v368)
+    local v392 = v391 - v384 * v391:Dot(v384)
+    if v392.Magnitude < 0.0001 then
+        local v393 = -v369
+        local v394 = Vector3.new(v368, 0, v393)
+        v392 = v394 - v384 * v394:Dot(v384)
+    end
+    local v395 = v392.Unit
+    local v396 = v384:Cross(v395)
+    local v397 = v_u_350(p356, v366 + 2) * 3.141592653589793 * 2
+    local v398 = v395 * math.cos(v397) + v396 * math.sin(v397)
+    return CFrame.lookAlong(v389, v398, v384) * CFrame.Angles(0, 1.5707963267948966, 0) * CFrame.Angles(v_u_350(p356, v366 + 3) * 3.141592653589793, 0, -0.24 + v_u_350(p356, v366 + 4) * 0.48), v374, v372
+end
+local function v_u_412(p400, p401)
+    -- upvalues: (copy) v_u_10, (copy) v_u_399, (copy) v_u_353
+    local v402 = math.max(0, p401 or 0)
+    local v403 = (p400 - 1) % v_u_10.SHELL_LAYERS * v_u_10.SHELL_LAYER_STEP
+    local v404 = v_u_10.UNDER_STRAND_DEPTH - 0.06
+    local v405 = math.max(0, v404)
+    local v406 = v402 * v_u_10.EXPOSED_LAYER_STEP
+    local v407 = v_u_10.EXPOSED_LAYER_MAX_DEPTH
+    local v408 = v405 - v403
+    local v409 = math.max(0, v408)
+    local v410 = math.min(v406, v407, v409)
+    local v411 = v402 * 17 % 100000 + 11
+    return v_u_399(p400, v_u_353, 11, 0, v403 + v410, false, v411)
+end
+local function v_u_419(p413, p414)
+    -- upvalues: (copy) v_u_350, (ref) v_u_18
+    local v415 = -0.11 + v_u_350(p413, 7) * 0.19 - p414
+    if v415 >= 0 then
+        return v_u_18.Color:Lerp(Color3.new(1, 0.93, 0.7), v415)
+    end
+    local v416 = v_u_18.Color
+    local v417 = Color3.new(0, 0, 0)
+    local v418 = -v415
+    return v416:Lerp(v417, (math.min(v418, 1)))
+end
+local v_u_420 = nil
+local v_u_421 = {}
+local v_u_422 = {}
+local v_u_423 = {}
+local v_u_424 = 0
+local v_u_425 = {}
+local v_u_426 = 0
+local v_u_427 = 1
+local v_u_428 = 0
+local v429 = v_u_11.CELL * 2
+local v_u_430 = math.max(1, v429)
+local function v_u_444(p431)
+    -- upvalues: (copy) v_u_425, (ref) v_u_426, (ref) v_u_427, (ref) v_u_428, (ref) v_u_424, (ref) v_u_53, (copy) v_u_10
+    table.clear(v_u_425)
+    v_u_426 = 0
+    if p431 <= 0 then
+        return
+    end
+    local v432 = p431 * 0.61803398875
+    local v433 = math.floor(v432)
+    v_u_427 = math.max(1, v433)
+    ::l10::
+    local v434 = v_u_427
+    local v435 = p431
+    while p431 ~= 0 do
+        local v436 = v434 % p431
+        v434 = p431
+        p431 = v436
+    end
+    if v434 == 1 then
+        local v437 = v435 * 0.371
+        v_u_428 = math.floor(v437) % v435
+        local v438
+        if v_u_424 <= 0 then
+            v438 = 0
+        else
+            local v439 = v_u_53
+            local v440 = v_u_10.RENDERED_HAY
+            local v441 = v439 / math.max(1, v440)
+            local v442 = v_u_424 * math.clamp(v441, 0, 1) + 0.5
+            v438 = math.floor(v442)
+        end
+        for v443 = 1, v438 do
+            v_u_425[((v443 - 1) * v_u_427 + v_u_428) % v_u_424 + 1] = true
+        end
+        v_u_426 = v438
+        return
+    end
+    v_u_427 = v_u_427 + 1
+    if v435 <= v_u_427 then
+        v_u_427 = 1
+        p431 = v435
+    else
+        p431 = v435
+    end
+    goto l10
+end
+local function v_u_457()
+    -- upvalues: (ref) v_u_424, (ref) v_u_53, (copy) v_u_10, (ref) v_u_426, (ref) v_u_427, (ref) v_u_428, (copy) v_u_425, (copy) v_u_421, (ref) v_u_18, (copy) v_u_422, (copy) v_u_11
+    if v_u_424 > 0 then
+        local v445
+        if v_u_424 <= 0 then
+            v445 = 0
+        else
+            local v446 = v_u_53
+            local v447 = v_u_10.RENDERED_HAY
+            local v448 = v446 / math.max(1, v447)
+            local v449 = v_u_424 * math.clamp(v448, 0, 1) + 0.5
+            v445 = math.floor(v449)
+        end
+        if v445 < v_u_426 then
+            for v450 = v445 + 1, v_u_426 do
+                local v451 = ((v450 - 1) * v_u_427 + v_u_428) % v_u_424 + 1
+                v_u_425[v451] = nil
+                local v452 = v_u_421[v451]
+                if v452 then
+                    if v452.Parent then
+                        v452.Transparency = 1
+                        v452.CanQuery = false
+                    end
+                end
+            end
+        elseif v_u_426 < v445 then
+            for v453 = v_u_426 + 1, v445 do
+                local v454 = ((v453 - 1) * v_u_427 + v_u_428) % v_u_424 + 1
+                v_u_425[v454] = true
+                local v455 = v_u_421[v454]
+                if v455 then
+                    if v455.Parent then
+                        v455.Transparency = v_u_18.Transparency or 1
+                        local v456 = v_u_422[v454]
+                        if v456 then
+                            v455.CanQuery = v_u_11.baseHeight(v456.X, v456.Y) - v_u_11.heightAt(v456.X, v456.Y) > 0.08
+                        end
+                    end
+                end
+            end
+        end
+        v_u_426 = v445
+    end
+end
+local function v_u_467(p458, p459)
+    -- upvalues: (copy) v_u_10, (copy) v_u_350
+    local v460 = p459 / v_u_10.UNDER_TAPER_HEIGHT
+    local v461 = math.clamp(v460, 0.3, 1)
+    local v462
+    if v_u_10.DIFFICULTY == "HARD" then
+        v461 = math.max(v461, 0.65)
+        v462 = math.sqrt(v461)
+    else
+        v462 = v461
+    end
+    local v463 = 0.92 + v_u_350(p458, 205) * 0.16
+    local v464 = v_u_10.UNDER_STRAND_SIZE.X * v461 * v463
+    local v465 = v_u_10.UNDER_STRAND_SIZE.Y
+    local v466 = v_u_10.UNDER_STRAND_SIZE.Z * v462
+    return Vector3.new(v464, v465, v466)
+end
+local function v_u_500()
+    -- upvalues: (ref) v_u_420, (copy) v_u_190, (copy) v_u_10, (ref) v_u_424, (copy) v_u_444, (copy) v_u_11, (copy) v_u_422, (copy) v_u_430, (copy) v_u_423, (copy) v_u_399, (ref) v_u_18, (copy) v_u_419, (copy) v_u_467, (copy) v_u_425, (copy) v_u_421, (copy) v_u_5
+    if not v_u_420 then
+        local v468 = workspace:FindFirstChild("HayUnderMatClient")
+        if v468 then
+            v468:Destroy()
+        end
+        v_u_420 = Instance.new("Folder")
+        v_u_420.Name = "HayUnderMatClient"
+        v_u_420.Parent = workspace
+        local v469 = v_u_190.FilterDescendantsInstances
+        local v470 = v_u_420
+        table.insert(v469, v470)
+        v_u_190.FilterDescendantsInstances = v469
+        local v471 = v_u_10.targetUnderStrands()
+        v_u_424 = v471
+        v_u_444(v471)
+        for v472 = 1, v471 do
+            local v473, v474 = v_u_11.slotPolar(v472, v471, 200, 0.9)
+            local v475 = v473 * v_u_10.PILE_RADIUS
+            local v476 = Vector2.new(v475 * math.cos(v474), v475 * math.sin(v474))
+            v_u_422[v472] = v476
+            local v477 = v476.X / v_u_430
+            local v478 = math.floor(v477)
+            local v479 = v476.Y / v_u_430
+            local v480 = math.floor(v479)
+            local v481 = tostring(v478) .. ":" .. tostring(v480)
+            local v482 = v_u_423[v481]
+            if not v482 then
+                v482 = {}
+                v_u_423[v481] = v482
+            end
+            table.insert(v482, v472)
+            local v483 = v_u_399
+            local v484 = 200
+            local v485 = 0.9
+            local v486
+            if v_u_10.UNDER_LAYER_COUNT > 1 then
+                local v487 = v_u_10.UNDER_REAR_LAYER_EVERY or 3
+                local v488 = math.max(2, v487)
+                v486 = (v472 - 1) % v488 == 0 and 1 or 0
+            else
+                v486 = 0
+            end
+            local v489, v490, v491 = v483(v472, v471, v484, v485, v_u_10.UNDER_STRAND_DEPTH + v486 * v_u_10.UNDER_LAYER_STEP, false, nil, false)
+            local v492 = v_u_18:Clone()
+            v492.Name = "UnderStraw"
+            v492.Color = v_u_419(v472, 0.13)
+            local v493 = v_u_467(v472, v491)
+            local v494 = (v491 - v490) / v_u_10.DIG_MAX_DEPTH
+            local v495 = 1 + math.clamp(v494, 0, 1) * v_u_10.DUG_BACKING_EXPANSION
+            local v496 = v493.X * v495
+            local v497 = v493.Y
+            local v498 = v493.Z * v495
+            v492.Size = Vector3.new(v496, v497, v498)
+            v492.CFrame = v489
+            v492:SetAttribute("BackingProxy", true)
+            local v499 = v_u_425[v472] == true
+            v492.Transparency = v499 and v_u_18.Transparency or 1
+            if v499 then
+                v499 = v491 - v490 > 0.08
+            end
+            v492.CanQuery = v499
+            v492.CanCollide = false
+            v492.CanTouch = false
+            v492.CastShadow = false
+            v492.Parent = v_u_420
+            v_u_421[v472] = v492
+            if v472 % v_u_10.GENERATION_BATCH == 0 then
+                v_u_5.Heartbeat:Wait()
+            end
+        end
+    end
+end
+local function v_u_543(p501, p502, p503)
+    -- upvalues: (ref) v_u_424, (copy) v_u_10, (copy) v_u_11, (copy) v_u_430, (copy) v_u_423, (copy) v_u_421, (copy) v_u_422, (copy) v_u_399, (copy) v_u_467, (copy) v_u_425
+    if typeof(p501) == "Vector3" and v_u_424 > 0 then
+        local v504 = p501.X - v_u_10.PILE_CENTER.X
+        local v505 = p501.Z - v_u_10.PILE_CENTER.Z
+        local v506 = tonumber(p503)
+        if v506 == nil then
+            v506 = v_u_11.CELL * 1.5
+        end
+        local v507 = tonumber(p502) or 0
+        local v508 = math.max(0, v507) + math.max(0, v506)
+        local v509 = v508 * v508
+        local v510 = (v504 - v508) / v_u_430
+        local v511 = math.floor(v510)
+        local v512 = (v504 + v508) / v_u_430
+        local v513 = math.floor(v512)
+        local v514 = (v505 - v508) / v_u_430
+        local v515 = math.floor(v514)
+        local v516 = (v505 + v508) / v_u_430
+        local v517 = math.floor(v516)
+        for v518 = v511, v513 do
+            for v519 = v515, v517 do
+                local v520 = v_u_423[tostring(v518) .. ":" .. tostring(v519)]
+                if v520 then
+                    for _, v521 in ipairs(v520) do
+                        local v522 = v_u_421[v521]
+                        local v523 = v_u_422[v521]
+                        if v522 and (v522.Parent and v523) then
+                            local v524 = v523.X - v504
+                            local v525 = v523.Y - v505
+                            if v524 * v524 + v525 * v525 <= v509 then
+                                local v526 = v_u_399
+                                local v527 = v_u_424
+                                local v528 = 200
+                                local v529 = 0.9
+                                local v530
+                                if v_u_10.UNDER_LAYER_COUNT > 1 then
+                                    local v531 = v_u_10.UNDER_REAR_LAYER_EVERY or 3
+                                    local v532 = math.max(2, v531)
+                                    v530 = (v521 - 1) % v532 == 0 and 1 or 0
+                                else
+                                    v530 = 0
+                                end
+                                local v533, v534, v535 = v526(v521, v527, v528, v529, v_u_10.UNDER_STRAND_DEPTH + v530 * v_u_10.UNDER_LAYER_STEP, false, nil, false)
+                                local v536 = v_u_467(v521, v535)
+                                local v537 = (v535 - v534) / v_u_10.DIG_MAX_DEPTH
+                                local v538 = 1 + math.clamp(v537, 0, 1) * v_u_10.DUG_BACKING_EXPANSION
+                                v522.CFrame = v533
+                                local v539 = v536.X * v538
+                                local v540 = v536.Y
+                                local v541 = v536.Z * v538
+                                v522.Size = Vector3.new(v539, v540, v541)
+                                local v542
+                                if v_u_425[v521] == true then
+                                    v542 = v535 - v534 > 0.08
+                                else
+                                    v542 = false
+                                end
+                                v522.CanQuery = v542
+                            end
+                        end
+                    end
+                end
+            end
+        end
+    end
+end
+local function v_u_553(p544, p545, p546, p547)
+    -- upvalues: (copy) v_u_10, (copy) v_u_37, (copy) v_u_38, (copy) v_u_354, (copy) v_u_355, (copy) v_u_353, (copy) v_u_4, (ref) v_u_18, (copy) v_u_412, (copy) v_u_419, (copy) v_u_223, (copy) v_u_152, (ref) v_u_54
+    if not p544 or (p544 < 1 or v_u_10.TOTAL_HAY < p544) then
+        return nil
+    end
+    if v_u_37[p544] or v_u_38[p544] then
+        return v_u_37[p544]
+    end
+    local v548
+    if p546 then
+        v548 = p547 or 0
+    elseif v_u_354[p544] then
+        p546 = v_u_354[p544]
+        v548 = v_u_355[p544] or 0
+    else
+        if p545 then
+            p546 = v_u_354[p545]
+        else
+            p546 = p545
+        end
+        if p546 then
+            v548 = (v_u_355[p545] or 0) + 1
+        else
+            p546 = (p544 - 1) % v_u_353 + 1
+            v548 = (p544 - 1) // v_u_353
+        end
+    end
+    v_u_354[p544] = p546
+    v_u_355[p544] = v548
+    local v549 = v_u_10.mutationFor(p544)
+    local v550
+    if v549 == "Normal" or v549 == "Rainbow" then
+        v550 = false
+    else
+        v550 = v_u_4.HayMutations:FindFirstChild(v549)
+    end
+    local v551
+    if v550 and (v550:IsA("BasePart") and v550) then
+        v551 = v550
+    else
+        v551 = v_u_18
+    end
+    local v552 = v551:Clone()
+    v552.Size = v_u_18.Size
+    v552.Anchored = v_u_18.Anchored
+    v552.CanCollide = v_u_18.CanCollide
+    v552.CanTouch = v_u_18.CanTouch
+    v552.CanQuery = v_u_18.CanQuery
+    v552.CastShadow = v_u_18.CastShadow
+    v552.Massless = v_u_18.Massless
+    v552.CollisionGroup = v_u_18.CollisionGroup
+    v552.CustomPhysicalProperties = v_u_18.CustomPhysicalProperties
+    v552.Name = "HayPiece"
+    v552:SetAttribute("HayId", p544)
+    v552:SetAttribute("HayMutation", v549)
+    v552.CFrame = v_u_412(p546, v548)
+    if not (v550 and v550:IsA("BasePart")) then
+        v552.Color = v_u_419(p544, 0)
+    end
+    if v549 == "Rainbow" then
+        v552.Material = Enum.Material.Neon
+        v552:SetAttribute("Rainbow", true)
+        v_u_223[v552] = true
+    end
+    v552.Parent = v_u_152
+    v_u_37[p544] = v552
+    local _ = p544 == v_u_54
+    return v552
+end
+task.spawn(function()
+    -- upvalues: (copy) v_u_9, (copy) v_u_10, (copy) v_u_4, (copy) v_u_37, (copy) v_u_6
+    local v554 = v_u_9:WaitForChild(v_u_10.ACID_HAY_FOLDER)
+    local v_u_555 = v_u_4:WaitForChild("HayMutations"):WaitForChild(v_u_10.ACID_MUTATION)
+    local function v559(p556)
+        -- upvalues: (ref) v_u_10, (ref) v_u_37, (copy) v_u_555, (ref) v_u_6
+        local v557 = v_u_10.noteAcid(p556)
+        if v557 then
+            v557 = v_u_37[v557]
+        end
+        if v557 and (v557.Parent and v557:GetAttribute("HayMutation") ~= v_u_10.ACID_MUTATION) then
+            v557:SetAttribute("HayMutation", v_u_10.ACID_MUTATION)
+            v557.Material = v_u_555.Material
+            for _, v558 in ipairs(v_u_555:GetChildren()) do
+                v558:Clone().Parent = v557
+            end
+            v_u_6:Create(v557, TweenInfo.new(0.8, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                ["Color"] = v_u_555.Color
+            }):Play()
+        end
+    end
+    v554.ChildAdded:Connect(v559)
+    for _, v560 in ipairs(v554:GetChildren()) do
+        v559(v560)
+    end
+end)
+task.spawn(function()
+    -- upvalues: (copy) v_u_9, (copy) v_u_10, (copy) v_u_37, (copy) v_u_223
+    local v561 = v_u_9:WaitForChild(v_u_10.DISCO_HAY_FOLDER)
+    local function v564(p562)
+        -- upvalues: (ref) v_u_10, (ref) v_u_37, (ref) v_u_223
+        local v563 = v_u_10.noteDisco(p562)
+        if v563 then
+            v563 = v_u_37[v563]
+        end
+        if v563 and (v563.Parent and v563:GetAttribute("HayMutation") ~= "Rainbow") then
+            v563:SetAttribute("HayMutation", "Rainbow")
+            v563.Material = Enum.Material.Neon
+            v563:SetAttribute("Rainbow", true)
+            v_u_223[v563] = true
+        end
+    end
+    v561.ChildAdded:Connect(v564)
+    for _, v565 in ipairs(v561:GetChildren()) do
+        v564(v565)
+    end
+end)
+local v_u_566 = {}
+local v_u_567 = false
+function v_u_44.dissolveStrand(p568)
+    -- upvalues: (copy) v_u_6, (copy) v_u_2
+    p568:SetAttribute("HayId", nil)
+    p568.CanQuery = false
+    p568.Material = Enum.Material.Neon
+    local v569 = Instance.new("ParticleEmitter")
+    v569.Texture = "rbxassetid://8010432502"
+    v569.Color = ColorSequence.new(Color3.fromRGB(150, 255, 60))
+    v569.LightEmission = 1
+    v569.Rate = 0
+    v569.Lifetime = NumberRange.new(0.4, 0.8)
+    v569.Speed = NumberRange.new(0.5, 1.5)
+    v569.SpreadAngle = Vector2.new(60, 60)
+    v569.Acceleration = Vector3.new(0, 2, 0)
+    v569.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.18), NumberSequenceKeypoint.new(1, 0) })
+    v569.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.1), NumberSequenceKeypoint.new(1, 1) })
+    v569.Parent = p568
+    v569:Emit(8)
+    v_u_6:Create(p568, TweenInfo.new(0.9, Enum.EasingStyle.Quad, Enum.EasingDirection.In), {
+        ["Color"] = Color3.fromRGB(120, 255, 40),
+        ["Size"] = p568.Size * Vector3.new(0.25, 0.6, 0.6),
+        ["CFrame"] = p568.CFrame - Vector3.new(0, 0.1, 0)
+    }):Play()
+    v_u_2:AddItem(p568, 1.2)
+end
+v_u_44.haySync:connect(v_u_19, function(p570, p571, p572, p573, p574)
+    -- upvalues: (ref) v_u_53, (copy) v_u_11, (copy) v_u_457, (copy) v_u_69, (copy) v_u_39, (copy) v_u_38, (copy) v_u_8, (ref) v_u_52, (ref) v_u_54, (copy) v_u_238, (copy) v_u_37, (ref) v_u_40, (copy) v_u_17, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_48, (copy) v_u_154, (copy) v_u_189, (copy) v_u_73, (copy) v_u_74, (ref) v_u_42, (copy) v_u_70, (copy) v_u_10, (copy) v_u_114, (ref) v_u_566, (ref) v_u_567, (copy) v_u_543, (copy) v_u_354, (copy) v_u_355, (copy) v_u_553
+    v_u_53 = p571
+    v_u_11.applyDelta(p574)
+    v_u_457()
+    if v_u_69 then
+        local v575 = v_u_53
+        v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v575):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+    end
+    v_u_39[p570] = nil
+    v_u_38[p570] = true
+    local v576 = p572 == v_u_8.UserId
+    if v576 then
+        v_u_52 = false
+    end
+    if p570 == v_u_54 then
+        v_u_54 = nil
+        v_u_238(true)
+    end
+    local v577 = v_u_37[p570]
+    local v578
+    if v577 then
+        v578 = v577.Position or nil
+    else
+        v578 = nil
+    end
+    if v577 then
+        if v_u_40 == v577 then
+            if v_u_17.isTouchDevice() then
+                v_u_44.mobileRetargetUntil = os.clock() + v_u_44.MobileRetargetDuration
+            end
+            if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+                v_u_40 = nil
+                v_u_44.hoverVisualPart = nil
+                v_u_150.Adornee = nil
+                v_u_150.Enabled = false
+                v_u_15.set(false)
+                v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                v_u_8:SetAttribute("HoveredHayId", nil)
+            end
+        end
+        v_u_37[p570] = nil
+        if v576 then
+            v_u_48(v577)
+            v577.Name = "HeldHayPiece"
+            v577:SetAttribute("HayId", nil)
+            v577.Anchored = true
+            v577.CanCollide = false
+            v577.CanTouch = false
+            v577.CanQuery = false
+            v577.Parent = v_u_154
+            v_u_189(v577)
+            v_u_73.Visible = false
+            local v579 = math.clamp(0, 0, 1)
+            v_u_74.Size = UDim2.fromScale(v579, 1)
+            local v580 = v_u_8:GetAttribute("HayCapacity") or 25
+            if #v_u_42 == 0 then
+                v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+            elseif v580 <= #v_u_42 then
+                v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+            else
+                v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_42, v580)
+            end
+        elseif p572 == v_u_10.ACID_DISSOLVER_ID then
+            v_u_44.dissolveStrand(v577)
+        else
+            v577:Destroy()
+        end
+    end
+    local v581
+    if type(p574) == "table" then
+        v581 = #p574 > 0
+    else
+        v581 = false
+    end
+    if v578 and v581 then
+        if p572 ~= v_u_10.ACID_DISSOLVER_ID then
+            v_u_114(v578)
+        end
+        local v582 = v_u_566
+        table.insert(v582, v578)
+        if not v_u_567 then
+            v_u_567 = true
+            task.defer(function()
+                -- upvalues: (ref) v_u_567, (ref) v_u_566, (ref) v_u_11, (ref) v_u_44, (ref) v_u_10, (ref) v_u_543
+                v_u_567 = false
+                local v583 = v_u_566
+                v_u_566 = {}
+                local v584 = v_u_11.CELL * 0.25
+                for _, v585 in ipairs(v583) do
+                    if v_u_44.reseatSurface then
+                        v_u_44.reseatSurface(v585, v_u_10.HAND_VISUAL_SETTLE_RADIUS, v584, v_u_10.SETTLE_PIECES_PER_PICK)
+                    else
+                        v_u_543(v585, v_u_10.HAND_VISUAL_SETTLE_RADIUS, v584)
+                    end
+                end
+            end)
+        end
+    end
+    if p573 then
+        v_u_553(p573, nil, v_u_354[p570], (v_u_355[p570] or 0) + 1)
+    end
+    v_u_354[p570] = nil
+    v_u_355[p570] = nil
+end)
+local v_u_586 = OverlapParams.new()
+v_u_586.FilterType = Enum.RaycastFilterType.Include
+v_u_586.FilterDescendantsInstances = { v_u_152 }
+v_u_586.MaxParts = 1000
+local function v_u_642(p587, p588, p589, p590, p591)
+    -- upvalues: (copy) v_u_10, (copy) v_u_11, (ref) v_u_18, (copy) v_u_586, (copy) v_u_354, (copy) v_u_152, (copy) v_u_353, (copy) v_u_412, (copy) v_u_355, (copy) v_u_350, (copy) v_u_6, (copy) v_u_543
+    if typeof(p587) == "Vector3" then
+        local v592 = p587.X - v_u_10.PILE_CENTER.X
+        local v593 = p587.Z - v_u_10.PILE_CENTER.Z
+        local v594 = tonumber(p589)
+        if v594 == nil then
+            v594 = v_u_11.CELL * 0.35
+        end
+        local v595 = tonumber(p588) or 0
+        local v596 = math.max(0, v595) + math.max(0, v594)
+        local v597 = v596 * v596
+        local v598 = v_u_18.Size.X
+        local v599 = v_u_18.Size.Z
+        local v600 = v596 + math.max(v598, v599)
+        local v601 = v_u_10.PILE_CENTER.Y + v_u_10.PILE_BASE_Y - 1
+        local v602 = v_u_10.PILE_CENTER.Y + v_u_10.PILE_BASE_Y + v_u_10.PILE_HEIGHT + 2
+        local v603 = v602 - v601
+        local v604 = p587.X
+        local v605 = (v601 + v602) * 0.5
+        local v606 = p587.Z
+        local v607 = Vector3.new(v604, v605, v606)
+        local v608 = ipairs
+        local v609 = workspace
+        local v610 = CFrame.new(v607)
+        local v611 = v600 * 2
+        local v612 = v600 * 2
+        local v613 = {}
+        for _, v614 in v608(v609:GetPartBoundsInBox(v610, Vector3.new(v611, v603, v612), v_u_586)) do
+            local v615 = v614:GetAttribute("HayId")
+            local v616
+            if v615 then
+                v616 = v_u_354[v615]
+            else
+                v616 = v615
+            end
+            if v616 and v614.Parent == v_u_152 then
+                local v617, v618 = v_u_11.slotPolar(v616, v_u_353, 11, 0)
+                local v619 = v617 * v_u_10.PILE_RADIUS
+                local v620 = v619 * math.cos(v618) - v592
+                local v621 = v619 * math.sin(v618) - v593
+                local v622 = v620 * v620 + v621 * v621
+                if v622 <= v597 then
+                    local v623 = v_u_412(v616, v_u_355[v615] or 0)
+                    local v624 = (v623.Position - v614.Position).Magnitude
+                    if v624 > 0.018 then
+                        table.insert(v613, {
+                            ["part"] = v614,
+                            ["hayId"] = v615,
+                            ["target"] = v623,
+                            ["distanceSquared"] = v622,
+                            ["settleDistance"] = v624
+                        })
+                    end
+                end
+            end
+        end
+        table.sort(v613, function(p625, p626)
+            local v627 = p625.settleDistance - p626.settleDistance
+            if math.abs(v627) > 0.01 then
+                return p625.settleDistance > p626.settleDistance
+            else
+                return p625.distanceSquared < p626.distanceSquared
+            end
+        end)
+        local v628 = tonumber(p590) or v_u_10.SETTLE_PIECES_PER_PICK
+        local v629 = math.floor(v628)
+        local v630 = math.max(0, v629)
+        local v631 = #v613
+        for v632 = 1, math.min(v630, v631) do
+            local v633 = v613[v632]
+            local v634 = v633.part
+            if v634.Parent == v_u_152 and v634:GetAttribute("HayId") == v633.hayId then
+                local v635 = v_u_350(v633.hayId, 311)
+                local v636 = v633.target
+                local v637 = p587.X - v636.Position.X
+                local v638 = p587.Z - v636.Position.Z
+                local v639 = Vector3.new(v637, 0, v638)
+                if v639.Magnitude > 0.01 then
+                    local v640 = tonumber(p591) or 0.035
+                    v636 = v636 + v639.Unit * (v640 + v635 * (p591 and 0.07 or 0.075))
+                end
+                local v641 = {
+                    ["CFrame"] = v636 * CFrame.Angles((v635 - 0.5) * 0.1, (v_u_350(v633.hayId, 312) - 0.5) * 0.16, (v_u_350(v633.hayId, 313) - 0.5) * 0.12)
+                }
+                v_u_6:Create(v634, TweenInfo.new(0.16 + v635 * 0.14, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v641):Play()
+            end
+        end
+        v_u_543(p587, p588, p589)
+    end
+end
+v_u_44.reseatSurface = v_u_642
+local v643 = workspace:FindFirstChild("HayBlastDebris")
+if v643 then
+    v643:Destroy()
+end
+local v_u_644 = Instance.new("Folder")
+v_u_644.Name = "HayBlastDebris"
+v_u_644.Parent = workspace
+local v_u_645 = {}
+v_u_5.RenderStepped:Connect(function()
+    -- upvalues: (copy) v_u_645, (copy) v_u_154, (copy) v_u_48, (copy) v_u_189
+    if #v_u_645 ~= 0 then
+        local v646 = os.clock()
+        for v647 = #v_u_645, 1, -1 do
+            local v648 = v_u_645[v647]
+            local v649 = v648.part
+            local v650 = v646 - v648.startedAt
+            if v649.Parent then
+                if v648.deliverToHand and v648.burstDuration <= v650 then
+                    table.remove(v_u_645, v647)
+                    if v649.Parent then
+                        v649.Transparency = 0
+                        v649.Name = "HeldHayPiece"
+                        v649.Parent = v_u_154
+                        v_u_48(v649)
+                        v_u_189(v649)
+                    end
+                elseif v648.lifetime <= v650 then
+                    v649:Destroy()
+                    table.remove(v_u_645, v647)
+                else
+                    local v651 = v648.velocity * v650
+                    local v652 = -38 * v650 * v650 * 0.5
+                    local v653 = v651 + Vector3.new(0, v652, 0)
+                    v649.CFrame = (v648.origin + v653) * CFrame.Angles(v648.spin.X * v650, v648.spin.Y * v650, v648.spin.Z * v650)
+                    if v648.deliverToHand then
+                        v649.Transparency = 0
+                    else
+                        local v654 = (v650 - v648.lifetime * 0.6) / (v648.lifetime * 0.4)
+                        v649.Transparency = math.clamp(v654, 0, 1)
+                    end
+                end
+            else
+                table.remove(v_u_645, v647)
+            end
+        end
+    end
+end)
+local function v_u_671(p655, p656, p657)
+    -- upvalues: (ref) v_u_644, (copy) v_u_645
+    p655.Name = p657 and "BlastHandPickup" or "BlastDebris"
+    p655:SetAttribute("HayId", nil)
+    p655.Anchored = true
+    p655.CanCollide = false
+    p655.CanQuery = false
+    p655.CanTouch = false
+    p655.Transparency = 0
+    p655.Parent = v_u_644
+    local v658 = p655.Position - p656
+    if v658.Magnitude < 0.1 then
+        local v659 = math.random() * 3.141592653589793 * 2
+        local v660 = math.cos(v659)
+        local v661 = math.sin(v659)
+        v658 = Vector3.new(v660, 0.2, v661)
+    end
+    local v662 = p657 and 21 + math.random() * 20 or 28 + math.random() * 28
+    local v663 = 0.23 + math.random() * 0.12
+    local v664 = v_u_645
+    local v665 = {
+        ["part"] = p655,
+        ["origin"] = p655.CFrame
+    }
+    local v666 = v658.Unit
+    local v667 = 1 + math.random() * 0.65
+    v665.velocity = (v666 + Vector3.new(0, v667, 0)).Unit * v662
+    local v668 = math.random() - 0.5
+    local v669 = math.random() - 0.5
+    local v670 = math.random() - 0.5
+    v665.spin = Vector3.new(v668, v669, v670) * 18
+    v665.startedAt = os.clock()
+    v665.burstDuration = v663
+    v665.deliverToHand = p657
+    v665.lifetime = p657 and v663 + 0.1 or 0.85 + math.random() * 0.45
+    table.insert(v664, v665)
+end
+v_u_44.haySync:connect(v22, function(p672, p673, _, p674, p675, p676, p677, p678, p679)
+    -- upvalues: (ref) v_u_53, (copy) v_u_11, (copy) v_u_457, (copy) v_u_69, (copy) v_u_10, (copy) v_u_8, (copy) v_u_38, (copy) v_u_39, (ref) v_u_54, (copy) v_u_238, (copy) v_u_37, (copy) v_u_4, (ref) v_u_18, (copy) v_u_419, (copy) v_u_223, (ref) v_u_40, (copy) v_u_17, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_671, (copy) v_u_553, (copy) v_u_354, (copy) v_u_355, (copy) v_u_642, (ref) v_u_52, (ref) v_u_42, (copy) v_u_70, (copy) v_u_114
+    if type(p675) == "table" then
+        v_u_53 = p678 or v_u_53
+        v_u_11.applyDelta(p677)
+        v_u_457()
+        if v_u_69 then
+            local v680 = v_u_53
+            v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v680):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+        end
+        local v681 = v_u_10.TNT_MAX_ANIMATED_PIECES
+        local v682 = typeof(p672) == "Vector3"
+        local v683 = p673 == v_u_8.UserId
+        local v684 = v683 and v_u_10.TNT_HAND_PIECES or 0
+        for v685, v686 in ipairs(p675) do
+            local v687
+            if type(p679) == "table" and p679[v685] == 1 then
+                v687 = not v_u_10.isRainbow(v686)
+            else
+                v687 = false
+            end
+            v_u_38[v686] = true
+            v_u_39[v686] = nil
+            if v686 == v_u_54 then
+                v_u_54 = nil
+                v_u_238(true)
+            end
+            local v688 = v_u_37[v686]
+            if not v688 and (v684 > 0 and v682) then
+                local v689 = v_u_10.mutationFor(v686)
+                local v690
+                if v689 == "Normal" or v689 == "Rainbow" then
+                    v690 = false
+                else
+                    v690 = v_u_4.HayMutations:FindFirstChild(v689)
+                end
+                local v691
+                if v690 and (v690:IsA("BasePart") and v690) then
+                    v691 = v690
+                else
+                    v691 = v_u_18
+                end
+                v688 = v691:Clone()
+                v688.Size = v_u_18.Size
+                v688.Anchored = v_u_18.Anchored
+                v688.CanCollide = v_u_18.CanCollide
+                v688.CanTouch = v_u_18.CanTouch
+                v688.CanQuery = v_u_18.CanQuery
+                v688.CastShadow = v_u_18.CastShadow
+                v688.Massless = v_u_18.Massless
+                v688.CollisionGroup = v_u_18.CollisionGroup
+                v688.CustomPhysicalProperties = v_u_18.CustomPhysicalProperties
+                v688:SetAttribute("HayMutation", v689)
+                if not (v690 and v690:IsA("BasePart")) then
+                    v688.Color = v_u_419(v686, 0)
+                end
+                if v689 == "Rainbow" then
+                    v688.Material = Enum.Material.Neon
+                    v688:SetAttribute("Rainbow", true)
+                    v_u_223[v688] = true
+                end
+                v688.CFrame = CFrame.new(p672) * CFrame.Angles(math.random() * 3.141592653589793, math.random() * 3.141592653589793, math.random() * 3.141592653589793)
+            end
+            if v688 then
+                if v687 then
+                    v688.Material = Enum.Material.Neon
+                    v688:SetAttribute("Rainbow", true)
+                    v_u_223[v688] = true
+                end
+                if v_u_40 == v688 then
+                    if v_u_17.isTouchDevice() then
+                        v_u_44.mobileRetargetUntil = os.clock() + v_u_44.MobileRetargetDuration
+                    end
+                    if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+                        v_u_40 = nil
+                        v_u_44.hoverVisualPart = nil
+                        v_u_150.Adornee = nil
+                        v_u_150.Enabled = false
+                        v_u_15.set(false)
+                        v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                        v_u_8:SetAttribute("HoveredHayId", nil)
+                    end
+                end
+                v_u_37[v686] = nil
+                if v684 > 0 then
+                    v684 = v684 - 1
+                    v_u_671(v688, p672, true)
+                elseif v682 and v681 > 0 then
+                    v681 = v681 - 1
+                    v_u_671(v688, p672, false)
+                else
+                    v688:Destroy()
+                end
+            end
+            local v692
+            if p676 then
+                v692 = p676[v685]
+            else
+                v692 = p676
+            end
+            if v692 and v692 > 0 then
+                v_u_553(v692, v686)
+            end
+            v_u_354[v686] = nil
+            v_u_355[v686] = nil
+        end
+        local v693 = tonumber(p674) or v_u_10.TNT_CRATER_RADIUS
+        local v694 = p672.X - v_u_10.PILE_CENTER.X
+        local v695 = p672.Z - v_u_10.PILE_CENTER.Z
+        local v696 = v_u_11.digAt(v694, v695) / v_u_10.DIG_MAX_DEPTH
+        local v697 = math.clamp(v696, 0, 1)
+        local v698 = v693 / v_u_10.TNT_CRATER_RADIUS
+        local v699 = math.clamp(v698, 0.45, 1.5)
+        local v700 = #p675 * 1.05
+        local v701 = math.max(36, v700) * math.sqrt(v699)
+        local v702 = math.floor(v701)
+        local v703 = v697 * 24
+        local v704 = v702 + math.floor(v703)
+        v_u_642(p672, v693, nil, math.clamp(v704, 36, 220), 0.025)
+        if v683 then
+            v_u_52 = false
+            local v705 = v_u_8:GetAttribute("HayCapacity") or 25
+            if #v_u_42 == 0 then
+                v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+            elseif v705 <= #v_u_42 then
+                v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+            else
+                v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_42, v705)
+            end
+            if v682 then
+                v_u_114(p672)
+            end
+        end
+    end
+end)
+local v_u_706 = {}
+v_u_5.RenderStepped:Connect(function()
+    -- upvalues: (copy) v_u_706, (copy) v_u_48, (copy) v_u_154, (copy) v_u_189, (copy) v_u_10
+    if #v_u_706 ~= 0 then
+        local v707 = workspace:FindFirstChild("PitchforkViewClient")
+        if v707 then
+            v707 = v707:FindFirstChild("ScoopPoint")
+        end
+        local v708 = v707 and v707.CFrame or nil
+        local v709 = os.clock()
+        for v710 = #v_u_706, 1, -1 do
+            local v711 = v_u_706[v710]
+            local v712 = v711.part
+            if v712.Parent then
+                if v711.releaseAt <= v709 or not v708 then
+                    table.remove(v_u_706, v710)
+                    v712.Size = v711.fullSize
+                    v_u_48(v712)
+                    v712.Name = "HeldHayPiece"
+                    v712.Parent = v_u_154
+                    v_u_189(v712)
+                else
+                    local v713 = v708 * CFrame.new(v711.offset) * v711.rotation
+                    local v714 = (v709 - v711.stagedAt) / v_u_10.PITCHFORK_PULL_TIME
+                    local v715 = math.clamp(v714, 0, 1)
+                    local v716 = 1 - (1 - v715) ^ 3
+                    local v717 = v715 * 3.141592653589793
+                    local v718 = math.sin(v717) * 0.22
+                    v712.CFrame = v711.startCFrame:Lerp(v713, v716) + Vector3.new(0, v718, 0)
+                    v712.Size = v711.fullSize:Lerp(v711.scoopSize, v716)
+                end
+            else
+                table.remove(v_u_706, v710)
+            end
+        end
+    end
+end)
+local function v_u_730(p719, p720)
+    -- upvalues: (copy) v_u_154, (copy) v_u_706, (copy) v_u_10
+    p719:SetAttribute("HayId", nil)
+    p719.Anchored = true
+    p719.CanCollide = false
+    p719.CanTouch = false
+    p719.CanQuery = false
+    p719.Parent = v_u_154
+    local v721 = p720 * 2.39996
+    local v722 = 0.1 + p720 % 5 * 0.03
+    local v723 = p719.Size
+    local v724 = os.clock()
+    local v725 = v_u_706
+    local v726 = {
+        ["part"] = p719,
+        ["fullSize"] = v723,
+        ["scoopSize"] = v723 * v_u_10.PITCHFORK_SCOOP_PIECE_SCALE,
+        ["startCFrame"] = p719.CFrame
+    }
+    local v727 = math.cos(v721) * v722
+    local v728 = 0.04 + p720 % 3 * 0.025
+    local v729 = math.sin(v721) * v722 * 0.6
+    v726.offset = Vector3.new(v727, v728, v729)
+    v726.rotation = CFrame.Angles((math.random() - 0.5) * 0.35, (math.random() - 0.5) * 0.9, (math.random() - 0.5) * 0.3)
+    v726.stagedAt = v724
+    v726.releaseAt = v724 + v_u_10.PITCHFORK_PULL_TIME + v_u_10.PITCHFORK_SCOOP_HOLD
+    table.insert(v725, v726)
+end
+v_u_44.haySync:connect(v23, function(p731, p732, p733, p734, p735, p736, p737)
+    -- upvalues: (ref) v_u_53, (copy) v_u_11, (copy) v_u_457, (copy) v_u_69, (copy) v_u_8, (copy) v_u_38, (copy) v_u_39, (ref) v_u_54, (copy) v_u_238, (copy) v_u_37, (ref) v_u_40, (copy) v_u_17, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_730, (copy) v_u_553, (copy) v_u_354, (copy) v_u_355, (copy) v_u_642, (copy) v_u_10, (ref) v_u_52, (ref) v_u_42, (copy) v_u_70
+    if type(p733) == "table" then
+        v_u_53 = p736 or v_u_53
+        v_u_11.applyDelta(p735)
+        v_u_457()
+        if v_u_69 then
+            local v738 = v_u_53
+            v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v738):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+        end
+        local v739 = p732 == v_u_8.UserId
+        local v740 = 0
+        for v741, v742 in ipairs(p733) do
+            v_u_38[v742] = true
+            v_u_39[v742] = nil
+            if v742 == v_u_54 then
+                v_u_54 = nil
+                v_u_238(true)
+            end
+            local v743 = v_u_37[v742]
+            if v743 then
+                if v_u_40 == v743 then
+                    if v_u_17.isTouchDevice() then
+                        v_u_44.mobileRetargetUntil = os.clock() + v_u_44.MobileRetargetDuration
+                    end
+                    if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+                        v_u_40 = nil
+                        v_u_44.hoverVisualPart = nil
+                        v_u_150.Adornee = nil
+                        v_u_150.Enabled = false
+                        v_u_15.set(false)
+                        v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                        v_u_8:SetAttribute("HoveredHayId", nil)
+                    end
+                end
+                v_u_37[v742] = nil
+                if v739 then
+                    v740 = v740 + 1
+                    v_u_730(v743, v740)
+                else
+                    v743:Destroy()
+                end
+            end
+            local v744
+            if p734 then
+                v744 = p734[v741]
+            else
+                v744 = p734
+            end
+            local v745 = v744 and v744 > 0 and v_u_553(v744, v742)
+            if v745 then
+                v745.Transparency = 0
+                v745.CanQuery = true
+            end
+            v_u_354[v742] = nil
+            v_u_355[v742] = nil
+        end
+        v_u_642(p731, tonumber(p737) or v_u_10.PITCHFORK_DIG_RADIUS, nil, 28)
+        if v739 then
+            v_u_52 = false
+            local v746 = v_u_8:GetAttribute("HayCapacity") or 25
+            if #v_u_42 == 0 then
+                v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+                return
+            end
+            if v746 <= #v_u_42 then
+                v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+                return
+            end
+            v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_42, v746)
+        end
+    end
+end)
+v_u_44.haySync:connect(v24, function(p747, _, p748, p749, p750, p751)
+    -- upvalues: (ref) v_u_53, (copy) v_u_11, (copy) v_u_457, (copy) v_u_69, (copy) v_u_38, (copy) v_u_39, (ref) v_u_54, (copy) v_u_238, (copy) v_u_37, (ref) v_u_40, (copy) v_u_17, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8, (copy) v_u_553, (copy) v_u_354, (copy) v_u_355, (copy) v_u_642, (copy) v_u_10
+    if type(p748) == "table" then
+        v_u_53 = p751 or v_u_53
+        v_u_11.applyDelta(p750)
+        v_u_457()
+        if v_u_69 then
+            local v752 = v_u_53
+            v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v752):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+        end
+        for v753, v754 in ipairs(p748) do
+            v_u_38[v754] = true
+            v_u_39[v754] = nil
+            if v754 == v_u_54 then
+                v_u_54 = nil
+                v_u_238(true)
+            end
+            local v755 = v_u_37[v754]
+            if v755 then
+                if v_u_40 == v755 then
+                    if v_u_17.isTouchDevice() then
+                        v_u_44.mobileRetargetUntil = os.clock() + v_u_44.MobileRetargetDuration
+                    end
+                    if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+                        v_u_40 = nil
+                        v_u_44.hoverVisualPart = nil
+                        v_u_150.Adornee = nil
+                        v_u_150.Enabled = false
+                        v_u_15.set(false)
+                        v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                        v_u_8:SetAttribute("HoveredHayId", nil)
+                    end
+                end
+                v_u_37[v754] = nil
+                v755:Destroy()
+            end
+            local v756
+            if p749 then
+                v756 = p749[v753]
+            else
+                v756 = p749
+            end
+            local v757 = v756 and v756 > 0 and v_u_553(v756, v754)
+            if v757 then
+                v757.Transparency = 0
+                v757.CanQuery = true
+            end
+            v_u_354[v754] = nil
+            v_u_355[v754] = nil
+        end
+        v_u_642(p747, v_u_10.DRONE_DIG_RADIUS, nil, 12)
+    end
+end)
+v_u_44.vacuumSettleScheduled = false
+v_u_44.vacuumSettlePosition = nil
+v_u_44.vacuumSettleRadius = nil
+function v_u_44.queueVacuumSurfaceSettle(p758, p759)
+    -- upvalues: (copy) v_u_44, (copy) v_u_642, (copy) v_u_10
+    v_u_44.vacuumSettlePosition = p758
+    v_u_44.vacuumSettleRadius = p759
+    if not v_u_44.vacuumSettleScheduled then
+        v_u_44.vacuumSettleScheduled = true
+        task.delay(0.32, function()
+            -- upvalues: (ref) v_u_44, (ref) v_u_642, (ref) v_u_10
+            v_u_44.vacuumSettleScheduled = false
+            local v760 = v_u_44.vacuumSettlePosition
+            local v761 = v_u_44.vacuumSettleRadius
+            v_u_44.vacuumSettlePosition = nil
+            v_u_44.vacuumSettleRadius = nil
+            if v760 then
+                v_u_642(v760, v761 or v_u_10.VACUUM_DIG_RADIUS, nil, v_u_10.VACUUM_SETTLE_PIECES, v_u_10.VACUUM_SETTLE_INWARD)
+            end
+        end)
+    end
+end
+v_u_44.haySync:connect(v_u_9:WaitForChild("VacuumHarvested"), function(p762, p763, p_u_764, p765, p766, p767, p768, p769)
+    -- upvalues: (ref) v_u_53, (copy) v_u_11, (copy) v_u_457, (copy) v_u_69, (copy) v_u_8, (copy) v_u_38, (copy) v_u_39, (ref) v_u_54, (copy) v_u_238, (copy) v_u_37, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_5, (copy) v_u_154, (copy) v_u_48, (copy) v_u_189, (ref) v_u_42, (copy) v_u_70, (copy) v_u_553, (copy) v_u_354, (copy) v_u_355, (copy) v_u_10
+    if type(p765) == "table" then
+        v_u_53 = p768 or v_u_53
+        v_u_11.applyDelta(p767)
+        v_u_457()
+        if v_u_69 then
+            local v770 = v_u_53
+            v_u_69.Text = string.format("%s hay pieces remaining", (tostring(v770):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "")))
+        end
+        local v771 = p763 == v_u_8.UserId
+        for v_u_772, v773 in ipairs(p765) do
+            v_u_38[v773] = true
+            v_u_39[v773] = nil
+            if v773 == v_u_54 then
+                v_u_54 = nil
+                v_u_238(true)
+            end
+            local v_u_774 = v_u_37[v773]
+            if v_u_774 then
+                if v_u_40 == v_u_774 and (v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil) then
+                    v_u_40 = nil
+                    v_u_44.hoverVisualPart = nil
+                    v_u_150.Adornee = nil
+                    v_u_150.Enabled = false
+                    v_u_15.set(false)
+                    v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                    v_u_8:SetAttribute("HoveredHayId", nil)
+                end
+                v_u_37[v773] = nil
+                v_u_774.CanQuery = false
+                v_u_774.CanTouch = false
+                v_u_774.CanCollide = false
+                if v771 and (workspace:FindFirstChild("VacuumNozzlePointClient") and typeof(p_u_764) == "Vector3") then
+                    local v_u_775 = v_u_774.Position
+                    local v_u_776 = v_u_774.CFrame - v_u_774.Position
+                    local v_u_777 = v_u_774.Size
+                    local v_u_778 = (v773 * 0.731 + v_u_772 * 1.91) % 6.283185307179586
+                    task.spawn(function()
+                        -- upvalues: (copy) v_u_772, (copy) v_u_774, (copy) p_u_764, (copy) v_u_775, (copy) v_u_778, (copy) v_u_776, (copy) v_u_777, (ref) v_u_5, (ref) v_u_154, (ref) v_u_48, (ref) v_u_189, (ref) v_u_8, (ref) v_u_42, (ref) v_u_70
+                        local v779 = os.clock()
+                        local v780 = 0.34 + (v_u_772 - 1) * 0.035
+                        while v_u_774.Parent do
+                            local v781 = (os.clock() - v779) / v780
+                            local v782 = math.clamp(v781, 0, 1)
+                            local v783 = v782 ^ 1.6
+                            local v784 = workspace:FindFirstChild("VacuumNozzlePointClient")
+                            local v785 = v784 and v784.Position or p_u_764
+                            local v786 = v785 - v_u_775
+                            local v787 = v786.Magnitude
+                            local v788 = v787 > 0.01 and v786 / v787 or Vector3.new(0, 1, 0)
+                            local v789 = v788:Cross(Vector3.new(0, 1, 0))
+                            if v789.Magnitude < 0.05 then
+                                v789 = v788:Cross(Vector3.new(1, 0, 0))
+                            end
+                            local v790 = v789.Unit
+                            local v791 = v790:Cross(v788).Unit
+                            local v792 = v783 * 3.141592653589793
+                            local v793 = math.sin(v792) * 0.34
+                            local v794 = v_u_778
+                            local v795 = v_u_778
+                            local v796 = (v790 * math.cos(v794) + v791 * math.sin(v795)) * v793 + v791 * v793 * 0.35
+                            local v797 = v_u_775:Lerp(v785, v783) + v796
+                            v_u_774.CFrame = CFrame.new(v797) * v_u_776 * CFrame.Angles(v783 * 2.2, v783 * 3.4 + v_u_778, v783 * 1.4)
+                            local v798 = (v783 - 0.75) / 0.25
+                            local v799 = math.clamp(v798, 0, 1)
+                            v_u_774.Size = v_u_777:Lerp(v_u_777 * 0.25, v799)
+                            local v800 = v_u_774
+                            local v801 = v_u_774.Transparency
+                            local v802 = (v783 - 0.9) / 0.1
+                            local v803 = math.clamp(v802, 0, 1)
+                            v800.Transparency = math.max(v801, v803)
+                            if v782 >= 1 then
+                                break
+                            end
+                            v_u_5.RenderStepped:Wait()
+                        end
+                        if v_u_774.Parent then
+                            v_u_774.Transparency = 0
+                            v_u_774.Size = v_u_777
+                            v_u_774:SetAttribute("HayId", nil)
+                            v_u_774.Name = "HeldHayPiece"
+                            v_u_774.Parent = v_u_154
+                            v_u_48(v_u_774)
+                            v_u_189(v_u_774, v_u_772 > 1)
+                            local v804 = v_u_8:GetAttribute("HayCapacity") or 25
+                            if #v_u_42 == 0 then
+                                v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+                                return
+                            end
+                            if v804 <= #v_u_42 then
+                                v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+                                return
+                            end
+                            v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_42, v804)
+                        end
+                    end)
+                else
+                    v_u_774:Destroy()
+                end
+            end
+            local v805
+            if p766 then
+                v805 = p766[v_u_772]
+            else
+                v805 = p766
+            end
+            local v806 = v805 and v805 > 0 and v_u_553(v805, v773)
+            if v806 then
+                v806.Transparency = 0
+                v806.CanQuery = true
+            end
+            v_u_354[v773] = nil
+            v_u_355[v773] = nil
+        end
+        v_u_44.queueVacuumSurfaceSettle(p762, p769 or v_u_10.VACUUM_DIG_RADIUS)
+    end
+end)
+v_u_20.OnClientEvent:Connect(function(p807, p808)
+    -- upvalues: (ref) v_u_52, (ref) v_u_40, (copy) v_u_44, (copy) v_u_150, (copy) v_u_15, (copy) v_u_68, (copy) v_u_8, (ref) v_u_59, (copy) v_u_114, (ref) v_u_18, (copy) v_u_223, (copy) v_u_154, (copy) v_u_48, (copy) v_u_189, (copy) v_u_73, (copy) v_u_74, (ref) v_u_42, (copy) v_u_70
+    v_u_52 = false
+    if v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+        v_u_40 = nil
+        v_u_44.hoverVisualPart = nil
+        v_u_150.Adornee = nil
+        v_u_150.Enabled = false
+        v_u_15.set(false)
+        v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+        v_u_8:SetAttribute("HoveredHayId", nil)
+    end
+    local v809 = v_u_59
+    if v809 then
+        v_u_114(v809)
+        v_u_59 = nil
+    end
+    local v810 = v_u_18:Clone()
+    if v809 then
+        v810.CFrame = CFrame.new(v809)
+    end
+    v810.Name = "HeldHayPiece"
+    v810:SetAttribute("HayId", nil)
+    v810.Color = typeof(p807) == "Color3" and p807 and p807 or v_u_18.Color
+    v810.Anchored = true
+    v810.CanCollide = false
+    v810.CanTouch = false
+    v810.CanQuery = false
+    if p808 then
+        v810.Material = Enum.Material.Neon
+        v810:SetAttribute("Rainbow", true)
+        v_u_223[v810] = true
+    end
+    v810.Parent = v_u_154
+    v_u_48(v810)
+    v_u_189(v810)
+    v_u_73.Visible = false
+    local v811 = math.clamp(0, 0, 1)
+    v_u_74.Size = UDim2.fromScale(v811, 1)
+    local v812 = v_u_8:GetAttribute("HayCapacity") or 25
+    if #v_u_42 == 0 then
+        v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+        return
+    elseif v812 <= #v_u_42 then
+        v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+    else
+        v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_42, v812)
+    end
+end)
+local v813 = v_u_53
+local v_u_814 = v_u_289
+local v_u_815 = v_u_42
+local v_u_816 = v_u_233
+local v_u_817 = v_u_232
+local v_u_818 = v_u_234
+local v_u_819 = v287
+while true do
+    local v820, v821 = pcall(function()
+        -- upvalues: (copy) v_u_25
+        return v_u_25:InvokeServer()
+    end)
+    local v822 = v820
+    if not v822 or type(v821) ~= "table" then
+        break
+    end
+    local v823 = v821.activeIds
+    if type(v823) ~= "table" then
+        break
+    end
+    local v824 = v821.activeSlots
+    if type(v824) ~= "table" then
+        break
+    end
+    local v825 = v821.activeGenerations
+    if type(v825) ~= "table" then
+        break
+    end
+    local v826 = v821.revision
+    if type(v826) ~= "number" then
+        break
+    end
+    ::l62::
+    if v822 and type(v821) == "table" then
+        local v827 = v821.activeIds
+        if type(v827) == "table" then
+            local v828 = v821.activeSlots
+            if type(v828) == "table" then
+                local v829 = v821.activeGenerations
+                if type(v829) == "table" then
+                    local v830 = v821.revision
+                    if type(v830) == "number" then
+                        v_u_53 = v821.remaining or v813
+                        local v_u_831 = v821.activeIds
+                        v_u_11.replaceAll(v821.dig)
+                        for v832, v833 in ipairs(v_u_831) do
+                            v_u_354[v833] = v821.activeSlots[v832]
+                            v_u_355[v833] = v821.activeGenerations[v832] or 0
+                        end
+                        local v834
+                        if v821.needleRevealed == true then
+                            v834 = true
+                        else
+                            v834 = false
+                        end
+                        local v_u_835 = v821.winnerUserId
+                        local v_u_836 = v821.winnerDisplayName
+                        v241(v821.needleHayId)
+                        v_u_44.haySync:applySnapshot(v821.revision)
+                        v76()
+                        local v_u_837 = nil
+                        local v_u_838 = setmetatable({}, {})
+                        local v_u_853 = {
+                            ["parts"] = {},
+                            ["lastCameraMotionAt"] = os.clock(),
+                            ["startedAt"] = os.clock(),
+                            ["track"] = function(p839)
+                                -- upvalues: (copy) v_u_853
+                                if p839:IsA("BasePart") then
+                                    local v840 = v_u_853.parts
+                                    table.insert(v840, p839)
+                                end
+                            end,
+                            ["hold"] = function()
+                                -- upvalues: (copy) v_u_853
+                                for v841 = #v_u_853.parts, 1, -1 do
+                                    local v842 = v_u_853.parts[v841]
+                                    if v842.Parent then
+                                        v842.LocalTransparencyModifier = 1
+                                    else
+                                        table.remove(v_u_853.parts, v841)
+                                    end
+                                end
+                            end,
+                            ["hasInputLockOwner"] = function()
+                                -- upvalues: (ref) v_u_818, (copy) v_u_8
+                                if v_u_818 or (v_u_8:GetAttribute("NeedleRoundComplete") == true or (v_u_8:GetAttribute("UpgradeBookOpen") == true or (v_u_8:GetAttribute("ShopViewOpen") == true or (v_u_8:GetAttribute("HintViewerOpen") == true or (v_u_8:GetAttribute("StudioEventsPanelOpen") == true or v_u_8:GetAttribute("Chapter2ReleaseActive") == true))))) then
+                                    return true
+                                end
+                                local v843 = v_u_8:FindFirstChildOfClass("PlayerGui")
+                                if v843 then
+                                    for _, v844 in ipairs({ "NumberPuzzlePoster", "NumberPuzzleKeypad" }) do
+                                        local v845 = v843:FindFirstChild(v844)
+                                        if v845 and (v845:IsA("ScreenGui") and v845.Enabled) then
+                                            return true
+                                        end
+                                    end
+                                end
+                                return false
+                            end,
+                            ["restoreGameplayCamera"] = function()
+                                -- upvalues: (copy) v_u_8, (copy) v_u_853, (ref) v_u_36, (copy) v_u_7
+                                v_u_8:SetAttribute("NeedleInputLocked", false)
+                                v_u_8:SetAttribute("CutsceneActive", nil)
+                                v_u_853.orphanedLockSince = nil
+                                if v_u_36 then
+                                    v_u_36.CameraType = Enum.CameraType.Custom
+                                    local v846 = v_u_8.Character
+                                    if v846 then
+                                        v846 = v846:FindFirstChildOfClass("Humanoid")
+                                    end
+                                    if v846 then
+                                        v_u_36.CameraSubject = v846
+                                    end
+                                    if v_u_7.MouseEnabled and v_u_8.CameraMode == Enum.CameraMode.LockFirstPerson then
+                                        v_u_7.MouseBehavior = Enum.MouseBehavior.LockCenter
+                                    end
+                                    v_u_7.MouseIconEnabled = false
+                                end
+                            end,
+                            ["recoverOrphanedCameraLock"] = function()
+                                -- upvalues: (ref) v_u_36, (copy) v_u_853, (copy) v_u_8
+                                local v847 = os.clock()
+                                local v848 = v_u_36
+                                if v848 then
+                                    v848 = v_u_36.CFrame
+                                end
+                                if v848 then
+                                    local v849 = v_u_853.lastCameraCFrame
+                                    if not v849 or ((v848.Position - v849.Position).Magnitude > 0.001 or v848.LookVector:Dot(v849.LookVector) < 0.999999) then
+                                        v_u_853.lastCameraMotionAt = v847
+                                    end
+                                    v_u_853.lastCameraCFrame = v848
+                                end
+                                local v850 = v_u_8:GetAttribute("NeedleInputLocked") == true
+                                local v851 = v_u_8:GetAttribute("CutsceneActive") == true
+                                if v850 or v851 then
+                                    if v_u_853.hasInputLockOwner() then
+                                        v_u_853.orphanedLockSince = nil
+                                        return
+                                    elseif v851 then
+                                        local v852
+                                        if v_u_8:GetAttribute("IntroCutsceneFinished") == true then
+                                            v852 = false
+                                        else
+                                            v852 = v847 - v_u_853.startedAt < 90
+                                        end
+                                        if v852 or v847 - v_u_853.lastCameraMotionAt < 8 then
+                                            v_u_853.orphanedLockSince = nil
+                                        else
+                                            v_u_853.restoreGameplayCamera()
+                                        end
+                                    elseif v_u_853.orphanedLockSince then
+                                        if v847 - v_u_853.orphanedLockSince >= 2 then
+                                            v_u_853.restoreGameplayCamera()
+                                        end
+                                    else
+                                        v_u_853.orphanedLockSince = v847
+                                    end
+                                else
+                                    v_u_853.orphanedLockSince = nil
+                                    return
+                                end
+                            end
+                        }
+                        local function v_u_855(p_u_854)
+                            -- upvalues: (copy) v_u_853, (copy) v_u_838
+                            if p_u_854:IsA("BasePart") then
+                                p_u_854.LocalTransparencyModifier = 1
+                                v_u_853.track(p_u_854)
+                            elseif p_u_854:IsA("ParticleEmitter") or p_u_854:IsA("Trail") or (p_u_854:IsA("Beam") or p_u_854:IsA("Smoke") or (p_u_854:IsA("Fire") or p_u_854:IsA("Sparkles")) or (p_u_854:IsA("Light") or p_u_854:IsA("Highlight") or (p_u_854:IsA("BillboardGui") or p_u_854:IsA("SurfaceGui")))) then
+                                p_u_854.Enabled = false
+                                if not v_u_838[p_u_854] then
+                                    v_u_838[p_u_854] = true
+                                    p_u_854:GetPropertyChangedSignal("Enabled"):Connect(function()
+                                        -- upvalues: (copy) p_u_854
+                                        if p_u_854.Parent and p_u_854.Enabled then
+                                            p_u_854.Enabled = false
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                        local function v862(p856)
+                            -- upvalues: (ref) v_u_837, (copy) v_u_853, (copy) v_u_855, (copy) v_u_10
+                            p856:WaitForChild("Head")
+                            v_u_837 = p856:WaitForChild("HumanoidRootPart")
+                            table.clear(v_u_853.parts)
+                            for _, v857 in ipairs(p856:GetDescendants()) do
+                                v_u_855(v857)
+                            end
+                            p856.DescendantAdded:Connect(v_u_855)
+                            local v858 = p856:FindFirstChildOfClass("Humanoid")
+                            if v858 then
+                                v858.CameraOffset = Vector3.new(0, 0, 0)
+                            end
+                            local v859 = v_u_10.PILE_CENTER.X - v_u_837.Position.X
+                            local v860 = v_u_10.PILE_CENTER.Z - v_u_837.Position.Z
+                            local v861 = Vector3.new(v859, 0, v860)
+                            if v861.Magnitude > 0.001 then
+                                v_u_837.CFrame = CFrame.lookAt(v_u_837.Position, v_u_837.Position + v861.Unit)
+                            end
+                        end
+                        if v_u_8.Character then
+                            task.spawn(v862, v_u_8.Character)
+                        end
+                        v_u_8.CharacterAdded:Connect(v862)
+                        v_u_7.InputChanged:Connect(function(p863)
+                            -- upvalues: (copy) v_u_8, (ref) v_u_815, (ref) v_u_66
+                            if not v_u_8:GetAttribute("NeedleInputLocked") then
+                                local v864
+                                if #v_u_815 > 0 then
+                                    v864 = true
+                                else
+                                    local v865 = v_u_8
+                                    v864 = (tonumber(v865:GetAttribute("VacuumLoad")) or 0) > 0
+                                end
+                                if v864 then
+                                    if p863.UserInputType == Enum.UserInputType.MouseMovement or p863.UserInputType == Enum.UserInputType.Touch then
+                                        local v866 = Vector2.new
+                                        local v867 = v_u_66.X - p863.Delta.X * 0.0035
+                                        local v868 = math.clamp(v867, -0.2, 0.2)
+                                        local v869 = v_u_66.Y - p863.Delta.Y * 0.0035
+                                        v_u_66 = v866(v868, (math.clamp(v869, -0.16, 0.16)))
+                                    end
+                                end
+                            end
+                        end)
+                        v_u_5:BindToRenderStep("NeedleFirstPersonCamera", Enum.RenderPriority.Camera.Value + 1, function(p870)
+                            -- upvalues: (ref) v_u_36, (copy) v_u_853, (copy) v_u_150, (copy) v_u_290, (copy) v_u_8, (ref) v_u_815, (copy) v_u_7, (ref) v_u_816, (ref) v_u_817, (ref) v_u_837, (ref) v_u_819, (ref) v_u_288, (copy) v_u_313, (copy) v_u_10, (ref) v_u_814, (copy) v_u_70, (copy) v_u_349, (copy) v_u_68, (ref) v_u_65, (ref) v_u_66, (copy) v_u_44, (copy) v_u_43, (copy) v_u_222, (ref) v_u_40, (copy) v_u_15, (ref) v_u_62, (ref) v_u_64, (ref) v_u_63, (copy) v_u_74, (copy) v_u_13, (copy) v_u_14
+                            v_u_36 = workspace.CurrentCamera
+                            v_u_853.recoverOrphanedCameraLock()
+                            if v_u_150.Parent ~= v_u_36 then
+                                v_u_150.Parent = v_u_36
+                            end
+                            if v_u_290.Parent ~= v_u_36 then
+                                v_u_290.Parent = v_u_36
+                            end
+                            local v871 = v_u_8:GetAttribute("NeedleInputLocked") == true
+                            local v872 = v_u_8:GetAttribute("CutsceneActive") == true
+                            for _, v873 in ipairs(v_u_815) do
+                                if v873.Parent then
+                                    v873.LocalTransparencyModifier = v872 and 1 or 0
+                                end
+                            end
+                            if not v872 then
+                                v_u_853.hold()
+                            end
+                            if v872 then
+                                v_u_7.MouseBehavior = Enum.MouseBehavior.Default
+                                v_u_7.MouseIconEnabled = true
+                            else
+                                v_u_36.CameraType = v871 and Enum.CameraType.Scriptable or Enum.CameraType.Custom
+                                if v871 then
+                                    v_u_7.MouseBehavior = Enum.MouseBehavior.Default
+                                end
+                                v_u_7.MouseIconEnabled = v871
+                            end
+                            if v_u_816 and (v_u_817 and v_u_817.Parent) then
+                                local v874 = os.clock()
+                                v_u_817.Parent = v_u_36
+                                v_u_817.CFrame = v_u_36.CFrame * CFrame.new(0, 1.15, -4.25) * CFrame.Angles(v874 * 0.7, v874 * 1.35, math.sin(v874) * 0.3)
+                            end
+                            if v_u_837 and v_u_837.Parent then
+                                local v875, v876 = v_u_313(v_u_837.Position)
+                                v_u_819 = v875
+                                v_u_288 = v876
+                            else
+                                v_u_819 = nil
+                                v_u_288 = (1 / 0)
+                            end
+                            local v877
+                            if #v_u_815 > 0 then
+                                v877 = true
+                            else
+                                local v878 = v_u_8
+                                v877 = (tonumber(v878:GetAttribute("VacuumLoad")) or 0) > 0
+                            end
+                            if v877 then
+                                if v_u_819 == nil or (v_u_837 == nil or v_u_837.Parent == nil) then
+                                    v877 = false
+                                else
+                                    v877 = v_u_288 <= v_u_10.SELL_HIGHLIGHT_DISTANCE
+                                end
+                            end
+                            local v879 = false
+                            local v880
+                            if #v_u_815 > 0 then
+                                v880 = true
+                            else
+                                local v881 = v_u_8
+                                v880 = (tonumber(v881:GetAttribute("VacuumLoad")) or 0) > 0
+                            end
+                            if v880 then
+                                if v_u_814 ~= v877 then
+                                    v_u_814 = v877
+                                    local v882 = v_u_819
+                                    if v882 then
+                                        v882 = v_u_819:FindFirstAncestor("SellModel")
+                                    end
+                                    local v883
+                                    if v882 then
+                                        v883 = v882:FindFirstChild("HayPile")
+                                    else
+                                        v883 = v882
+                                    end
+                                    local v884 = v_u_290
+                                    local v885
+                                    if v877 then
+                                        v885 = v883 or (v882 or (v_u_819 or nil))
+                                    else
+                                        v885 = nil
+                                    end
+                                    v884.Adornee = v885
+                                    v_u_290.Enabled = v877
+                                    if v877 then
+                                        v_u_70.Text = "Aim at the highlighted hole and click to sell"
+                                    else
+                                        local v886 = v_u_8:GetAttribute("HayCapacity") or 25
+                                        if #v_u_815 == 0 then
+                                            v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+                                        elseif v886 <= #v_u_815 then
+                                            v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+                                        else
+                                            v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_815, v886)
+                                        end
+                                    end
+                                end
+                                v879 = v_u_349()
+                                v_u_68.BackgroundColor3 = v879 and Color3.fromRGB(126, 255, 148) or Color3.fromRGB(255, 247, 220)
+                            elseif v_u_814 then
+                                v_u_814 = false
+                                v_u_290.Adornee = nil
+                                v_u_290.Enabled = false
+                            end
+                            if v_u_8:GetAttribute("NeedleSellReady") ~= v879 then
+                                v_u_8:SetAttribute("NeedleSellReady", v879)
+                            end
+                            local v887 = -18 * p870
+                            v_u_65 = v_u_65:Lerp(v_u_66, 1 - math.exp(v887))
+                            local v888 = v_u_66
+                            local v889 = -10 * p870
+                            v_u_66 = v888 * math.exp(v889)
+                            local v890 = v_u_44
+                            v890.dipVelocity = v890.dipVelocity + (-v_u_44.dip * v_u_44.Stiffness - v_u_44.dipVelocity * v_u_44.Damping) * p870
+                            local v891 = v_u_44
+                            local v892 = v_u_44.dip + v_u_44.dipVelocity * p870
+                            v891.dip = math.clamp(v892, -0.13, 0.13)
+                            local v893
+                            if #v_u_815 > 0 then
+                                v893 = true
+                            else
+                                local v894 = v_u_8
+                                v893 = (tonumber(v894:GetAttribute("VacuumLoad")) or 0) > 0
+                            end
+                            if v893 then
+                                local v895 = os.clock()
+                                local v896 = v895 * 1.7
+                                local v897 = math.sin(v896) * 0.025
+                                local v898 = v895 * 2.1
+                                local v899 = math.sin(v898) * 0.025
+                                local _ = #v_u_815
+                                for v900, v901 in ipairs(v_u_815) do
+                                    if v901.Parent then
+                                        if v900 > 75 then
+                                            v901.Transparency = 1
+                                        else
+                                            v901.Transparency = 0
+                                            local v902 = (v900 - 1) % 5 - 2
+                                            local v903 = (v900 - 1) / 5
+                                            local v904 = math.floor(v903) % 5
+                                            local v905 = (v900 - 1) / 25
+                                            local v906 = math.floor(v905)
+                                            local v907 = v901:GetAttribute("BundleSeed") or v900
+                                            local v908 = v907 * 0.001 + 78.233
+                                            local v909 = math.sin(v908) * 43758.5453
+                                            local v910 = (v909 - math.floor(v909)) * 2 - 1
+                                            local v911 = v907 * 0.001 + 156.466
+                                            local v912 = math.sin(v911) * 43758.5453
+                                            local v913 = (v912 - math.floor(v912)) * 2 - 1
+                                            local v914 = v907 * 0.001 + 234.699
+                                            local v915 = math.sin(v914) * 43758.5453
+                                            local v916 = (v915 - math.floor(v915)) * 2 - 1
+                                            local v917 = CFrame.new(1.45 + v902 * 0.065 + v910 * 0.035, -0.72 + v_u_44.dip + v904 * 0.05 + v913 * 0.035, v899 + -3.1 + v906 * 0.045 + v916 * 0.035) * CFrame.Angles(v_u_65.Y * 0.45 + v913 * 0.16, v_u_65.X * 0.5 + v916 * 0.2, v897 + -0.32 - v_u_65.X * 0.25 + v902 * 0.025 + v910 * 0.35)
+                                            local v918 = v_u_36.CFrame * v917
+                                            local v919 = v_u_43[v901]
+                                            if v919 then
+                                                local v920 = (v895 - v919.startedAt) / v_u_44.ArrivalTime
+                                                local v921 = math.clamp(v920, 0, 1)
+                                                local v922 = v_u_44.easeOutBack(v921, v_u_44.ArrivalOvershoot)
+                                                local v923 = v921 * 3.141592653589793
+                                                local v924 = math.sin(v923) * 0.42
+                                                v901.CFrame = v919.from:Lerp(v918, v922) + Vector3.new(0, v924, 0)
+                                                if v921 >= 1 then
+                                                    v_u_43[v901] = nil
+                                                    v_u_44.offsets[v901] = v917
+                                                    local v925 = v_u_44
+                                                    v925.dipVelocity = v925.dipVelocity - v_u_44.LandKick
+                                                end
+                                            else
+                                                local v926 = v_u_44.offsets[v901]
+                                                if v926 and (v926.Position - v917.Position).Magnitude <= v_u_44.FollowSnapDistance then
+                                                    local v927 = v_u_44.FollowRate
+                                                    local v928 = v907 * 0.001 + 312.932
+                                                    local v929 = math.sin(v928) * 43758.5453
+                                                    local v930 = -(v927 + ((v929 - math.floor(v929)) * 2 - 1) * 4) * p870
+                                                    v917 = v926:Lerp(v917, 1 - math.exp(v930))
+                                                end
+                                                v_u_44.offsets[v901] = v917
+                                                v901.CFrame = v_u_36.CFrame * v917
+                                            end
+                                        end
+                                    end
+                                end
+                                if (v_u_8:GetAttribute("HayCapacity") or 25) > (v_u_8:GetAttribute("HayHeld") or #v_u_815) and not v_u_349() then
+                                    v_u_222()
+                                elseif v_u_40 ~= nil or v_u_44.hoverVisualPart ~= nil then
+                                    v_u_40 = nil
+                                    v_u_44.hoverVisualPart = nil
+                                    v_u_150.Adornee = nil
+                                    v_u_150.Enabled = false
+                                    v_u_15.set(false)
+                                    v_u_68.BackgroundColor3 = Color3.fromRGB(255, 247, 220)
+                                    v_u_8:SetAttribute("HoveredHayId", nil)
+                                end
+                                if v_u_10.THROWING_ENABLED and v_u_62 then
+                                    v_u_70.Text = "Charging throw - Release left mouse to throw"
+                                    local v931 = (v895 - v_u_63) / v_u_10.CHARGE_TIME
+                                    v_u_64 = math.clamp(v931, 0, 1)
+                                    local v932 = v_u_64
+                                    local v933 = math.clamp(v932, 0, 1)
+                                    v_u_74.Size = UDim2.fromScale(v933, 1)
+                                end
+                            else
+                                v_u_222()
+                            end
+                            if v_u_13.getEquipped() == 1 then
+                                if v871 then
+                                    v_u_14.set(nil)
+                                    return
+                                end
+                                local v934
+                                if #v_u_815 > 0 then
+                                    v934 = true
+                                else
+                                    local v935 = v_u_8
+                                    v934 = (tonumber(v935:GetAttribute("VacuumLoad")) or 0) > 0
+                                end
+                                if v934 and v_u_349() then
+                                    v_u_14.set("Sell")
+                                    return
+                                end
+                                if v_u_40 then
+                                    v_u_14.set("Collect")
+                                    return
+                                end
+                                v_u_14.set(nil)
+                            end
+                        end)
+                        local function v_u_950()
+                            -- upvalues: (ref) v_u_815, (copy) v_u_8, (ref) v_u_64, (copy) v_u_10, (ref) v_u_36, (ref) v_u_62, (ref) v_u_65, (ref) v_u_66, (copy) v_u_73, (copy) v_u_74, (copy) v_u_21, (copy) v_u_70
+                            local v936
+                            if #v_u_815 > 0 then
+                                v936 = true
+                            else
+                                local v937 = v_u_8
+                                v936 = (tonumber(v937:GetAttribute("VacuumLoad")) or 0) > 0
+                            end
+                            if v936 then
+                                local v938 = v_u_64
+                                local v939 = v_u_10.MIN_THROW_SPEED + (v_u_10.MAX_THROW_SPEED - v_u_10.MIN_THROW_SPEED) * v938 ^ 1.3
+                                local v940 = v_u_36.CFrame.LookVector * v939
+                                local v941 = v938 * 4
+                                local v942 = v940 + Vector3.new(0, v941, 0)
+                                local v943 = v_u_815[#v_u_815].CFrame
+                                local v944 = table.create(#v_u_815)
+                                local v945 = v_u_815
+                                for v946, v947 in ipairs(v945) do
+                                    v944[v946] = v947.Color
+                                end
+                                v_u_815 = {}
+                                for _, v948 in ipairs(v945) do
+                                    v948:Destroy()
+                                end
+                                v_u_62 = false
+                                v_u_64 = 0
+                                v_u_65 = Vector2.zero
+                                v_u_66 = Vector2.zero
+                                v_u_73.Visible = false
+                                local v949 = math.clamp(0, 0, 1)
+                                v_u_74.Size = UDim2.fromScale(v949, 1)
+                                v_u_21:FireServer(v943, v942, v944)
+                                v_u_70.Text = "Look at a strand to highlight it - Left-click to pick it up"
+                            end
+                        end
+                        local function v_u_968(p951, p952)
+                            local v953 = p952.CFrame:PointToObjectSpace(p951)
+                            local v954 = p952.Size * 0.5
+                            local v955 = v953.X
+                            local v956 = -v954.X
+                            local v957 = v954.X
+                            local v958 = math.clamp(v955, v956, v957)
+                            local v959 = v953.Y
+                            local v960 = -v954.Y
+                            local v961 = v954.Y
+                            local v962 = math.clamp(v959, v960, v961)
+                            local v963 = v953.Z
+                            local v964 = -v954.Z
+                            local v965 = v954.Z
+                            local v966 = math.clamp(v963, v964, v965)
+                            local v967 = Vector3.new(v958, v962, v966)
+                            return (p952.CFrame:PointToWorldSpace(v967) - p951).Magnitude
+                        end
+                        local function v_u_984(p969)
+                            -- upvalues: (copy) v_u_8, (ref) v_u_40, (ref) v_u_41, (copy) v_u_191, (copy) v_u_152, (copy) v_u_968
+                            local v970 = v_u_8:GetAttribute("HayGrabCount") or 1
+                            local v971 = v_u_8:GetAttribute("HayGrabRadius") or 0
+                            if v970 <= 1 or v971 <= 0 then
+                                return {}
+                            end
+                            local v972 = p969 == v_u_40 and v_u_41 or nil or p969.Position
+                            local v973 = {}
+                            for _, v974 in ipairs(workspace:GetPartBoundsInRadius(v972, v971, v_u_191)) do
+                                local v975 = v974:GetAttribute("HayId")
+                                if v975 and (v974 ~= p969 and v974.Parent == v_u_152) then
+                                    local v976 = v_u_968(v972, v974)
+                                    if v976 <= v971 then
+                                        table.insert(v973, {
+                                            ["id"] = v975,
+                                            ["distance"] = v976
+                                        })
+                                    end
+                                end
+                            end
+                            table.sort(v973, function(p977, p978)
+                                if p977.distance == p978.distance then
+                                    return p977.id < p978.id
+                                else
+                                    return p977.distance < p978.distance
+                                end
+                            end)
+                            local v979 = v970 - 1
+                            local v980 = #v973
+                            local v981 = {}
+                            for v982 = 1, math.min(v979, v980) do
+                                local v983 = v973[v982].id
+                                table.insert(v981, v983)
+                            end
+                            return v981
+                        end
+                        local function v_u_991(p985)
+                            -- upvalues: (ref) v_u_89, (ref) v_u_52, (copy) v_u_8, (copy) v_u_10, (ref) v_u_58, (copy) v_u_19, (copy) v_u_39, (copy) v_u_984, (ref) v_u_59, (copy) v_u_20, (copy) v_u_84
+                            if not v_u_89 or (v_u_52 or not (p985 and p985.Parent)) then
+                                return false
+                            end
+                            local v986 = v_u_8:GetAttribute("HayPickCooldown") or v_u_10.PICK_COOLDOWN
+                            local v987 = os.clock()
+                            if v987 - v_u_58 < v986 then
+                                return false
+                            end
+                            v_u_58 = v987
+                            v_u_52 = true
+                            local v_u_988 = p985:GetAttribute("HayId")
+                            if p985:GetAttribute("IsNeedleObjective") then
+                                v_u_19:FireServer("Objective")
+                            elseif v_u_988 then
+                                if v_u_39[v_u_988] then
+                                    v_u_52 = false
+                                    return false
+                                end
+                                v_u_39[v_u_988] = true
+                                v_u_19:FireServer(v_u_988, (v_u_984(p985)))
+                            else
+                                if not p985:GetAttribute("IsDroppedHay") then
+                                    v_u_52 = false
+                                    return false
+                                end
+                                v_u_59 = p985.Position
+                                v_u_20:FireServer(p985)
+                            end
+                            if v_u_84 then
+                                v_u_84.startCooldown(v986 or v_u_10.PICK_COOLDOWN)
+                            end
+                            local v989 = task.delay
+                            local v990 = v986 + 0.15
+                            v989(math.max(0.35, v990), function()
+                                -- upvalues: (copy) v_u_988, (ref) v_u_39, (ref) v_u_52
+                                if v_u_988 then
+                                    v_u_39[v_u_988] = nil
+                                end
+                                v_u_52 = false
+                            end)
+                            return true
+                        end
+                        local function v_u_999()
+                            -- upvalues: (copy) v_u_8, (copy) v_u_13, (ref) v_u_815, (copy) v_u_349, (copy) v_u_26, (copy) v_u_16, (ref) v_u_40, (copy) v_u_991, (ref) v_u_89, (copy) v_u_10, (ref) v_u_62, (ref) v_u_63, (ref) v_u_64, (copy) v_u_73, (copy) v_u_74
+                            if v_u_8:GetAttribute("NeedleInputLocked") then
+                                return false
+                            end
+                            if v_u_8:GetAttribute("HoveredShopItem") then
+                                return false
+                            end
+                            local v992 = v_u_13.getEquipped()
+                            local v993
+                            if #v_u_815 > 0 then
+                                v993 = true
+                            else
+                                local v994 = v_u_8
+                                v993 = (tonumber(v994:GetAttribute("VacuumLoad")) or 0) > 0
+                            end
+                            if v993 and v_u_349() then
+                                v_u_26:FireServer()
+                                return false
+                            end
+                            if v_u_349() then
+                                v_u_16.push({})
+                                return false
+                            end
+                            if v992 ~= 1 then
+                                return false
+                            end
+                            if v_u_40 and v_u_40:GetAttribute("IsNeedleObjective") then
+                                return v_u_991(v_u_40)
+                            end
+                            local v995
+                            if #v_u_815 > 0 then
+                                v995 = true
+                            else
+                                local v996 = v_u_8
+                                v995 = (tonumber(v996:GetAttribute("VacuumLoad")) or 0) > 0
+                            end
+                            if not v995 then
+                                return v_u_89 and v_u_991(v_u_40) or false
+                            end
+                            if not v_u_89 then
+                                return false
+                            end
+                            local v997 = v_u_8:GetAttribute("HayCapacity") or 25
+                            if #v_u_815 < v997 and v_u_991(v_u_40) then
+                                return true
+                            end
+                            if v997 <= #v_u_815 and v_u_40 then
+                                v_u_16.push({})
+                            end
+                            if v_u_10.THROWING_ENABLED and not v_u_62 then
+                                v_u_62 = true
+                                v_u_63 = os.clock()
+                                v_u_64 = 0
+                                v_u_73.Visible = true
+                                local v998 = math.clamp(0, 0, 1)
+                                v_u_74.Size = UDim2.fromScale(v998, 1)
+                            end
+                            return false
+                        end
+                        local function v_u_1004(p1000)
+                            -- upvalues: (copy) v_u_8, (ref) v_u_60, (ref) v_u_61, (copy) v_u_999, (ref) v_u_89
+                            if v_u_8:GetAttribute("NeedleInputLocked") then
+                                return
+                            else
+                                v_u_60 = true
+                                v_u_61 = v_u_61 + 1
+                                local v_u_1001 = v_u_61
+                                v_u_999()
+                                if p1000 and (v_u_89 and v_u_8:GetAttribute("HandHoldEnabled")) then
+                                    local v1002 = v_u_8:GetAttribute("HandHoldDelay") or 0.55
+                                    local v1003 = math.max(0.05, v1002)
+                                    task.delay(v1003, function()
+                                        -- upvalues: (ref) v_u_60, (copy) v_u_1001, (ref) v_u_61, (ref) v_u_89, (ref) v_u_8, (ref) v_u_999
+                                        while v_u_60 and (v_u_1001 == v_u_61 and (v_u_89 and v_u_8:GetAttribute("HandHoldEnabled"))) do
+                                            v_u_999()
+                                            task.wait(0.04)
+                                        end
+                                    end)
+                                end
+                            end
+                        end
+                        v_u_7.InputBegan:Connect(function(p1005, p1006)
+                            -- upvalues: (copy) v_u_8, (copy) v_u_1004
+                            if not (v_u_8:GetAttribute("NeedleInputLocked") or p1006) then
+                                if p1005.UserInputType == Enum.UserInputType.MouseButton1 and true or p1005.KeyCode == Enum.KeyCode.ButtonX then
+                                    v_u_1004(true)
+                                end
+                            end
+                        end)
+                        v_u_7.InputEnded:Connect(function(p1007)
+                            -- upvalues: (ref) v_u_60, (ref) v_u_61, (copy) v_u_10, (ref) v_u_62, (ref) v_u_64, (ref) v_u_63, (copy) v_u_950
+                            if p1007.UserInputType == Enum.UserInputType.MouseButton1 and true or p1007.KeyCode == Enum.KeyCode.ButtonX then
+                                v_u_60 = false
+                                v_u_61 = v_u_61 + 1
+                                if v_u_10.THROWING_ENABLED and v_u_62 then
+                                    local v1008 = (os.clock() - v_u_63) / v_u_10.CHARGE_TIME
+                                    v_u_64 = math.clamp(v1008, 0, 1)
+                                    v_u_950()
+                                end
+                            end
+                        end)
+                        v_u_17.Pressed:Connect(function(p1009)
+                            -- upvalues: (copy) v_u_1004, (copy) v_u_8, (ref) v_u_60, (ref) v_u_61, (copy) v_u_999
+                            if p1009 == "PICKUP" then
+                                v_u_1004(true)
+                            elseif p1009 == "SELL" then
+                                if v_u_8:GetAttribute("NeedleInputLocked") then
+                                    return
+                                end
+                                v_u_60 = true
+                                v_u_61 = v_u_61 + 1
+                                v_u_999()
+                            end
+                        end)
+                        v_u_17.Released:Connect(function(p1010)
+                            -- upvalues: (ref) v_u_60, (ref) v_u_61, (copy) v_u_10, (ref) v_u_62, (ref) v_u_64, (ref) v_u_63, (copy) v_u_950
+                            if p1010 == "PICKUP" or p1010 == "SELL" then
+                                v_u_60 = false
+                                v_u_61 = v_u_61 + 1
+                                if v_u_10.THROWING_ENABLED and v_u_62 then
+                                    local v1011 = (os.clock() - v_u_63) / v_u_10.CHARGE_TIME
+                                    v_u_64 = math.clamp(v1011, 0, 1)
+                                    v_u_950()
+                                end
+                            end
+                        end)
+                        local v_u_1017 = (function()
+                            -- upvalues: (copy) v_u_4, (copy) v_u_2
+                            local v_u_1012 = game:GetService("SoundService")
+                            local v_u_1013 = v_u_4:FindFirstChild("Shared")
+                            if v_u_1013 then
+                                v_u_1013 = v_u_1013:FindFirstChild("Services")
+                            end
+                            if v_u_1013 then
+                                v_u_1013 = v_u_1013:FindFirstChild("SoundService")
+                            end
+                            if v_u_1013 then
+                                v_u_1013 = v_u_1013:FindFirstChild("SoundServiceClient")
+                            end
+                            if v_u_1013 then
+                                v_u_1013 = v_u_1013:FindFirstChild("Place")
+                            end
+                            if not (v_u_1013 and v_u_1013:IsA("Sound")) then
+                                v_u_1013 = nil
+                            end
+                            return function(p1014, p1015)
+                                -- upvalues: (ref) v_u_1013, (copy) v_u_1012, (ref) v_u_2
+                                if v_u_1013 then
+                                    local v1016 = v_u_1013:Clone()
+                                    v1016.PlaybackSpeed = p1014
+                                    v1016.Volume = v_u_1013.Volume * p1015
+                                    v1016.Parent = v_u_1012
+                                    v1016:Play()
+                                    v_u_2:AddItem(v1016, 4)
+                                end
+                            end
+                        end)()
+                        v27.OnClientEvent:Connect(function(p_u_1018, _, _, p1019, _, p1020, _, _, p1021)
+                            -- upvalues: (copy) v_u_8, (ref) v_u_815, (ref) v_u_62, (ref) v_u_64, (ref) v_u_65, (ref) v_u_66, (copy) v_u_73, (copy) v_u_74, (ref) v_u_814, (ref) v_u_819, (copy) v_u_290, (copy) v_u_70, (copy) v_u_2, (ref) v_u_36, (copy) v_u_5, (copy) v_u_1017, (copy) v_u_6
+                            if not p1020 and (p1021 ~= "Drone" and (type(p1021) ~= "string" or p1021:match("^Pet:") == nil)) and (p1021 ~= "Vacuum" and p1019 == v_u_8.UserId) then
+                                local v1022
+                                if #v_u_815 > 0 then
+                                    v1022 = true
+                                else
+                                    local v1023 = v_u_8
+                                    v1022 = (tonumber(v1023:GetAttribute("VacuumLoad")) or 0) > 0
+                                end
+                                if v1022 then
+                                    local v1024 = v_u_815
+                                    v_u_815 = {}
+                                    v_u_62 = false
+                                    v_u_64 = 0
+                                    v_u_65 = Vector2.zero
+                                    v_u_66 = Vector2.zero
+                                    v_u_73.Visible = false
+                                    local v1025 = math.clamp(0, 0, 1)
+                                    v_u_74.Size = UDim2.fromScale(v1025, 1)
+                                    if v_u_814 ~= false then
+                                        v_u_814 = false
+                                        local v1026 = v_u_819
+                                        if v1026 then
+                                            v1026 = v_u_819:FindFirstAncestor("SellModel")
+                                        end
+                                        if v1026 then
+                                            v1026:FindFirstChild("HayPile")
+                                        end
+                                        v_u_290.Adornee = nil
+                                        v_u_290.Enabled = false
+                                        local v1027 = v_u_8:GetAttribute("HayCapacity") or 25
+                                        if #v_u_815 == 0 then
+                                            v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+                                        elseif v1027 <= #v_u_815 then
+                                            v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+                                        else
+                                            v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_815, v1027)
+                                        end
+                                    end
+                                    local v1028 = v_u_8:GetAttribute("HayCapacity") or 25
+                                    if #v_u_815 == 0 then
+                                        v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+                                    elseif v1028 <= #v_u_815 then
+                                        v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+                                    else
+                                        v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_815, v1028)
+                                    end
+                                    if typeof(p_u_1018) == "Vector3" then
+                                        local v1029 = {}
+                                        for _, v1030 in ipairs(v1024) do
+                                            if #v1029 < 75 and (v1030.Parent and v1030.Transparency < 0.95) then
+                                                table.insert(v1029, v1030)
+                                            else
+                                                v1030:Destroy()
+                                            end
+                                        end
+                                        local v_u_1031 = #v1029
+                                        local v1032 = 0.9 / math.max(1, v_u_1031)
+                                        local v1033 = math.clamp(v1032, 0.022, 0.055)
+                                        local v_u_1034 = Instance.new("Part")
+                                        v_u_1034.Name = "SellBurst"
+                                        v_u_1034.Anchored = true
+                                        v_u_1034.CanCollide = false
+                                        v_u_1034.CanQuery = false
+                                        v_u_1034.CanTouch = false
+                                        v_u_1034.CastShadow = false
+                                        v_u_1034.Transparency = 1
+                                        v_u_1034.Size = Vector3.new(0.05, 0.05, 0.05)
+                                        v_u_1034.CFrame = CFrame.new(p_u_1018)
+                                        v_u_1034.Parent = workspace
+                                        local v1035 = Instance.new("Attachment")
+                                        v1035.Parent = v_u_1034
+                                        local v_u_1036 = Instance.new("ParticleEmitter")
+                                        v_u_1036.Texture = "rbxasset://textures/particles/sparkles_main.dds"
+                                        v_u_1036.Color = ColorSequence.new(Color3.fromRGB(255, 226, 148), Color3.fromRGB(196, 156, 84))
+                                        v_u_1036.LightEmission = 0.4
+                                        v_u_1036.Size = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.22), NumberSequenceKeypoint.new(1, 0.02) })
+                                        v_u_1036.Transparency = NumberSequence.new({ NumberSequenceKeypoint.new(0, 0.15), NumberSequenceKeypoint.new(1, 1) })
+                                        v_u_1036.Lifetime = NumberRange.new(0.18, 0.36)
+                                        v_u_1036.Rate = 0
+                                        v_u_1036.Speed = NumberRange.new(2, 6)
+                                        v_u_1036.SpreadAngle = Vector2.new(140, 140)
+                                        v_u_1036.Rotation = NumberRange.new(0, 360)
+                                        v_u_1036.RotSpeed = NumberRange.new(-260, 260)
+                                        v_u_1036.Acceleration = Vector3.new(0, -26, 0)
+                                        v_u_1036.Parent = v1035
+                                        local v_u_1037 = Instance.new("PointLight")
+                                        v_u_1037.Color = Color3.fromRGB(255, 226, 158)
+                                        v_u_1037.Range = 7
+                                        v_u_1037.Brightness = 0
+                                        v_u_1037.Shadows = false
+                                        v_u_1037.Parent = v_u_1034
+                                        v_u_2:AddItem(v_u_1034, v_u_1031 * v1033 + 2)
+                                        for v_u_1038, v_u_1039 in ipairs(v1029) do
+                                            local v1040 = v_u_1039:GetAttribute("BundleSeed") or v_u_1038
+                                            local v1041 = v1040 * 0.001 + 860.5630000000001
+                                            local v1042 = math.sin(v1041) * 43758.5453
+                                            local v_u_1043 = (v1042 - math.floor(v1042)) * 2 - 1
+                                            local v1044 = v1040 * 0.001 + 938.796
+                                            local v1045 = math.sin(v1044) * 43758.5453
+                                            local v_u_1046 = (v1045 - math.floor(v1045)) * 2 - 1
+                                            local v1047 = v1040 * 0.001 + 1017.029
+                                            local v1048 = math.sin(v1047) * 43758.5453
+                                            local v_u_1049 = (v1048 - math.floor(v1048)) * 2 - 1
+                                            local v1050 = (v_u_1038 - 1) * v1033
+                                            task.delay(v1050, function()
+                                                -- upvalues: (copy) v_u_1039, (copy) v_u_1043, (copy) v_u_1046, (copy) p_u_1018, (copy) v_u_1049, (ref) v_u_36, (ref) v_u_5, (copy) v_u_1038, (ref) v_u_1017, (copy) v_u_1031, (copy) v_u_1034, (copy) v_u_1036, (copy) v_u_1037, (ref) v_u_6
+                                                if v_u_1039.Parent then
+                                                    local v_u_1051 = v_u_1039.CFrame
+                                                    local v_u_1052 = v_u_1051.Position
+                                                    local v1053 = v_u_1043 * 0.42
+                                                    local v1054 = v_u_1046
+                                                    local v1055 = math.abs(v1054) * 0.5 + 0.85
+                                                    local v1056 = p_u_1018
+                                                    local v1057 = v1053 * 0.16
+                                                    local v1058 = v_u_1049 * 0.22
+                                                    local v_u_1059 = v1056 + Vector3.new(v1057, -0.35, v1058)
+                                                    local v_u_1060 = v_u_1052 + v_u_36.CFrame.UpVector * v1055 + v_u_36.CFrame.RightVector * v1053
+                                                    local v1061 = -v1053 * 0.4
+                                                    local v1062 = v_u_1049
+                                                    local v1063 = math.abs(v1062) * 0.35 + 0.85
+                                                    local v1064 = v_u_1043 * 0.3
+                                                    local v_u_1065 = v_u_1059 + Vector3.new(v1061, v1063, v1064)
+                                                    local v_u_1066 = CFrame.Angles(2.4 + v_u_1046 * 0.6, 4.2 + v_u_1043 * 0.9, 1.3 + v_u_1049 * 0.8)
+                                                    local v_u_1067 = v_u_1039.Size
+                                                    local v1068 = v_u_1049
+                                                    local v_u_1069 = math.abs(v1068) * 0.04 + 0.2
+                                                    local v_u_1070 = os.clock()
+                                                    local v_u_1071 = nil
+                                                    v_u_1071 = v_u_5.RenderStepped:Connect(function()
+                                                        -- upvalues: (ref) v_u_1039, (ref) v_u_1071, (copy) v_u_1070, (copy) v_u_1069, (copy) v_u_1052, (copy) v_u_1060, (copy) v_u_1065, (copy) v_u_1059, (copy) v_u_1051, (copy) v_u_1066, (copy) v_u_1067, (ref) v_u_1038, (ref) v_u_1017, (ref) v_u_1031, (ref) v_u_1034, (ref) v_u_1036, (ref) v_u_1037, (ref) v_u_6
+                                                        if v_u_1039.Parent then
+                                                            local v1072 = (os.clock() - v_u_1070) / v_u_1069
+                                                            local v1073 = math.clamp(v1072, 0, 1)
+                                                            local v1074 = v1073 * v1073
+                                                            local v1075 = 1 - v1074
+                                                            local v1076 = v_u_1052 * v1075 ^ 3 + v_u_1060 * (v1075 * 3 * v1075 * v1074) + v_u_1065 * (v1075 * 3 * v1074 * v1074) + v_u_1059 * v1074 ^ 3
+                                                            local v1077 = v_u_1051.Rotation:Lerp(v_u_1066, v1074)
+                                                            v_u_1039.CFrame = CFrame.new(v1076) * v1077
+                                                            v_u_1039.Size = v_u_1067:Lerp(v_u_1067 * 0.2, v1074)
+                                                            local v1078 = v_u_1039
+                                                            local v1079 = (v1074 - 0.85) / 0.15
+                                                            v1078.Transparency = math.clamp(v1079, 0, 1)
+                                                            if v1073 >= 1 then
+                                                                v_u_1071:Disconnect()
+                                                                v_u_1039:Destroy()
+                                                                local v1080 = v_u_1017
+                                                                local v1081 = 0.94 + (v_u_1038 - 1) % 12 * 0.028
+                                                                local v1082 = 1 - v_u_1031 * 0.006
+                                                                v1080(v1081, (math.clamp(v1082, 0.45, 1)))
+                                                                if v_u_1034.Parent then
+                                                                    v_u_1034.CFrame = CFrame.new(v_u_1059)
+                                                                    v_u_1036:Emit(6)
+                                                                    v_u_1037.Brightness = 1.6
+                                                                    v_u_6:Create(v_u_1037, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+                                                                end
+                                                            end
+                                                        else
+                                                            v_u_1071:Disconnect()
+                                                        end
+                                                    end)
+                                                end
+                                            end)
+                                        end
+                                    else
+                                        for _, v1083 in ipairs(v1024) do
+                                            v1083:Destroy()
+                                        end
+                                    end
+                                end
+                            end
+                        end)
+                        task.spawn(function()
+                            -- upvalues: (copy) v_u_70, (copy) v_u_500, (ref) v_u_831, (copy) v_u_38, (copy) v_u_553, (copy) v_u_10, (copy) v_u_72, (copy) v_u_5, (copy) v_u_8, (ref) v_u_815, (ref) v_u_835, (copy) v_u_278, (ref) v_u_836, (copy) v_u_257, (copy) v_u_16, (copy) v_u_71
+                            v_u_70.Text = "Packing the haystack..."
+                            v_u_500()
+                            local v1084 = #v_u_831
+                            for v1085, v1086 in ipairs(v_u_831) do
+                                if not v_u_38[v1086] then
+                                    v_u_553(v1086)
+                                end
+                                if v1085 % v_u_10.GENERATION_BATCH == 0 then
+                                    v_u_72.Size = UDim2.fromScale(v1085 / math.max(1, v1084), 1)
+                                    v_u_70.Text = string.format("Building optimized hay... %s active pieces", tostring(v1085):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", ""))
+                                    v_u_5.Heartbeat:Wait()
+                                end
+                            end
+                            v_u_72.Size = UDim2.fromScale(1, 1)
+                            pileReady = true
+                            local v1087 = v_u_8:GetAttribute("HayCapacity") or 25
+                            if #v_u_815 == 0 then
+                                v_u_70.Text = "Find the needle - Look at a strand and click to collect"
+                            elseif v1087 <= #v_u_815 then
+                                v_u_70.Text = "Capacity full - Sell your hay, then keep searching"
+                            else
+                                v_u_70.Text = string.format("Searching... Carrying %d/%d hay", #v_u_815, v1087)
+                            end
+                            if v_u_835 then
+                                if v_u_835 == v_u_8.UserId then
+                                    v_u_278(v_u_836 or v_u_8.DisplayName, v_u_10.NEEDLE_REWARD)
+                                else
+                                    v_u_257(v_u_16.tint(v_u_836 or "Another player", "name") .. " ALREADY FOUND THE NEEDLE", "This haystack has been beaten")
+                                end
+                            end
+                            task.delay(0.35, function()
+                                -- upvalues: (ref) v_u_71
+                                v_u_71.Visible = false
+                            end)
+                        end)
+                        return
+                    end
+                end
+            end
+        end
+    end
+end
+v_u_70.Text = "Waiting for haystack..."
+task.wait(1)
+goto l62

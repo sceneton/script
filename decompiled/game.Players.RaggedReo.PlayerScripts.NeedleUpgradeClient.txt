@@ -1,0 +1,1152 @@
+-- Decompiled game.Players.RaggedReo.PlayerScripts.NeedleUpgradeClient
+
+local v1 = game:GetService("Players")
+local v2 = game:GetService("ReplicatedStorage")
+local v_u_3 = game:GetService("TweenService")
+local v4 = game:GetService("RunService")
+local v5 = game:GetService("ContextActionService")
+local v_u_6 = game:GetService("UserInputService")
+local v_u_7 = game:GetService("StarterGui")
+local v_u_8 = game:GetService("GuiService")
+local v9 = v2:WaitForChild("Shared"):WaitForChild("Services")
+local v_u_10 = require(v9:WaitForChild("SoundService"):WaitForChild("SoundServiceClient"))
+local v_u_11 = require(script.Parent:WaitForChild("Notify"))
+local v_u_12 = v1.LocalPlayer
+local v_u_13 = v_u_12:WaitForChild("PlayerGui")
+task.spawn(function()
+    -- upvalues: (copy) v_u_7
+    for _ = 1, 20 do
+        if pcall(v_u_7.SetCoreGuiEnabled, v_u_7, Enum.CoreGuiType.PlayerList, false) then
+            return
+        end
+        task.wait(0.1)
+    end
+    warn("Could not disable the Roblox PlayerList CoreGui")
+end)
+local v14 = v2:WaitForChild("NeedleHaystack")
+local v_u_15 = require(v14:WaitForChild("Config"))
+local v_u_16 = v14:WaitForChild("BuyUpgrade")
+local v17 = v14:WaitForChild("UpgradeChanged")
+local v18 = v_u_13:WaitForChild("Frames", 30)
+local v_u_19 = assert(v18, "Frames ScreenGui did not load"):WaitForChild("Upgrades")
+local v20 = v_u_13:WaitForChild("HUD", 30)
+local v_u_21 = assert(v20, "HUD ScreenGui did not load")
+local v_u_22 = v_u_21:WaitForChild("Hotbar")
+local v_u_23 = {}
+local v_u_24 = {}
+local v_u_25 = {}
+local v_u_26 = v_u_21:WaitForChild("Right"):WaitForChild("UpgradeBook")
+local v27 = v_u_26:WaitForChild("Button")
+local v_u_28 = v_u_26:FindFirstChild("Exclamation")
+local v_u_29 = v_u_19:WaitForChild("UpgradeStuff")
+local v_u_30 = v_u_19:WaitForChild("IndexStuff")
+local v31 = v_u_30:WaitForChild("HayList")
+local v_u_32 = v31:WaitForChild("ScrollingFrame")
+local v33 = v_u_19:WaitForChild("Selections")
+local v_u_34 = v33:WaitForChild("Upgrades")
+local v_u_35 = v33:WaitForChild("Index")
+local v_u_36 = v_u_19:WaitForChild("CloseButton"):WaitForChild("Button")
+local v_u_37 = v_u_29:WaitForChild("BuyButton"):WaitForChild("Buy")
+local v_u_38 = v_u_37:WaitForChild("TextLabel")
+local v_u_39 = v_u_29:WaitForChild("Money"):WaitForChild("Balance"):WaitForChild("TextLabel")
+local v40 = v_u_29:WaitForChild("Info")
+local v_u_41 = v40:WaitForChild("UpgName")
+local v_u_42 = v40:WaitForChild("Description")
+local v43 = v40:WaitForChild("Stats")
+local v_u_44 = v43:WaitForChild("Before")
+local v_u_45 = v43:WaitForChild("After")
+local v_u_46 = v_u_19:WaitForChild("AnimationScale")
+local v47 = v_u_29:WaitForChild("RightSide")
+local v_u_48 = v47:WaitForChild("Page1")
+local v_u_49 = v47:WaitForChild("Page2")
+local v_u_50 = v_u_19:WaitForChild("NextPage")
+v47.ClipsDescendants = true
+v31.ClipsDescendants = true
+v_u_32.ClipsDescendants = true
+v_u_48.Visible = true
+v_u_48.Position = UDim2.fromScale(0, 0)
+v_u_49.Visible = false
+v_u_49.Position = UDim2.fromScale(0, 0)
+v_u_50.Rotation = 0
+local v_u_51 = Color3.fromRGB(252, 139, 0)
+local v_u_52 = Color3.fromRGB(238, 127, 0)
+local v_u_53 = Color3.fromRGB(134, 134, 134)
+local v_u_54 = Color3.fromRGB(128, 128, 128)
+local v_u_55 = Color3.fromRGB(83, 132, 76)
+local v_u_56 = Color3.fromRGB(255, 255, 255)
+local v_u_57 = {}
+local v58 = v_u_19.Size
+local v59 = v_u_19.Position
+if v_u_6.TouchEnabled then
+    v_u_19.Size = UDim2.fromScale(0.96, 0.94)
+    v_u_19.Position = UDim2.fromScale(0.5, 0.5)
+else
+    v_u_19.Size = v58
+    v_u_19.Position = v59
+end
+local v_u_60 = v_u_19.Position
+local v_u_61 = "HandHold"
+v_u_12:SetAttribute("SelectedUpgradeTrack", v_u_61)
+local v_u_62 = {}
+(function()
+    -- upvalues: (copy) v_u_19, (copy) v_u_15, (copy) v_u_62
+    for _, v63 in ipairs(v_u_19:GetDescendants()) do
+        if v63:IsA("ImageButton") then
+            local v64 = v63:GetAttribute("UpgradeTrack")
+            if v64 and v_u_15.UPGRADE_TRACKS[v64] then
+                local v65 = v63:WaitForChild("Card")
+                local v66 = v65:WaitForChild("UpgTier")
+                local v67 = {}
+                for _, v68 in ipairs(v66:GetChildren()) do
+                    if v68:IsA("ImageLabel") and v68.Name:match("^Tier%d+$") then
+                        table.insert(v67, v68)
+                    end
+                end
+                table.sort(v67, function(p69, p70)
+                    return p69.LayoutOrder < p70.LayoutOrder
+                end)
+                local v71 = v65:WaitForChild("UpgIcon")
+                v_u_62[v64] = {
+                    ["button"] = v63,
+                    ["card"] = v65,
+                    ["title"] = v65:WaitForChild("Title"),
+                    ["price"] = v65:WaitForChild("Price"),
+                    ["pips"] = v67,
+                    ["icon"] = v71:FindFirstChild("ImageLabel"),
+                    ["locked"] = v71:FindFirstChild("Locked")
+                }
+            end
+        end
+    end
+end)()
+local v_u_72 = 1
+local v_u_73 = "Upgrades"
+local function v_u_91(p74, p75, p76)
+    -- upvalues: (copy) v_u_12
+    if not p75 then
+        return "MAX"
+    end
+    if p74 == "Capacity" then
+        local v77 = (v_u_12:GetAttribute("HayCapacity") or p76.Capacity) - p76.Capacity
+        local v78 = string.format
+        local v79 = p75.Capacity + v77
+        return v78("%d HAY", (math.round(v79)))
+    end
+    if p74 == "HandHold" or p74 == "PitchforkHold" then
+        return p75.Enabled and "HOLD" or "CLICK"
+    end
+    if p74 == "Speed" then
+        return string.format("%.2fs", p75.Cooldown)
+    end
+    if p74 == "Grab" then
+        local v80 = (v_u_12:GetAttribute("HayGrabCount") or p76.Count) - p76.Count
+        local v81 = string.format
+        local v82 = p75.Count + v80
+        return v81("%d HAY", (math.round(v82)))
+    end
+    if p74 == "TntLuck" then
+        local v83 = string.format
+        local v84 = p75.Chance * 100
+        return v83("%d%%", (math.round(v84)))
+    end
+    if p74 == "TntCooldown" then
+        return string.format("%.1fs", p75.Cooldown)
+    end
+    if p74 == "TntPower" then
+        return string.format("%.2f STUDS", p75.Radius)
+    end
+    if p74 == "PitchforkCooldown" then
+        return string.format("%.2fs", p75.Cooldown)
+    end
+    if p74 == "Pitchfork" then
+        return string.format("%d HAY", p75.Scoop)
+    end
+    if p74 == "DroneSpeed" then
+        return string.format("%.1f SPEED", p75.FlightSpeed)
+    end
+    if p74 == "DroneGrab" then
+        return string.format("%d HAY", p75.Count)
+    end
+    if p74 == "DroneCapacity" then
+        return string.format("%d HAY", p75.Capacity)
+    end
+    if p74 == "VacuumPower" then
+        return string.format("%d HAY", p75.Count)
+    end
+    if p74 ~= "VacuumCooling" then
+        return p74 ~= "VacuumRuntime" and "?" or string.format("%.0fs", p75.Duration)
+    end
+    local v85 = v_u_12
+    local v86 = tonumber(v85:GetAttribute("VacuumCoolTime"))
+    local v87 = (not v86 or (not p76 or p76.Cooldown <= 0)) and 1 or v86 / p76.Cooldown
+    local v88 = string.format
+    local v89 = p75.Cooldown * v87 - 1e-6
+    local v90 = math.ceil(v89)
+    return v88("%ds", (math.max(1, v90)))
+end
+local v_u_92 = false
+local function v_u_99(p93, p94)
+    -- upvalues: (copy) v_u_12
+    if not p94 then
+        return nil
+    end
+    local v95 = v_u_12
+    local v96 = p94.Cost * (tonumber(v95:GetAttribute("UpgradeCostMultiplier")) or 1)
+    if string.sub(p93, 1, 9) == "Pitchfork" then
+        local v97 = v_u_12
+        v96 = v96 * (tonumber(v97:GetAttribute("PitchforkUpgradeCostMultiplier")) or 1)
+    end
+    local v98 = v96 * 100
+    return math.round(v98) / 100
+end
+local function v_u_107(p100, p101)
+    local v102 = (tonumber(p100) or 0) * 100
+    local v103 = math.round(v102)
+    local v104 = math.max(0, v103)
+    local v105 = v104 // 100
+    local v106 = tostring(v105):reverse():gsub("(%d%d%d)", "%1,"):reverse():gsub("^,", "") .. string.format(".%02d", v104 % 100)
+    return p101 and v106 .. "$" or "$" .. v106
+end
+local v_u_108 = false
+local v_u_109 = false
+local v_u_110 = false
+local v_u_111 = false
+for _, v112 in ipairs(v_u_15.UPGRADE_ORDER) do
+    local v113 = v_u_62[v112]
+    local v114 = "Upgrade UI is missing slot " .. v112
+    assert(v113, v114)
+end
+local v_u_115 = { "HandHold", "DroneSpeed" }
+local function v_u_191()
+    -- upvalues: (copy) v_u_62, (copy) v_u_34, (copy) v_u_36, (copy) v_u_35, (ref) v_u_73, (copy) v_u_37, (copy) v_u_50, (ref) v_u_72
+    local v116 = v_u_62.HandHold
+    local v117 = v116 and v116.button or nil
+    local v118 = v_u_62.Speed
+    local v119 = v118 and v118.button or nil
+    local v120 = v_u_62.Grab
+    local v121 = v120 and v120.button or nil
+    local v122 = v_u_34
+    local v123 = v_u_36
+    local v124 = v_u_35
+    v122.Selectable = true
+    v122.NextSelectionLeft = nil
+    v122.NextSelectionRight = v117
+    v122.NextSelectionUp = v123
+    v122.NextSelectionDown = v124
+    local v125 = v_u_35
+    local v126 = v_u_36
+    local v127 = v_u_34
+    local v128 = v_u_36
+    v125.Selectable = true
+    v125.NextSelectionLeft = nil
+    v125.NextSelectionRight = v126
+    v125.NextSelectionUp = v127
+    v125.NextSelectionDown = v128
+    if v_u_73 == "Index" then
+        for _, v129 in pairs(v_u_62) do
+            v129.button.Selectable = false
+        end
+        v_u_37.Selectable = false
+        v_u_50.Selectable = false
+        local v130 = v_u_36
+        local v131 = v_u_35
+        local v132 = v_u_35
+        local v133 = v_u_35
+        v130.Selectable = true
+        v130.NextSelectionLeft = v131
+        v130.NextSelectionRight = nil
+        v130.NextSelectionUp = v132
+        v130.NextSelectionDown = v133
+    else
+        local v134, v135, v136, v137, v138, v139
+        if v_u_72 == 1 then
+            local v140 = v_u_62.TntLuck
+            v134 = v140 and v140.button or nil
+            local v141 = v_u_62.TntCooldown
+            v135 = v141 and v141.button or nil
+            local v142 = v_u_62.TntPower
+            v136 = v142 and v142.button or nil
+            local v143 = v_u_62.PitchforkCooldown
+            v137 = v143 and v143.button or nil
+            local v144 = v_u_62.PitchforkHold
+            v138 = v144 and v144.button or nil
+            local v145 = v_u_62.Pitchfork
+            v139 = v145 and v145.button
+            if not v139 then
+                v139 = nil
+            end
+        else
+            local v146 = v_u_62.DroneSpeed
+            v134 = v146 and v146.button or nil
+            local v147 = v_u_62.DroneGrab
+            v135 = v147 and v147.button or nil
+            local v148 = v_u_62.DroneCapacity
+            v136 = v148 and v148.button or nil
+            local v149 = v_u_62.VacuumPower
+            v137 = v149 and v149.button or nil
+            local v150 = v_u_62.VacuumCooling
+            v138 = v150 and v150.button or nil
+            local v151 = v_u_62.VacuumRuntime
+            v139 = v151 and v151.button
+            if not v139 then
+                v139 = nil
+            end
+        end
+        local v152 = v_u_34
+        local v153 = v_u_36
+        local v154 = v_u_37
+        v117.Selectable = true
+        v117.NextSelectionLeft = v152
+        v117.NextSelectionRight = v119
+        v117.NextSelectionUp = v153
+        v117.NextSelectionDown = v154
+        local v155 = v_u_36
+        local v156 = v_u_37
+        v119.Selectable = true
+        v119.NextSelectionLeft = v117
+        v119.NextSelectionRight = v121
+        v119.NextSelectionUp = v155
+        v119.NextSelectionDown = v156
+        local v157 = v_u_36
+        local v158 = v_u_37
+        v121.Selectable = true
+        v121.NextSelectionLeft = v119
+        v121.NextSelectionRight = v134
+        v121.NextSelectionUp = v157
+        v121.NextSelectionDown = v158
+        if v_u_72 == 1 then
+            local v159 = v_u_36
+            v134.Selectable = true
+            v134.NextSelectionLeft = v121
+            v134.NextSelectionRight = v135
+            v134.NextSelectionUp = v159
+            v134.NextSelectionDown = v137
+            local v160 = v_u_36
+            v135.Selectable = true
+            v135.NextSelectionLeft = v134
+            v135.NextSelectionRight = v136
+            v135.NextSelectionUp = v160
+            v135.NextSelectionDown = v138
+            local v161 = v_u_50
+            local v162 = v_u_36
+            v136.Selectable = true
+            v136.NextSelectionLeft = v135
+            v136.NextSelectionRight = v161
+            v136.NextSelectionUp = v162
+            v136.NextSelectionDown = v139
+            local v163 = v_u_37
+            local v164 = v_u_37
+            v137.Selectable = true
+            v137.NextSelectionLeft = v163
+            v137.NextSelectionRight = v138
+            v137.NextSelectionUp = v134
+            v137.NextSelectionDown = v164
+            local v165 = v_u_37
+            v138.Selectable = true
+            v138.NextSelectionLeft = v137
+            v138.NextSelectionRight = v139
+            v138.NextSelectionUp = v135
+            v138.NextSelectionDown = v165
+            local v166 = v_u_50
+            local v167 = v_u_37
+            v139.Selectable = true
+            v139.NextSelectionLeft = v138
+            v139.NextSelectionRight = v166
+            v139.NextSelectionUp = v136
+            v139.NextSelectionDown = v167
+            local v168 = v_u_37
+            v168.Selectable = true
+            v168.NextSelectionLeft = nil
+            v168.NextSelectionRight = v137
+            v168.NextSelectionUp = v119
+            v168.NextSelectionDown = nil
+            local v169 = v_u_50
+            local v170 = v_u_36
+            v169.Selectable = true
+            v169.NextSelectionLeft = v139
+            v169.NextSelectionRight = nil
+            v169.NextSelectionUp = v170
+            v169.NextSelectionDown = v139
+            local v171 = v_u_36
+            local v172 = v_u_50
+            v171.Selectable = true
+            v171.NextSelectionLeft = v136
+            v171.NextSelectionRight = nil
+            v171.NextSelectionUp = v136
+            v171.NextSelectionDown = v172
+        else
+            local v173 = v_u_36
+            v134.Selectable = true
+            v134.NextSelectionLeft = v121
+            v134.NextSelectionRight = v135
+            v134.NextSelectionUp = v173
+            v134.NextSelectionDown = v137
+            local v174 = v_u_36
+            v135.Selectable = true
+            v135.NextSelectionLeft = v134
+            v135.NextSelectionRight = v136
+            v135.NextSelectionUp = v174
+            v135.NextSelectionDown = v138
+            local v175 = v_u_50
+            local v176 = v_u_36
+            v136.Selectable = true
+            v136.NextSelectionLeft = v135
+            v136.NextSelectionRight = v175
+            v136.NextSelectionUp = v176
+            v136.NextSelectionDown = v139
+            local v177 = v_u_37
+            local v178 = v_u_37
+            v137.Selectable = true
+            v137.NextSelectionLeft = v177
+            v137.NextSelectionRight = v138
+            v137.NextSelectionUp = v134
+            v137.NextSelectionDown = v178
+            local v179 = v_u_37
+            v138.Selectable = true
+            v138.NextSelectionLeft = v137
+            v138.NextSelectionRight = v139
+            v138.NextSelectionUp = v135
+            v138.NextSelectionDown = v179
+            local v180 = v_u_50
+            local v181 = v_u_37
+            v139.Selectable = true
+            v139.NextSelectionLeft = v138
+            v139.NextSelectionRight = v180
+            v139.NextSelectionUp = v136
+            v139.NextSelectionDown = v181
+            local v182 = v_u_37
+            v182.Selectable = true
+            v182.NextSelectionLeft = nil
+            v182.NextSelectionRight = v137
+            v182.NextSelectionUp = v119
+            v182.NextSelectionDown = nil
+            local v183 = v_u_50
+            local v184 = v_u_36
+            v183.Selectable = true
+            v183.NextSelectionLeft = v139
+            v183.NextSelectionRight = nil
+            v183.NextSelectionUp = v184
+            v183.NextSelectionDown = v139
+            local v185 = v_u_36
+            local v186 = v_u_50
+            v185.Selectable = true
+            v185.NextSelectionLeft = v136
+            v185.NextSelectionRight = nil
+            v185.NextSelectionUp = v136
+            v185.NextSelectionDown = v186
+        end
+        for v187, v188 in pairs(v_u_62) do
+            local v189 = (v187 == "DroneSpeed" or (v187 == "DroneGrab" or (v187 == "DroneCapacity" or (v187 == "VacuumPower" or v187 == "VacuumCooling")))) and true or v187 == "VacuumRuntime"
+            local v190 = v188.button
+            if v_u_72 ~= 2 or not v189 then
+                if v_u_72 == 1 then
+                    v189 = not v189
+                else
+                    v189 = false
+                end
+            end
+            v190.Selectable = v189
+        end
+        v_u_37.Selectable = v_u_37.Active
+    end
+end
+local function v_u_196()
+    -- upvalues: (ref) v_u_92, (copy) v_u_8, (copy) v_u_6, (ref) v_u_73, (copy) v_u_35, (copy) v_u_115, (ref) v_u_72, (copy) v_u_62
+    if not v_u_92 or not v_u_8:IsTenFootInterface() and v_u_6:GetLastInputType().Name:match("^Gamepad") == nil then
+        return
+    end
+    if v_u_73 == "Index" then
+        v_u_8.SelectedObject = v_u_35
+        return
+    end
+    local v192 = v_u_62[v_u_115[v_u_72]]
+    local v193 = v192 and v192.button or nil
+    if not (v193 and (v193.Visible and v193.Selectable)) then
+        if v_u_72 ~= 2 then
+            ::l19::
+            local v194 = v_u_62.HandHold
+            v193 = v194 and v194.button or nil
+            goto l17
+        end
+        local v195 = v_u_62.DroneSpeed
+        v193 = v195 and v195.button or nil
+        if not v193 then
+            goto l19
+        end
+    end
+    ::l17::
+    v_u_8.SelectedObject = v193
+end
+local function v_u_211()
+    -- upvalues: (ref) v_u_61, (copy) v_u_15, (copy) v_u_12, (copy) v_u_57, (copy) v_u_41, (copy) v_u_42, (copy) v_u_44, (copy) v_u_45, (copy) v_u_38, (copy) v_u_37, (copy) v_u_91, (copy) v_u_99, (copy) v_u_107, (copy) v_u_56
+    local v197 = v_u_61
+    local v198 = v_u_15.UPGRADE_TRACKS[v197]
+    local v199 = v_u_12
+    local v200 = "HayUpgrade" .. v197
+    local v201 = tonumber(v199:GetAttribute(v200)) or 1
+    local v202 = #v_u_15.UPGRADE_TRACKS[v197].Levels
+    local v203 = math.clamp(v201, 1, v202)
+    local v204 = v198.Levels[v203]
+    local v205 = v198.Levels[v203 + 1]
+    local v206 = v_u_57[v_u_61]
+    if not v206 or v_u_12:GetAttribute(v206) == true then
+        v_u_41.Text = v198.DisplayName
+        local v207 = v_u_61
+        v_u_42.Text = v_u_15.UPGRADE_TRACKS[v207].Description
+        v_u_44.Text = v_u_91(v_u_61, v204, v204)
+        v_u_45.Text = v_u_91(v_u_61, v205, v204)
+        if v205 then
+            local v208 = v_u_99(v_u_61, v205)
+            v_u_38.Text = "BUY (" .. v_u_107(v208, true) .. ")"
+            local v209 = v_u_38
+            local v210 = v_u_12:FindFirstChild("leaderstats")
+            if v210 then
+                v210 = v210:FindFirstChild("Cash")
+            end
+            v209.TextColor3 = v208 <= (v210 and v210.Value or 0) and v_u_56 or Color3.fromRGB(210, 210, 210)
+            v_u_37.Active = true
+            v_u_37.Selectable = true
+        else
+            v_u_38.Text = "MAXED"
+            v_u_38.TextColor3 = Color3.fromRGB(225, 245, 215)
+            v_u_37.Active = true
+            v_u_37.Selectable = true
+        end
+    else
+        v_u_41.Text = "???"
+        v_u_42.Text = "Purchase this tool to reveal its upgrades."
+        v_u_44.Text = "?"
+        v_u_45.Text = "?"
+        v_u_38.Text = "LOCKED"
+        v_u_38.TextColor3 = Color3.fromRGB(210, 210, 210)
+        v_u_37.Active = false
+        v_u_37.Selectable = false
+        return
+    end
+end
+local v_u_212 = nil
+local v_u_213
+if v_u_28 then
+    v_u_213 = v_u_28:FindFirstChild("AlertScale")
+else
+    v_u_213 = v_u_28
+end
+local v_u_214 = v27:FindFirstChild("Sunburst")
+local v_u_215
+if v_u_214 then
+    v_u_215 = v_u_214:FindFirstChild("BurstScale")
+else
+    v_u_215 = v_u_214
+end
+local v_u_216 = v_u_214 and (v_u_214.ImageTransparency or 0) or 0
+local v_u_217 = false
+local v_u_218 = 0
+local v_u_219 = 0
+if v_u_214 then
+    v_u_214.ImageTransparency = 1
+end
+local function v_u_234()
+    -- upvalues: (copy) v_u_12, (copy) v_u_15, (copy) v_u_57, (copy) v_u_99
+    local v220 = v_u_12:FindFirstChild("leaderstats")
+    if v220 then
+        v220 = v220:FindFirstChild("Cash")
+    end
+    local v221 = v220 and v220.Value or 0
+    local v222 = {}
+    for _, v223 in ipairs(v_u_15.UPGRADE_ORDER) do
+        local v224 = v_u_15.UPGRADE_TRACKS[v223]
+        local v225 = v_u_12
+        local v226 = "HayUpgrade" .. v223
+        local v227 = tonumber(v225:GetAttribute(v226)) or 1
+        local v228 = #v_u_15.UPGRADE_TRACKS[v223].Levels
+        local v229 = math.clamp(v227, 1, v228)
+        local _ = v224.Levels[v229]
+        local v230 = v224.Levels[v229 + 1]
+        local v231 = v_u_57[v223]
+        if (not v231 or v_u_12:GetAttribute(v231) == true) and (v230 and v_u_99(v223, v230) <= v221) then
+            local v232 = v229 + 1
+            local v233 = v223 .. ":" .. tostring(v232)
+            table.insert(v222, v233)
+        end
+    end
+    table.sort(v222)
+    return table.concat(v222, "|")
+end
+local function v_u_248()
+    -- upvalues: (copy) v_u_28, (copy) v_u_234, (ref) v_u_212, (ref) v_u_92, (copy) v_u_214, (ref) v_u_217, (copy) v_u_215, (copy) v_u_3, (ref) v_u_219, (copy) v_u_216, (ref) v_u_218, (copy) v_u_213, (copy) v_u_10
+    if v_u_28 then
+        local v235 = v_u_234()
+        local v236
+        if v235 == "" then
+            v236 = false
+        else
+            v236 = v235 ~= v_u_212
+        end
+        v_u_212 = v235
+        local v237 = not v_u_92
+        if v237 then
+            v237 = v235 ~= ""
+        end
+        v_u_28.Visible = v237
+        if v_u_214 and v237 ~= v_u_217 then
+            v_u_217 = v237
+            if v237 then
+                if v_u_215 then
+                    v_u_215.Scale = 0.66
+                    local v238 = v_u_215
+                    local v239 = Enum.EasingStyle.Back
+                    v_u_3:Create(v238, TweenInfo.new(0.46, v239 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+                end
+                v_u_219 = os.clock() + 0.5
+                local v240 = {
+                    ["ImageTransparency"] = v_u_216
+                }
+                v_u_3:Create(v_u_214, TweenInfo.new(0.3, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v240):Play()
+            else
+                v_u_3:Create(v_u_214, TweenInfo.new(0.22, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+            end
+        end
+        if v237 and v236 then
+            v_u_218 = v_u_218 + 1
+            local v_u_241 = v_u_218
+            local v242 = v_u_219
+            local v243 = os.clock() + 0.5
+            v_u_219 = math.max(v242, v243)
+            v_u_28.Rotation = -14
+            if v_u_213 then
+                v_u_213.Scale = 0.3
+                local v244 = v_u_213
+                local v245 = Enum.EasingStyle.Back
+                v_u_3:Create(v244, TweenInfo.new(0.36, v245 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+            end
+            local v246 = v_u_28
+            local v247 = Enum.EasingStyle.Back
+            v_u_3:Create(v246, TweenInfo.new(0.32, v247 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+            task.spawn(function()
+                -- upvalues: (ref) v_u_10
+                v_u_10:PlaySound("GoldPop")
+            end)
+            task.delay(0.45, function()
+                -- upvalues: (copy) v_u_241, (ref) v_u_218, (ref) v_u_28, (ref) v_u_213
+                if v_u_241 == v_u_218 and v_u_28.Visible then
+                    if v_u_213 then
+                        v_u_213.Scale = 1
+                    end
+                end
+            end)
+        end
+    else
+        return
+    end
+end
+v4.RenderStepped:Connect(function(p249)
+    -- upvalues: (ref) v_u_217, (copy) v_u_214, (ref) v_u_219, (copy) v_u_215, (copy) v_u_28
+    if v_u_217 and v_u_214 then
+        v_u_214.Rotation = (v_u_214.Rotation + p249 * 14) % 360
+        if os.clock() >= v_u_219 then
+            local v250 = os.clock() * 2.1
+            local v251 = math.sin(v250)
+            if v_u_215 then
+                v_u_215.Scale = v251 * 0.06 + 1.12
+            end
+            if v_u_28 and v_u_28.Visible then
+                v_u_28.Rotation = v251 * 5
+            end
+        end
+    else
+        return
+    end
+end)
+local function v_u_278(p252)
+    -- upvalues: (copy) v_u_12, (copy) v_u_39, (copy) v_u_107, (copy) v_u_15, (copy) v_u_62, (copy) v_u_57, (copy) v_u_54, (copy) v_u_99, (copy) v_u_52, (copy) v_u_55, (copy) v_u_3, (ref) v_u_61, (copy) v_u_51, (copy) v_u_53, (copy) v_u_248, (copy) v_u_211
+    local v253 = v_u_12:FindFirstChild("leaderstats")
+    if v253 then
+        v253 = v253:FindFirstChild("Cash")
+    end
+    local v254 = v253 and v253.Value or 0
+    v_u_39.Text = v_u_107(v254, false)
+    for _, v255 in ipairs(v_u_15.UPGRADE_ORDER) do
+        local v256 = v_u_62[v255]
+        local v257 = v_u_15.UPGRADE_TRACKS[v255]
+        local v258 = v_u_12
+        local v259 = "HayUpgrade" .. v255
+        local v260 = tonumber(v258:GetAttribute(v259)) or 1
+        local v261 = #v_u_15.UPGRADE_TRACKS[v255].Levels
+        local v262 = math.clamp(v260, 1, v261)
+        local _ = v257.Levels[v262]
+        local v263 = v257.Levels[v262 + 1]
+        local v264 = v_u_57[v255]
+        local v265 = not v264 or v_u_12:GetAttribute(v264) == true
+        local v266 = v265 and (v262 - 1 or 0) or 0
+        local v267 = v265 and (#v257.Levels == 2 and v262 == #v257.Levels) and #v256.pips or v266
+        v256.title.Text = v265 and v257.DisplayName or "???"
+        if v256.locked then
+            v256.locked.Visible = not v265
+        end
+        if v256.icon then
+            v256.icon.Visible = v265
+        end
+        if v265 then
+            if v263 then
+                local v268 = v_u_99(v255, v263)
+                v256.price.Text = v_u_107(v268, true)
+                local v269 = v268 <= v254
+                v256.price.TextColor3 = v269 and v_u_52 or v_u_54
+            else
+                v256.price.Text = "MAX"
+                v256.price.TextColor3 = v_u_55
+            end
+        else
+            v256.price.Text = "?"
+            v256.price.TextColor3 = v_u_54
+        end
+        for v270, v271 in ipairs(v256.pips) do
+            local v272 = v270 <= v267
+            local v273 = v272 and "rbxassetid://82471073814260" or "rbxassetid://92435615700235"
+            if v271.Image ~= v273 then
+                v271.Image = v273
+                if v265 and (p252 == v255 and (v272 and v270 == v267)) then
+                    local v274 = v271:FindFirstChild("InteractionScale")
+                    if not v274 then
+                        v274 = Instance.new("UIScale")
+                        v274.Name = "InteractionScale"
+                        v274.Parent = v271
+                    end
+                    v274.Scale = 0.45
+                    v271.Rotation = -18
+                    local v275 = Enum.EasingStyle.Back
+                    v_u_3:Create(v274, TweenInfo.new(0.32, v275 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+                    local v276 = Enum.EasingStyle.Back
+                    v_u_3:Create(v271, TweenInfo.new(0.3, v276 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+                end
+            end
+        end
+        local v277 = v255 == v_u_61 and v_u_51 or v_u_53
+        v_u_3:Create(v256.card, TweenInfo.new(0.16, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+            ["BackgroundColor3"] = v277
+        }):Play()
+    end
+    v_u_248()
+    v_u_211()
+end
+for v_u_279, v280 in pairs(v_u_62) do
+    v280.button.Activated:Connect(function()
+        -- upvalues: (copy) v_u_279, (ref) v_u_61, (copy) v_u_12, (copy) v_u_278
+        local v281 = v_u_279
+        if v_u_61 ~= v281 then
+            v_u_61 = v281
+            v_u_12:SetAttribute("SelectedUpgradeTrack", v_u_61)
+            v_u_278()
+        end
+    end)
+    v280.button.SelectionGained:Connect(function()
+        -- upvalues: (copy) v_u_279, (copy) v_u_115, (ref) v_u_61, (copy) v_u_12, (copy) v_u_278
+        v_u_115[(v_u_279 == "DroneSpeed" or (v_u_279 == "DroneGrab" or v_u_279 == "DroneCapacity")) and 2 or 1] = v_u_279
+        local v282 = v_u_279
+        if v_u_61 ~= v282 then
+            v_u_61 = v282
+            v_u_12:SetAttribute("SelectedUpgradeTrack", v_u_61)
+            v_u_278()
+        end
+    end)
+end
+local function v_u_286(p283, p284)
+    for _, v285 in ipairs(p283:GetChildren()) do
+        if v285:IsA("GuiObject") then
+            v285.Visible = p284
+        end
+    end
+end
+local function v_u_292(p287, p288)
+    -- upvalues: (ref) v_u_73, (copy) v_u_286, (copy) v_u_29, (copy) v_u_30, (ref) v_u_109, (copy) v_u_32, (copy) v_u_50, (ref) v_u_110, (copy) v_u_12, (copy) v_u_191, (copy) v_u_10, (copy) v_u_196
+    if p287 == "Upgrades" or p287 == "Index" then
+        v_u_73 = p287
+        local v289 = p287 == "Upgrades"
+        v_u_286(v_u_29, v289)
+        v_u_286(v_u_30, not v289)
+        if not (v289 or v_u_109) then
+            v_u_109 = true
+            v_u_32.CanvasPosition = Vector2.zero
+            task.defer(function()
+                -- upvalues: (ref) v_u_73, (ref) v_u_32
+                if v_u_73 == "Index" then
+                    v_u_32.CanvasPosition = Vector2.zero
+                end
+            end)
+        end
+        v_u_50.Visible = v289
+        local v290 = v_u_50
+        local v291
+        if v289 then
+            v291 = not v_u_110
+        else
+            v291 = v289
+        end
+        v290.Active = v291
+        v_u_50.Selectable = v289
+        v_u_12:SetAttribute("UpgradeBookSection", p287)
+        v_u_191()
+        if p288 then
+            task.spawn(function()
+                -- upvalues: (ref) v_u_10
+                v_u_10:PlaySound("Paper")
+            end)
+        end
+        task.defer(v_u_196)
+    end
+end
+v_u_34.Activated:Connect(function()
+    -- upvalues: (copy) v_u_292, (ref) v_u_73
+    v_u_292("Upgrades", v_u_73 ~= "Upgrades")
+end)
+v_u_35.Activated:Connect(function()
+    -- upvalues: (copy) v_u_292, (ref) v_u_73
+    v_u_292("Index", v_u_73 ~= "Index")
+end)
+local function v_u_305(p293, p294)
+    -- upvalues: (ref) v_u_73, (ref) v_u_110, (ref) v_u_72, (copy) v_u_48, (copy) v_u_49, (ref) v_u_61, (copy) v_u_12, (copy) v_u_278, (copy) v_u_191, (copy) v_u_50, (copy) v_u_196, (copy) v_u_3, (copy) v_u_10
+    if v_u_73 == "Upgrades" and (not v_u_110 and p293 ~= v_u_72) then
+        local v_u_295 = v_u_72 == 1 and v_u_48 or v_u_49
+        local v_u_296 = p293 == 1 and v_u_48 or v_u_49
+        local v297 = v_u_72 < p293 and 1 or -1
+        v_u_72 = p293
+        v_u_110 = true
+        if p293 == 2 then
+            v_u_61 = "DroneSpeed"
+        elseif v_u_61 == "DroneSpeed" or (v_u_61 == "DroneGrab" or v_u_61 == "DroneCapacity") then
+            v_u_61 = "HandHold"
+        end
+        v_u_12:SetAttribute("SelectedUpgradeTrack", v_u_61)
+        v_u_278()
+        v_u_191()
+        local v298 = p293 == 2 and 180 or 0
+        if p294 then
+            v_u_296.Position = UDim2.fromScale(v297, 0)
+            v_u_296.Visible = true
+            v_u_50.Active = false
+            local v299 = {
+                ["Position"] = UDim2.fromScale(-v297, 0)
+            }
+            local v300 = Enum.EasingStyle.Quint
+            v_u_3:Create(v_u_295, TweenInfo.new(0.28, v300 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v299):Play()
+            local v301 = {
+                ["Position"] = UDim2.fromScale(0, 0)
+            }
+            local v302 = Enum.EasingStyle.Quint
+            v_u_3:Create(v_u_296, TweenInfo.new(0.28, v302 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v301):Play()
+            local v303 = v_u_50
+            local v304 = Enum.EasingStyle.Back
+            v_u_3:Create(v303, TweenInfo.new(0.34, v304 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {
+                ["Rotation"] = v298
+            }):Play()
+            task.spawn(function()
+                -- upvalues: (ref) v_u_10
+                v_u_10:PlaySound("Paper")
+            end)
+            task.delay(0.32, function()
+                -- upvalues: (copy) v_u_295, (copy) v_u_296, (ref) v_u_50, (ref) v_u_73, (ref) v_u_110, (ref) v_u_196
+                v_u_295.Visible = false
+                v_u_295.Position = UDim2.fromScale(0, 0)
+                v_u_296.Position = UDim2.fromScale(0, 0)
+                v_u_50.Active = v_u_73 == "Upgrades"
+                v_u_110 = false
+                v_u_196()
+            end)
+        else
+            v_u_295.Visible = false
+            v_u_295.Position = UDim2.fromScale(0, 0)
+            v_u_296.Position = UDim2.fromScale(0, 0)
+            v_u_296.Visible = true
+            v_u_50.Rotation = v298
+            v_u_50.Active = v_u_73 == "Upgrades"
+            v_u_110 = false
+            task.defer(v_u_196)
+        end
+    else
+        return
+    end
+end
+v_u_50.Activated:Connect(function()
+    -- upvalues: (copy) v_u_305, (ref) v_u_72
+    v_u_305(v_u_72 == 1 and 2 or 1, true)
+end)
+local function v_u_308()
+    -- upvalues: (copy) v_u_23, (copy) v_u_21, (copy) v_u_24, (copy) v_u_13, (copy) v_u_25
+    table.clear(v_u_23)
+    for _, v306 in ipairs(v_u_21:GetChildren()) do
+        if v306:IsA("GuiObject") then
+            v_u_23[v306] = v306.Visible
+            v306.Visible = false
+        end
+    end
+    table.clear(v_u_24)
+    for _, v307 in ipairs(v_u_13:GetChildren()) do
+        if v307:IsA("ScreenGui") and v_u_25[v307.Name] then
+            v_u_24[v307] = v307.Enabled
+            v307.Enabled = false
+        end
+    end
+end
+local function v_u_313()
+    -- upvalues: (copy) v_u_23, (copy) v_u_21, (copy) v_u_24, (copy) v_u_13
+    for v309, v310 in pairs(v_u_23) do
+        if v309.Parent == v_u_21 then
+            v309.Visible = v310
+        end
+    end
+    table.clear(v_u_23)
+    for v311, v312 in pairs(v_u_24) do
+        if v311.Parent == v_u_13 then
+            v311.Enabled = v312
+        end
+    end
+    table.clear(v_u_24)
+end
+local function v_u_328(p314)
+    -- upvalues: (copy) v_u_12, (copy) v_u_21, (copy) v_u_22, (ref) v_u_92, (ref) v_u_108, (copy) v_u_308, (copy) v_u_19, (copy) v_u_26, (ref) v_u_73, (copy) v_u_286, (copy) v_u_29, (copy) v_u_30, (copy) v_u_50, (ref) v_u_110, (copy) v_u_191, (copy) v_u_196, (copy) v_u_305, (copy) v_u_60, (copy) v_u_46, (copy) v_u_10, (copy) v_u_278, (copy) v_u_3, (copy) v_u_8, (copy) v_u_313
+    if p314 and (v_u_12:GetAttribute("CutsceneActive") or (v_u_12:GetAttribute("NeedleInputLocked") or (v_u_12:GetAttribute("ShopViewOpen") or not (v_u_21.Enabled and v_u_22.Visible)))) then
+        return
+    elseif p314 == v_u_92 or v_u_108 then
+        return
+    else
+        v_u_108 = true
+        v_u_92 = p314
+        v_u_12:SetAttribute("UpgradeBookOpen", p314)
+        if p314 then
+            v_u_308()
+            v_u_19.Visible = true
+            v_u_26.Visible = false
+            v_u_73 = "Upgrades"
+            v_u_286(v_u_29, true)
+            v_u_286(v_u_30, false)
+            v_u_50.Visible = true
+            v_u_50.Active = not v_u_110
+            v_u_50.Selectable = true
+            v_u_12:SetAttribute("UpgradeBookSection", "Upgrades")
+            v_u_191()
+            task.defer(v_u_196)
+            v_u_305(1, false)
+            v_u_12:SetAttribute("NeedleInputLocked", true)
+            v_u_19.Position = v_u_60 + UDim2.fromScale(0, 0.035)
+            v_u_19.Rotation = -1.5
+            v_u_46.Scale = 0.82
+            task.spawn(function()
+                -- upvalues: (ref) v_u_10
+                v_u_10:PlaySound("Paper")
+            end)
+            v_u_278()
+            v_u_191()
+            task.defer(v_u_196)
+            local v315 = v_u_46
+            local v316 = Enum.EasingStyle.Back
+            v_u_3:Create(v315, TweenInfo.new(0.34, v316 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), {}):Play()
+            local v317 = v_u_19
+            local v318 = {
+                ["Position"] = v_u_60
+            }
+            local v319 = Enum.EasingStyle.Quart
+            v_u_3:Create(v317, TweenInfo.new(0.28, v319 or Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v318):Play()
+            task.delay(0.34, function()
+                -- upvalues: (ref) v_u_108
+                v_u_108 = false
+            end)
+        else
+            local v320 = v_u_8.SelectedObject
+            if v320 and v320:IsDescendantOf(v_u_19) then
+                v_u_8.SelectedObject = nil
+            end
+            local v321 = v_u_46
+            local v322 = Enum.EasingStyle.Quart
+            local v323 = Enum.EasingDirection.In
+            v_u_3:Create(v321, TweenInfo.new(0.18, v322 or Enum.EasingStyle.Quad, v323 or Enum.EasingDirection.Out), {}):Play()
+            local v324 = v_u_19
+            local v325 = {
+                ["Position"] = v_u_60 + UDim2.fromScale(0, 0.03)
+            }
+            local v326 = Enum.EasingStyle.Quart
+            local v327 = Enum.EasingDirection.In
+            v_u_3:Create(v324, TweenInfo.new(0.18, v326 or Enum.EasingStyle.Quad, v327 or Enum.EasingDirection.Out), v325):Play()
+            task.delay(0.19, function()
+                -- upvalues: (ref) v_u_19, (ref) v_u_60, (ref) v_u_46, (ref) v_u_313, (ref) v_u_26, (ref) v_u_12, (ref) v_u_108, (ref) v_u_278
+                v_u_19.Visible = false
+                v_u_19.Position = v_u_60
+                v_u_19.Rotation = 0
+                v_u_46.Scale = 1
+                v_u_313()
+                v_u_26.Visible = true
+                v_u_12:SetAttribute("NeedleInputLocked", false)
+                v_u_108 = false
+                v_u_278()
+            end)
+        end
+    end
+end
+v27.Activated:Connect(function()
+    -- upvalues: (ref) v_u_92, (copy) v_u_12, (copy) v_u_328
+    if v_u_92 or not v_u_12:GetAttribute("ShopViewOpen") then
+        v_u_328(not v_u_92)
+    end
+end)
+v_u_36.Activated:Connect(function()
+    -- upvalues: (copy) v_u_328
+    v_u_328(false)
+end)
+local function v_u_348()
+    -- upvalues: (ref) v_u_111, (ref) v_u_61, (copy) v_u_57, (copy) v_u_12, (copy) v_u_10, (copy) v_u_15, (copy) v_u_99, (copy) v_u_62, (copy) v_u_3, (copy) v_u_278, (copy) v_u_11, (copy) v_u_107, (copy) v_u_16
+    if v_u_111 then
+        return
+    else
+        local v329 = v_u_57[v_u_61]
+        if not v329 or v_u_12:GetAttribute(v329) == true then
+            local v330 = v_u_61
+            local v331 = v_u_15.UPGRADE_TRACKS[v330]
+            local v332 = v_u_12
+            local v333 = "HayUpgrade" .. v330
+            local v334 = tonumber(v332:GetAttribute(v333)) or 1
+            local v335 = #v_u_15.UPGRADE_TRACKS[v330].Levels
+            local v336 = math.clamp(v334, 1, v335)
+            local _ = v331.Levels[v336]
+            local v337 = v331.Levels[v336 + 1]
+            if v337 then
+                local v338 = v_u_12:FindFirstChild("leaderstats")
+                if v338 then
+                    v338 = v338:FindFirstChild("Cash")
+                end
+                if (v338 and v338.Value or 0) < v_u_99(v_u_61, v337) then
+                    v_u_10:PlaySound("Error")
+                    local v339 = v_u_62[v_u_61].price
+                    local v340 = {
+                        ["TextColor3"] = Color3.fromRGB(188, 82, 67)
+                    }
+                    v_u_3:Create(v339, TweenInfo.new(0.08, Enum.EasingStyle.Quad, Enum.EasingDirection.Out), v340):Play()
+                    task.delay(0.25, v_u_278)
+                    local v341 = v_u_11.push
+                    local v342 = {}
+                    local v343 = "You need "
+                    local v344 = v_u_11.tint
+                    local v345 = v_u_107
+                    local v346 = v_u_99(v_u_61, v337)
+                    local v347 = v_u_12:FindFirstChild("leaderstats")
+                    if v347 then
+                        v347 = v347:FindFirstChild("Cash")
+                    end
+                    v342.text = v343 .. v344(v345(v346 - (v347 and v347.Value or 0)), "money") .. " more for " .. v_u_11.tint(v_u_15.UPGRADE_TRACKS[v_u_61].DisplayName, "name")
+                    v341(v342)
+                else
+                    v_u_111 = true
+                    v_u_16:FireServer(v_u_61)
+                end
+            else
+                return
+            end
+        else
+            v_u_10:PlaySound("Error")
+            return
+        end
+    end
+end
+v_u_37.Activated:Connect(v_u_348)
+v17.OnClientEvent:Connect(function(p349, p350)
+    -- upvalues: (ref) v_u_111, (copy) v_u_10, (ref) v_u_61, (copy) v_u_12, (copy) v_u_278, (copy) v_u_15, (copy) v_u_11
+    v_u_111 = false
+    if p349 then
+        v_u_10:PlaySound("CashRegister")
+        v_u_61 = p350
+        v_u_12:SetAttribute("SelectedUpgradeTrack", v_u_61)
+        v_u_278(p350)
+        local v351 = v_u_15.UPGRADE_TRACKS[p350]
+        local v352 = v_u_11.push
+        local v353 = {}
+        local v354 = "Upgraded "
+        local v355 = v_u_11.tint
+        local v356
+        if v351 then
+            v356 = v351.DisplayName or p350
+        else
+            v356 = p350
+        end
+        local v357 = v355(v356, "name")
+        local v358 = v_u_11.tint
+        local v359 = v_u_12
+        local v360 = "HayUpgrade" .. p350
+        local v361 = tonumber(v359:GetAttribute(v360)) or 1
+        local v362 = #v_u_15.UPGRADE_TRACKS[p350].Levels
+        v353.text = v354 .. v357 .. " to level " .. v358(math.clamp(v361, 1, v362), "count")
+        v352(v353)
+    else
+        v_u_10:PlaySound("Error")
+        v_u_278()
+    end
+end)
+v5:BindActionAtPriority("ToggleNeedleUpgradeBook", function(_, p363)
+    -- upvalues: (ref) v_u_92, (copy) v_u_12, (copy) v_u_328
+    if p363 == Enum.UserInputState.Begin and (v_u_92 or not v_u_12:GetAttribute("ShopViewOpen")) then
+        v_u_328(not v_u_92)
+    end
+    return Enum.ContextActionResult.Sink
+end, false, Enum.ContextActionPriority.High.Value + 20, Enum.KeyCode.Tab, Enum.KeyCode.ButtonY)
+v_u_6.InputBegan:Connect(function(p364)
+    -- upvalues: (ref) v_u_92, (copy) v_u_8, (copy) v_u_6, (copy) v_u_19, (copy) v_u_62, (ref) v_u_61, (copy) v_u_12, (copy) v_u_278, (copy) v_u_348, (copy) v_u_328
+    if p364.KeyCode == Enum.KeyCode.ButtonA and v_u_92 and (v_u_8:IsTenFootInterface() or v_u_6:GetLastInputType().Name:match("^Gamepad") ~= nil) then
+        local v365 = v_u_8.SelectedObject
+        local v366 = v365 and v365:IsDescendantOf(v_u_19)
+        if v366 then
+            v366 = v365:GetAttribute("UpgradeTrack")
+        end
+        if v366 and v_u_62[v366] then
+            if v_u_61 ~= v366 then
+                v_u_61 = v366
+                v_u_12:SetAttribute("SelectedUpgradeTrack", v_u_61)
+                v_u_278()
+            end
+            v_u_348()
+            return
+        end
+    end
+    if (p364.KeyCode == Enum.KeyCode.Escape or p364.KeyCode == Enum.KeyCode.ButtonB) and v_u_92 then
+        v_u_328(false)
+    end
+end)
+for _, v367 in ipairs(v_u_15.UPGRADE_ORDER) do
+    v_u_12:GetAttributeChangedSignal("HayUpgrade" .. v367):Connect(function()
+        -- upvalues: (copy) v_u_278
+        v_u_278()
+    end)
+end
+for _, v368 in ipairs({
+    "HayCapacity",
+    "HayGrabCount",
+    "TntOwned",
+    "PitchforkOwned",
+    "DroneOwned",
+    "VacuumOwned",
+    "VacuumCoolTime",
+    "PitchforkUpgradeCostMultiplier"
+}) do
+    v_u_12:GetAttributeChangedSignal(v368):Connect(function()
+        -- upvalues: (copy) v_u_278
+        v_u_278()
+    end)
+end
+task.spawn(function()
+    -- upvalues: (copy) v_u_12, (copy) v_u_278
+    v_u_12:WaitForChild("leaderstats"):WaitForChild("Cash").Changed:Connect(function()
+        -- upvalues: (ref) v_u_278
+        v_u_278()
+    end)
+    v_u_278()
+end)
+local _ = "Upgrades"
+v_u_286(v_u_29, true)
+v_u_286(v_u_30, false)
+v_u_50.Visible = true
+v_u_50.Active = not v_u_110
+v_u_50.Selectable = true
+v_u_12:SetAttribute("UpgradeBookSection", "Upgrades")
+v_u_191()
+task.defer(v_u_196)
+v_u_19.Visible = false
+v_u_26.Visible = true
+v_u_12:SetAttribute("UpgradeBookOpen", false)
+v_u_12:SetAttribute("NeedleInputLocked", false)
+v_u_278()

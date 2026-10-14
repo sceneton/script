@@ -1,0 +1,164 @@
+-- Decompiled game.ReplicatedStorage.Puzzles.PuzzleConfig
+
+local v_u_1 = game:GetService("Workspace")
+local v_u_2 = {
+    ["RootFolderName"] = "Puzzles",
+    ["IndicatorOff"] = Color3.fromRGB(255, 0, 0),
+    ["IndicatorOn"] = Color3.fromRGB(0, 255, 80),
+    ["IndicatorLightOff"] = Color3.fromRGB(189, 0, 0),
+    ["IndicatorLightOn"] = Color3.fromRGB(0, 200, 60)
+}
+local v3 = {
+    ["NumberPuzzle"] = {
+        ["Steps"] = {},
+        ["Reward"] = {}
+    },
+    ["PicturePuzzle"] = {
+        ["Steps"] = {},
+        ["Reward"] = {}
+    },
+    ["LeverPuzzle"] = {
+        ["Steps"] = {
+            {},
+            {},
+            {}
+        },
+        ["Reward"] = {}
+    },
+    ["ColorPuzzle"] = {
+        ["Steps"] = {
+            {},
+            {},
+            {}
+        },
+        ["Reward"] = {}
+    }
+}
+v_u_2.Puzzles = v3
+for v4 = 1, v_u_2.Puzzles.PicturePuzzle.GridSize ^ 2 do
+    local v5 = v_u_2.Puzzles.PicturePuzzle.Steps
+    local v6 = {
+        ["Id"] = "Tile" .. v4,
+        ["Index"] = v4
+    }
+    table.insert(v5, v6)
+end
+function v_u_2.resolve(p7, p8)
+    if not (p7 and p8) then
+        return nil
+    end
+    for v9 in p8:gmatch("[^/]+") do
+        if not p7 then
+            return nil
+        end
+        p7 = p7:FindFirstChild(v9)
+    end
+    return p7
+end
+v_u_2.PosterIndexAttribute = "PosterIndex"
+function v_u_2.postersOf(p10)
+    -- upvalues: (copy) v_u_2
+    local v11 = v_u_2.Puzzles.NumberPuzzle
+    local v12 = v_u_2.resolve(p10, v11.Posters)
+    local v13 = {}
+    if not v12 then
+        return v13
+    end
+    for _, v14 in ipairs(v12:GetChildren()) do
+        if v14:IsA("BasePart") then
+            table.insert(v13, v14)
+        end
+    end
+    return v13
+end
+function v_u_2.folderFor(p15)
+    -- upvalues: (copy) v_u_2, (copy) v_u_1
+    local v16 = v_u_2.Puzzles[p15]
+    if not v16 then
+        return nil
+    end
+    local v17 = v_u_1:FindFirstChild(v_u_2.RootFolderName)
+    return v17 and v17:FindFirstChild(v16.Folder) or nil
+end
+function v_u_2.displayFor(p18, p19)
+    -- upvalues: (copy) v_u_2
+    local v20 = v_u_2.resolve
+    local v21
+    if p19 then
+        v21 = p19.Display
+    else
+        v21 = p19
+    end
+    local v22 = v20(p18, v21)
+    if v22 and v22:IsA("TextButton") then
+        return v22
+    else
+        local v23 = v_u_2.resolve
+        if p19 then
+            p19 = p19.Model
+        end
+        local v24 = v23(p18, p19)
+        if v24 then
+            v24 = v24:FindFirstChild("TextButton", true)
+        end
+        if v24 and v24:IsA("TextButton") then
+            return v24
+        else
+            return nil
+        end
+    end
+end
+function v_u_2.stepFor(p25, p26)
+    -- upvalues: (copy) v_u_2
+    local v27 = v_u_2.Puzzles[p25]
+    if not v27 or type(p26) ~= "string" then
+        return nil
+    end
+    for _, v28 in ipairs(v27.Steps) do
+        if v28.Id == p26 then
+            return v28
+        end
+    end
+    return nil
+end
+function v_u_2.lampPartsOf(p29)
+    local v30 = nil
+    local v31 = nil
+    if not p29 then
+        return nil, nil
+    end
+    for _, v32 in ipairs(p29:GetDescendants()) do
+        if not v30 and v32:IsA("BasePart") then
+            if v32.Material == Enum.Material.Neon then
+                v30 = v32
+            end
+        end
+        if not v31 and v32:IsA("PointLight") then
+            v31 = v32
+        end
+    end
+    return v30, v31
+end
+function v_u_2.setIndicator(p33, p34)
+    -- upvalues: (copy) v_u_2
+    local v35, v36 = v_u_2.lampPartsOf(p33)
+    if v35 then
+        local v37
+        if p34 then
+            v37 = v_u_2.IndicatorOn
+        else
+            v37 = v_u_2.IndicatorOff
+        end
+        v35.Color = v37
+    end
+    if v36 then
+        local v38
+        if p34 then
+            v38 = v_u_2.IndicatorLightOn
+        else
+            v38 = v_u_2.IndicatorLightOff
+        end
+        v36.Color = v38
+    end
+end
+return v_u_2

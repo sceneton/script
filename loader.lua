@@ -2,7 +2,7 @@
 -- Upload this file and the four chapter modules to the same public GitHub repository.
 -- Change only BASE_RAW_URL to your repository's RAW URL.
 local VERSION = "103.00"
-local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/feature/native-integrated-hub"
+local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/main"
 local CACHE_FOLDER = "BeyyHub"
 local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_native_tabs3_"
 local REVISION_FILE = CACHE_FOLDER .. "/native_github_revision.txt"
@@ -52,7 +52,7 @@ local previousRevision = readCache(REVISION_FILE)
 if not validRevision(previousRevision) then previousRevision = nil end
 local revision
 local checked, response = pcall(function()
-    local raw = fetchFresh("https://api.github.com/repos/sceneton/script/commits/feature%2Fnative-integrated-hub")
+    local raw = fetchFresh("https://api.github.com/repos/sceneton/script/commits/main")
     return game:GetService("HttpService"):JSONDecode(raw)
 end)
 if checked and type(response) == "table" and validRevision(response.sha) then revision = response.sha end
@@ -143,7 +143,7 @@ if queue then
         local ok, value = pcall(function()
             local nonce = "?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1, 1000000000))
             local checked, info = pcall(function()
-                return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.github.com/repos/sceneton/script/commits/feature%%2Fnative-integrated-hub" .. nonce))
+                return game:GetService("HttpService"):JSONDecode(game:HttpGet("https://api.github.com/repos/sceneton/script/commits/main" .. nonce))
             end)
             if checked and type(info) == "table" and type(info.sha) == "string"
                 and #info.sha == 40 and info.sha:match("^%%x+$") then

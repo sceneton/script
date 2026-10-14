@@ -1,17 +1,34 @@
-# Beyy native integrated hub
+# BeyyHub native integrated hub
 
-Native Roblox GUI for the lobby and all three chapters. Right Ctrl opens/closes it. Drag the title bar with the mouse or touch; the panel stays on screen. No UI animations, resizing, remote UI package, or UI polling while closed. Numeric settings use a text field and +/- buttons. Dropdowns expand instantly.
+A native Roblox menu for the lobby and Chapters 1–3. Right Ctrl opens or closes it; drag the title bar with mouse or touch. The menu starts minimized and uses instant controls.
 
-Existing config keys and WindUI/BeyyHub/config/*.json files remain compatible. Overview & Settings contains configs, chapter 1 farm settings, and cutscene settings. Lobby Tools follows Overview & Settings. Existing gameplay callbacks remain unchanged, including Chapter 1's 0.25-second Replay delay.
-
-Run this native feature branch:
+Run the current main-branch loader:
 
 ```lua
-loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/feature/native-integrated-hub/loader.lua?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1,1000000000))))()
+loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/main/loader.lua?refresh=" .. tostring(os.time()) .. "-" .. tostring(math.random(1,1000000000))))()
 ```
 
-The router downloads only the current place's module, checks the native branch revision, uses separate native caches, and queues the router on teleport when supported. Each module embeds native_ui.lua; editing that file alone does not update the modules.
+The loader selects only the current place's module, checks the main-branch revision, validates immutable revision caches and queues itself on teleport when the executor supports it. Each chapter embeds the native UI; changes to native_ui.lua must also be incorporated into the modules.
 
-Verification: all files compile using the official Luau compiler. Mocked native control/config and router tests cover behavior; live executor/game performance and gameplay still need an in-game check.
+## Files
 
-Optimizations: confirmed-revision module and router caches avoid repeated downloads; nine chapter farming workers are omitted in the lobby; disabled collect/sell/tool actions avoid objective checks; remote references are cached with parent validation; intro skip indexes GUI buttons once and watches additions; repeated status text writes are avoided. Config keys, action intervals, puzzle stages, farm rotations, and Replay timing are preserved.
+- loader.lua: place routing, update checks, cache validation and teleport reload.
+- lobby.lua: config controls and automatic Chapter 1 creation, prioritizing the two portals nearest lobby spawn.
+- chapter1.lua: automatic win farming, orbit routes, tool usage, upgrades, needle pickup and replay handling.
+- chapter2.lua: puzzle automation, key pickup, tools and upgrades.
+- chapter3.lua: tools, collection, upgrades and chapter controls.
+- native_ui.lua: native menu implementation embedded in all four modules.
+
+## Settings and recovery
+
+Existing WindUI/BeyyHub/config/*.json configs remain compatible. Config controls and farm settings are under Overview & Settings. Lobby Tools follows that tab. Anti-AFK defaults on.
+
+Chapter 1's sequence starts with four laps at base-lower, then four original base laps, followed by the seven higher routes. The added lower route is two studs below the original base. Character inset and camera adjustments are preserved. Orbit progression waits for the character to follow its scheduled path.
+
+The five-minute round failsafe defaults on in every chapter, independently of Auto Farm Wins. It uses a verified upward HH:MM:SS timer, or elapsed time since intro completion if unavailable. Above five minutes it returns to lobby 77108422251420, reloads the script and resumes automatic Chapter 1 creation. The lobby is exempt. Automatic recovery requires executor teleport-queue support; failed requests retry with a cooldown.
+
+No-ID Chapter 1 needle pickup selects hand slot 1 and moves closer before physical clicks. Numeric-ID pickup retains the local HoveredHayId override. Diagnostic success, failure and retry traces are saved under BeyyHub/ when executor filesystem support is available.
+
+## Validation
+
+All six Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.

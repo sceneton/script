@@ -4607,7 +4607,7 @@ task.spawn(function()
         if type(getgenv)=="function" then local ok,value=pcall(getgenv);if ok and type(value)=="table" then env=value end end
         local queue=queue_on_teleport or env.queue_on_teleport or env.queueonteleport or env.queue_on_tp
         if type(queue)~="function" then return false,"teleport reload is unsupported" end
-        local ok,err=pcall(queue,[==[loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/feature/native-integrated-hub/loader.lua?refresh="..tostring(os.time()).."-"..tostring(math.random(1,1000000000))))()]==])
+        local ok,err=pcall(queue,[==[loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/main/loader.lua?refresh="..tostring(os.time()).."-"..tostring(math.random(1,1000000000))))()]==])
         if ok then _G.__BEYY_TELEPORT_RELOAD_JOB=game.JobId end
         return ok,tostring(err)
     end

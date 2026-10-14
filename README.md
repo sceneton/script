@@ -1,6 +1,6 @@
 # BeyyHub native integrated hub
 
-A native Roblox menu for the lobby and Chapters 1–3. Right Ctrl opens or closes it; drag the title bar with mouse or touch. The menu starts minimized and uses instant controls.
+A native Roblox menu for the lobby and Chapters 1–4. Right Ctrl opens or closes it; drag the title bar with mouse or touch. The menu starts minimized and uses instant controls.
 
 Run the current main-branch loader:
 
@@ -17,7 +17,8 @@ The loader selects only the current place's module, checks the main-branch revis
 - chapter1.lua: automatic win farming, orbit routes, tool usage, upgrades, needle pickup and replay handling.
 - chapter2.lua: puzzle automation, key pickup, tools and upgrades.
 - chapter3.lua: tools, collection, upgrades and chapter controls.
-- native_ui.lua: native menu implementation embedded in all four modules.
+- chapter4.lua: universal controls for place 102537610748607, including configs, anti-AFK, tools, upgrades, cutscene controls, vacuum recovery and round-timeout recovery. Chapter-specific puzzles are not implemented.
+- native_ui.lua: native menu implementation embedded in all five modules.
 
 ## Settings and recovery
 
@@ -31,4 +32,4 @@ No-ID Chapter 1 needle pickup selects hand slot 1 and moves closer before physic
 
 ## Validation
 
-All six Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.
+All seven Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.

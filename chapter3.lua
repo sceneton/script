@@ -756,6 +756,7 @@ end
         Callback = function() pcall(_G.__BEYY_HUB_CLEANUP) end,
     })
 
+    local bossToolsBusy = function() return false end
     local sharedFarmPuzzleBusy = function() return false end
     local sharedFarmDefaults = {
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
@@ -771,6 +772,7 @@ end
         UpgDroneSpeed=false, UpgDroneGrab=false, UpgDroneCapacity=false,
         UpgVacPower=false, UpgVacCooling=false, UpgVacRuntime=false,
         AutoSolveRanchPuzzles=true, AutoGrabAttachUfoParts=false,
+        AutoBossFight=false, AutoBossBodyHits=true, AutoBossGrabEscape=true, AutoBossFinish=true, BossDiagnostics=false,
     }
     local sharedFarmState = {}
     for key, value in pairs(sharedFarmDefaults) do sharedFarmState[key] = value end
@@ -1064,9 +1066,9 @@ end
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
             if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
-                and needleFolder and not farmBlocked() and not needlePriority() then
+                and needleFolder and not farmBlocked() and not needlePriority() and not bossToolsBusy() then
                 if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
-                    local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() end)
+                    local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() and not bossToolsBusy() end)
                     if id then sendFarmRemote("PitchforkDig",id) end
                 end
                 if sharedFarmState.AutoDeployDrone and LocalPlayer:GetAttribute("DroneOwned")==true
@@ -2106,6 +2108,7 @@ end
             return ok -- Local send only; never interpreted as server acceptance.
         end
         local function ranchUfoBlockReason(ignoreMenu)
+            if bossToolsBusy() then return "Boss workflow active" end
             if hubUnloaded then return "Hub unloaded" end
             if not sharedFarmState.AutoGrabAttachUfoParts then return "Auto Grab & Attach UFO Parts is OFF" end
             if not hubWindow.Closed and not ignoreMenu then return "Close the menu to allow UFO movement" end
@@ -2657,6 +2660,457 @@ end
         end
     end
     installRanchOptions()
+    local function installChapter3Boss()
+local Players=game:GetService("Players")
+local RS=game:GetService("ReplicatedStorage")
+local WS=game:GetService("Workspace")
+local Http=game:GetService("HttpService")
+local Input=game:GetService("VirtualInputManager")
+local player=Players.LocalPlayer
+if not player then return end
+if type(_G.__BEYY_WEAK_TEST_STOP)=="function" then pcall(_G.__BEYY_WEAK_TEST_STOP) end
+local tab=hubWindow:Tab({Title="Chapter 3 Boss",Icon="swords"})
+farmToggle(tab,"AutoBossFight","Auto Boss Fight")
+farmToggle(tab,"AutoBossBodyHits","Body Hits Between Weak Points")
+farmToggle(tab,"AutoBossGrabEscape","Auto Grab Escape")
+farmToggle(tab,"AutoBossFinish","Auto Key Pickup & Finish")
+farmToggle(tab,"BossDiagnostics","Boss Diagnostics")
+local statusLabel=tab:Paragraph({Title="Boss Status",Desc="Auto Boss Fight is OFF"})
+local vacuumLabel=tab:Paragraph({Title="Boss Vacuum Status",Desc="Waiting for boss"})
+local roundLabel=tab:Paragraph({Title="Round End Status",Desc="Waiting for completion"})
+local active=true
+local connections,bones={},{}
+local currentBoss
+local nextSend=0
+local started=os.clock()
+local trace={version=1,integrated=true,events={},vacuumSamples={},roundEndEvents={},attempts=0,bodyAttempts=0,weakAttempts=0,
+    grabInputs=0,confirmedHits=0,reportedDamage=0}
+local lastStatus
+local lastRangeNotice=-math.huge
+local grabSession
+local nextVacuumSample=0
+local vacuumLastHeat,vacuumProgressAt,vacuumState
+local finishedEncounter=false
+local observedBoss
+local observedEncounter
+local postFight=false
+local postFightDeadline=0
+local nextKeyAttempt=0
+local keyInputHeld
+local walkingHumanoid
+local monitoringFinish=false
+local finishMonitorDeadline=0
+local roundWatched={}
+local nextRoundSave=0
+local config={PitchforkRange=13,PitchforkCooldown=0.85}
+local fight=RS:FindFirstChild("BossFight")
+local configModule=fight and fight:FindFirstChild("Config")
+if configModule then local ok,result=pcall(require,configModule); if ok and type(result)=="table" then config=result end end
+local function log(message,details)
+    if message==lastStatus and not details then return end
+    lastStatus=message
+    pcall(function() statusLabel:SetDesc(message) end)
+    if sharedFarmState.BossDiagnostics then print("[Boss] "..message) end
+    if #trace.events<2048 then
+        trace.events[#trace.events+1]={at=os.clock()-started,status=message,details=details}
+    else trace.droppedEvents=(trace.droppedEvents or 0)+1 end
+end
+local function saveTrace(force)
+    if not force and not sharedFarmState.BossDiagnostics then return end
+    if type(writefile)=="function" then
+        pcall(function()
+            if type(makefolder)=="function" then pcall(makefolder,"BeyyHub") end
+            writefile("BeyyHub/chapter3_boss_integrated.json",Http:JSONEncode(trace))
+        end)
+    end
+end
+local function encodeRoundValue(value,depth,seen)
+    depth=depth or 0; seen=seen or {}
+    local kind=typeof(value)
+    if kind=="nil" or kind=="boolean" then return value end
+    if kind=="number" then return value==value and math.abs(value)<math.huge and value or tostring(value) end
+    if kind=="string" then return value:sub(1,1000) end
+    if kind=="Instance" then return {path=value:GetFullName(),class=value.ClassName} end
+    if kind=="Vector3" then return {x=value.X,y=value.Y,z=value.Z} end
+    if kind=="table" then
+        if depth>=4 or seen[value] then return "[bounded table]" end
+        seen[value]=true
+        local result,count={},0
+        for key,item in pairs(value) do
+            count+=1; if count>40 then result.__truncated=true; break end
+            result[tostring(key)]=encodeRoundValue(item,depth+1,seen)
+        end
+        seen[value]=nil; return result
+    end
+    return tostring(value)
+end
+local function recordRound(kind,path,payload)
+    if not active then return end
+    local row={at=os.clock()-started,serverTime=WS:GetServerTimeNow(),kind=kind,path=path,payload=encodeRoundValue(payload)}
+    if #trace.roundEndEvents<128 then trace.roundEndEvents[#trace.roundEndEvents+1]=row
+    else trace.droppedRoundEvents=(trace.droppedRoundEvents or 0)+1 end
+    pcall(function() roundLabel:SetDesc(kind..": "..path) end)
+    if sharedFarmState.BossDiagnostics then print("[Round Monitor] "..kind..": "..path) end
+    saveTrace()
+end
+local function monitorAttribute(obj,name)
+    local entry=roundWatched[obj]
+    if not entry then entry={}; roundWatched[obj]=entry end
+    if entry[name] then return end
+    entry[name]=true
+    recordRound("attribute_initial",obj:GetFullName().."."..name,obj:GetAttribute(name))
+    connections[#connections+1]=obj:GetAttributeChangedSignal(name):Connect(function()
+        recordRound("attribute_changed",obj:GetFullName().."."..name,obj:GetAttribute(name))
+    end)
+end
+local function monitorRemote(remote)
+    if not remote or roundWatched[remote] or not remote:IsA("RemoteEvent") then return end
+    roundWatched[remote]=true
+    recordRound("listener_ready",remote:GetFullName(),nil)
+    connections[#connections+1]=remote.OnClientEvent:Connect(function(...)
+        recordRound("server_event",remote:GetFullName(),table.pack(...))
+    end)
+end
+local function refreshRoundMonitors()
+    monitorAttribute(player,"NeedleRoundComplete")
+    local folder=RS:FindFirstChild("NeedleHaystack")
+    if folder then
+        monitorRemote(folder:FindFirstChild("NeedleRoundCompleted"))
+        monitorAttribute(folder,"RoundFinishedElapsed")
+        monitorAttribute(folder,"RoundStartedAt")
+    end
+    local finish=RS:FindFirstChild("TruckFinish")
+    if finish then
+        for _,name in ipairs({"Cutscene","Blocked","Skip"}) do monitorRemote(finish:FindFirstChild(name)) end
+    end
+end
+local function stop()
+    if not active then return end
+    active=false
+    trace.duration=os.clock()-started
+    if walkingHumanoid then
+        pcall(function()
+            local root=player.Character and player.Character:FindFirstChild("HumanoidRootPart")
+            walkingHumanoid:Move(Vector3.zero,false)
+            if root then walkingHumanoid:MoveTo(root.Position) end
+        end)
+        walkingHumanoid=nil
+    end
+    if keyInputHeld then pcall(function() Input:SendKeyEvent(false,keyInputHeld,false,game) end); keyInputHeld=nil end
+    for _,connection in ipairs(connections) do connection:Disconnect() end
+    log("Stopped")
+    saveTrace(true)
+end
+_G.__BEYY_C3_BOSS_STOP=stop
+local previousBossCleanup=_G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP=function()
+    stop()
+    if previousBossCleanup then pcall(previousBossCleanup) end
+end
+tab:Button({Title="Export Boss Diagnostics",Callback=function()
+    saveTrace(true)
+    if type(setclipboard)=="function" then pcall(function() setclipboard(Http:JSONEncode(trace)) end) end
+end})
+bossToolsBusy=function()
+    if not active or not sharedFarmState.AutoBossFight then return false end
+    if postFight then return true end
+    local model=WS:FindFirstChild("HayGolem_Rig")
+    local state=model and model:GetAttribute("BossState")
+    return state~=nil and state~="" and state~="Sleeping" and state~="Unavailable" and state~="Returning"
+end
+local function beginKeyPickup()
+    if postFight or finishedEncounter then return end
+    if not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish then return end
+    postFight=true; postFightDeadline=os.clock()+60
+    log("Boss defeated; waiting to collect neck key",{kind="key_start"})
+end
+local feedback=fight and fight:FindFirstChild("Feedback")
+if feedback and feedback:IsA("RemoteEvent") then
+    connections[#connections+1]=feedback.OnClientEvent:Connect(function(kind,userId,amount,position,tool,grade)
+        if kind=="Hit" and userId==player.UserId and tool=="Pitchfork" then
+            trace.confirmedHits+=1
+            trace.reportedDamage+=tonumber(amount) or 0
+            log("Server pitchfork hit: "..tostring(amount).." ("..tostring(grade or "Normal")..")",
+                {kind="hit",amount=amount,grade=grade or "Normal",bossEquippedSlot=player:GetAttribute("BossEquippedSlot")})
+        elseif kind=="GrabPrompts" and type(userId)=="table" and type(userId.prompts)=="table" then
+            grabSession={id=userId.id,prompts=userId.prompts,good=tonumber(userId.good) or 0.3,
+                needed=tonumber(userId.needed) or 3,sent={},successes=0}
+            log("Grab prompts received",{kind="grab_prompts",id=grabSession.id,needed=grabSession.needed})
+        elseif kind=="AttackFX" and type(amount)=="table" then
+            if grabSession and amount.id==grabSession.id then
+                if userId=="GrabProgress" and amount.userId==player.UserId then
+                    grabSession.successes=tonumber(amount.successes) or grabSession.successes
+                    log("Server grab progress: "..tostring(amount.grade),
+                        {kind="grab_progress",index=amount.index,grade=amount.grade,successes=grabSession.successes,misses=amount.misses})
+                elseif userId=="Cancel" or ((userId=="GrabRelease" or userId=="GrabHurl") and amount.userId==player.UserId) then
+                    log("Grab ended: "..tostring(amount.reason or userId),{kind="grab_end",reason=amount.reason or userId})
+                    grabSession=nil
+                end
+            end
+        elseif kind=="BossEvent" and userId=="Defeated" then beginKeyPickup() end
+    end)
+end
+connections[#connections+1]=player.OnTeleport:Connect(stop)
+local function tickGrab()
+    if not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossGrabEscape or not hubWindow.Closed then return end
+    local session=grabSession
+    if not session or session.successes>=session.needed then return end
+    if player:GetAttribute("BossHeld")~=true then return end
+    local boss=WS:FindFirstChild("HayGolem_Rig")
+    if not boss or boss:GetAttribute("GrabVictim")~=player.UserId then return end
+    local remote=fight and fight:FindFirstChild("GrabInput")
+    if not remote or not remote:IsA("RemoteEvent") then return end
+    local now=WS:GetServerTimeNow()
+    for index,prompt in ipairs(session.prompts) do
+        if not session.sent[index] then
+            local perfectAt=tonumber(prompt.perfectAt)
+            local shownAt=tonumber(prompt.shownAt)
+            if not perfectAt or not shownAt or type(prompt.key)~="string" then session.sent[index]="invalid"
+            elseif now>perfectAt+session.good then session.sent[index]="expired"
+            elseif now>=shownAt and now>=perfectAt then
+                session.sent[index]=true
+                local ok,err=pcall(function() remote:FireServer(session.id,index,prompt.key,now) end)
+                if ok then trace.grabInputs+=1 end
+                log(ok and "Sent timed grab response: "..prompt.key or "Grab request error: "..tostring(err),
+                    {kind="grab_input",index=index,key=prompt.key,offset=now-perfectAt,sent=ok})
+                return
+            else return end
+        end
+    end
+end
+local function sampleVacuum()
+    local now=WS:GetServerTimeNow()
+    if now<nextVacuumSample then return end
+    nextVacuumSample=now+0.25
+    local heat=tonumber(player:GetAttribute("VacuumHeat"))
+    local activeVacuum=player:GetAttribute("VacuumActive")
+    local overheated=player:GetAttribute("VacuumOverheated")
+    local slot=player:GetAttribute("BossEquippedSlot")
+    local boss=WS:FindFirstChild("HayGolem_Rig")
+    local state="unknown"
+    local locked=player:GetAttribute("BossHeld")==true or player:GetAttribute("BossRagdolled")==true
+        or player:GetAttribute("BossKnockdownCamera")==true or player:GetAttribute("CutsceneActive")==true
+        or player:GetAttribute("NeedleInputLocked")==true or now<(tonumber(player:GetAttribute("BossStunnedUntil")) or 0)
+    if slot~=5 then state="not equipped"
+    elseif locked then state="combat input locked"
+    elseif overheated==true then state="overheated"
+    elseif activeVacuum==false then state="inactive"
+    elseif activeVacuum==true and heat then
+        state="active"
+        if not vacuumLastHeat or not vacuumProgressAt or math.abs(heat-vacuumLastHeat)>=0.002 then
+            vacuumLastHeat=heat; vacuumProgressAt=now
+        elseif now-vacuumProgressAt>=4 then state="suspected frozen heat" end
+    end
+    if state~="active" and state~="suspected frozen heat" then vacuumLastHeat=nil; vacuumProgressAt=nil end
+    if #trace.vacuumSamples<400 then
+        trace.vacuumSamples[#trace.vacuumSamples+1]={at=os.clock()-started,state=state,heat=heat,
+            active=activeVacuum,overheated=overheated,slot=slot,bossHealth=boss and boss:GetAttribute("BossHealth"),
+            vacuumState=player:GetAttribute("VacuumState")}
+    end
+    if state~=vacuumState then
+        vacuumState=state
+        pcall(function() vacuumLabel:SetDesc(state..(heat and string.format(" | heat %.0f%%",heat*100) or "")) end)
+        log("Vacuum monitor: "..state,{kind="vacuum_state",state=state,heat=heat})
+    end
+end
+local function tick()
+    if not sharedFarmState.AutoBossFight or not hubWindow.Closed then return end
+    local boss=WS:FindFirstChild("HayGolem_Rig")
+    if boss~=currentBoss then currentBoss=boss; table.clear(bones) end
+    if not boss then log("Waiting for boss"); return end
+    if postFight then return end
+    if boss:GetAttribute("BossState")=="Defeated" then beginKeyPickup(); return end
+    local state=boss:GetAttribute("BossState")
+    for _,excluded in ipairs({"Intro","Sleeping","Rising","Falling","Returning","Unavailable"}) do
+        if state==excluded then log("Waiting: boss "..state); return end
+    end
+    local name=boss:GetAttribute("BossWeakPoint")
+    local now=WS:GetServerTimeNow()
+    local ends=tonumber(boss:GetAttribute("BossWeakPointEndsAt"))
+    local dizzy=boss:GetAttribute("BossWeakPointDizzy")==true
+    local weak=type(name)=="string" and name~="" and (not ends or now<ends or dizzy)
+    if not weak and not sharedFarmState.AutoBossBodyHits then return end
+    if not weak then name="Chest" end
+    for _,flag in ipairs({"NeedleInputLocked","CutsceneActive","BossRagdolled","BossRagdollRecovering","BossKnockdownCamera","BossHeld"}) do
+        if player:GetAttribute(flag)==true then log("Waiting: "..flag); return end
+    end
+    if now<(tonumber(player:GetAttribute("BossStunnedUntil")) or 0) then log("Waiting for stun to end"); return end
+    if now<nextSend then return end
+    local head=player.Character and player.Character:FindFirstChild("Head")
+    local body=boss:FindFirstChild("RootPart")
+    if not head or not body then log("Waiting for character / boss root"); return end
+    local bone=bones[name]
+    if not bone or not bone:IsDescendantOf(body) then
+        bone=body:FindFirstChild(name,true)
+        if (not bone or not bone:IsA("Bone")) and not weak then
+            name="Pelvis"; bone=body:FindFirstChild(name,true)
+        end
+        if not bone or not bone:IsA("Bone") then log("Missing target bone: "..name); return end
+        bones[name]=bone
+    end
+    local target=bone.TransformedWorldCFrame.Position
+    local direction=target-head.Position
+    local range=math.clamp(tonumber(player:GetAttribute("PitchforkReach")) or tonumber(config.PitchforkRange) or 13,tonumber(config.PitchforkRange) or 13,24)
+    if direction.Magnitude>range then
+        if os.clock()-lastRangeNotice>=1 then
+            lastRangeNotice=os.clock()
+            log(string.format("Move closer to %s: %.1f studs (limit %.1f)",name,direction.Magnitude,range))
+        end
+        return
+    end
+    if direction.Magnitude<0.01 then return end
+    local folder=RS:FindFirstChild("NeedleHaystack")
+    local remote=folder and folder:FindFirstChild("PitchforkDig")
+    if not remote or not remote:IsA("RemoteEvent") then log("Waiting for PitchforkDig remote"); return end
+    local ok,err=pcall(function() remote:FireServer("Boss",head.Position,direction.Unit) end)
+    nextSend=now+math.max(0.1,tonumber(player:GetAttribute("PitchforkCooldown")) or tonumber(config.PitchforkCooldown) or 0.85)
+    if ok then
+        trace.attempts+=1
+        if weak then trace.weakAttempts+=1 else trace.bodyAttempts+=1 end
+        log("Sent cooldown-paced attempt at "..name.."; waiting for server hit feedback",
+            {kind="attempt",target=name,targetType=weak and "weak" or "body",bossState=state,dizzy=dizzy,distance=direction.Magnitude,
+             cooldown=nextSend-now,bossEquippedSlot=player:GetAttribute("BossEquippedSlot"),
+             needleEquippedSlot=player:GetAttribute("NeedleEquippedSlot"),bossHealth=boss:GetAttribute("BossHealth")})
+    else log("Request error: "..tostring(err)) end
+end
+local function walkPigCircle(center,character,root)
+    local humanoid=character:FindFirstChildOfClass("Humanoid")
+    if not humanoid then log("Circle skipped: Humanoid unavailable"); return false end
+    local function movementDetails(target)
+        local state="unknown"
+        pcall(function() state=humanoid:GetState().Name end)
+        local direction=humanoid.MoveDirection
+        return {position={x=root.Position.X,y=root.Position.Y,z=root.Position.Z},
+            target=target and {x=target.X,y=target.Y,z=target.Z} or nil,
+            walkSpeed=humanoid.WalkSpeed,health=humanoid.Health,anchored=root.Anchored,
+            humanoidState=state,sit=humanoid.Sit,platformStand=humanoid.PlatformStand,
+            moveDirection=direction and {x=direction.X,y=direction.Y,z=direction.Z} or nil,
+            cutsceneActive=player:GetAttribute("CutsceneActive"),inputLocked=player:GetAttribute("NeedleInputLocked"),
+            bossHeld=player:GetAttribute("BossHeld"),ragdolled=player:GetAttribute("BossRagdolled"),
+            knockdownCamera=player:GetAttribute("BossKnockdownCamera")}
+    end
+    walkingHumanoid=humanoid
+    log("Walking one 360-degree circle with a 3-stud radius",{kind="circle_start",radius=3,movement=movementDetails()})
+    local deadline=os.clock()+20
+    -- MoveTo can finish within roughly one stud; use longer chords so the
+    -- arrival tolerance does not immediately consume successive waypoints.
+    for index=0,12 do
+        if not active or not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed or player.Character~=character or not root.Parent or humanoid.Health<=0 then return false end
+        local angle=index*math.pi*2/12
+        local target=center+Vector3.new(math.cos(angle)*3,0,math.sin(angle)*3)
+        humanoid:MoveTo(target)
+        local legDeadline=math.min(deadline,os.clock()+3)
+        local arrived=false
+        repeat
+            if not active or not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed or player.Character~=character or not root.Parent or humanoid.Health<=0 then return false end
+            local offset=root.Position-target
+            arrived=Vector3.new(offset.X,0,offset.Z).Magnitude<=1
+            if arrived then break end
+            task.wait(0.05)
+        until os.clock()>=legDeadline
+        if not arrived then log("Circle interrupted: walking path blocked or timed out",
+            {kind="circle_failed",waypoint=index,movement=movementDetails(target)}); return false end
+    end
+    trace.pigCircleCompleted=true
+    log("Completed 3-stud-radius circle",{kind="circle_complete",radius=3,laps=1})
+    return true
+end
+local function tickKeyPickup()
+    if not postFight or not active then return end
+    if not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed then return end
+    if os.clock()>=postFightDeadline then log("Key pickup timeout; teleport skipped"); finishedEncounter=true; postFight=false; saveTrace(true); return end
+    local character=player.Character
+    local root=character and character:FindFirstChild("HumanoidRootPart")
+    if not root then log("Waiting for character to collect key"); return end
+    if player:GetAttribute("HasCarKey")==true then
+        local destination=Vector3.new(-658.85,3.76,285.29)
+        root.CFrame=CFrame.new(destination)
+        root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero
+        trace.keyConfirmed=true; trace.teleportedToPig=true
+        log("HasCarKey confirmed; teleported to pig coordinates",{kind="key_complete",destination={x=-658.85,y=3.76,z=285.29}})
+        walkPigCircle(destination,character,root)
+        if not active then return end
+        if walkingHumanoid then
+            pcall(function() walkingHumanoid:Move(Vector3.zero,false); walkingHumanoid:MoveTo(root.Position) end)
+            walkingHumanoid=nil
+        end
+        finishedEncounter=true
+        monitoringFinish=true; finishMonitorDeadline=os.clock()+60
+        log("Round-end monitors remain active for 60 seconds",{kind="finish_monitor_start"})
+        saveTrace(); return
+    end
+    if player:GetAttribute("CutsceneActive")==true or player:GetAttribute("NeedleInputLocked")==true
+        or player:GetAttribute("BossHeld")==true or player:GetAttribute("BossRagdolled")==true then
+        log("Waiting for post-fight input lock to clear"); return
+    end
+    if os.clock()<nextKeyAttempt then return end
+    local boss=WS:FindFirstChild("HayGolem_Rig")
+    local body=boss and boss:FindFirstChild("HayGolem_Body")
+    local key=body and body:FindFirstChild("CarKey")
+    local prompt=key and key:FindFirstChild("TakeKeyPrompt")
+    if not key or not key:IsA("BasePart") or not prompt or not prompt:IsA("ProximityPrompt") then
+        log("Waiting for neck key / TakeKeyPrompt"); return
+    end
+    if not prompt.Enabled then log("Waiting for neck key prompt to enable"); return end
+    nextKeyAttempt=os.clock()+1.5
+    local reach=math.min(3,math.max(0.5,prompt.MaxActivationDistance*0.5))
+    local offset=root.Position-key.Position
+    local horizontal=Vector3.new(offset.X,0,offset.Z)
+    local direction=horizontal.Magnitude>0.01 and horizontal.Unit or Vector3.new(1,0,0)
+    local stand=key.Position+direction*reach
+    root.CFrame=CFrame.lookAt(stand,key.Position)
+    root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero
+    task.wait(0.2)
+    if not active or not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed or root~= (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) then return end
+    if player:GetAttribute("HasCarKey")==true then return end
+    if not key.Parent or not prompt.Parent or not prompt.Enabled or (root.Position-key.Position).Magnitude>prompt.MaxActivationDistance then return end
+    local ok,err=pcall(function()
+        if type(fireproximityprompt)=="function" then fireproximityprompt(prompt)
+        else
+            keyInputHeld=prompt.KeyboardKeyCode
+            Input:SendKeyEvent(true,keyInputHeld,false,game)
+            task.wait(math.max(0,prompt.HoldDuration)+0.1)
+        end
+    end)
+    if keyInputHeld then pcall(function() Input:SendKeyEvent(false,keyInputHeld,false,game) end); keyInputHeld=nil end
+    log(ok and "Activated neck key prompt; waiting for HasCarKey" or "Key prompt error: "..tostring(err),
+        {kind="key_attempt",sent=ok})
+end
+log("Auto Boss Fight is OFF")
+task.spawn(function()
+    local ok,err=pcall(function()
+        while active and not hubUnloaded do
+            local model=WS:FindFirstChild("HayGolem_Rig")
+            local encounter=model and model:GetAttribute("Encounter")
+            if model and (model~=observedBoss or observedEncounter~=encounter) then
+                observedBoss=model; observedEncounter=encounter
+                finishedEncounter=false; postFight=false; monitoringFinish=false; grabSession=nil
+            end
+            refreshRoundMonitors()
+            if not sharedFarmState.AutoBossFight then
+                log("Auto Boss Fight is OFF")
+                if walkingHumanoid then
+                    pcall(function() walkingHumanoid:Move(Vector3.zero,false) end)
+                    walkingHumanoid=nil
+                end
+                task.wait(0.5)
+                continue
+            end
+            if monitoringFinish then
+                if os.clock()>=finishMonitorDeadline then log("Round-end monitor window finished"); monitoringFinish=false; postFight=false; postFightDeadline=0; task.wait(0.5) end
+            elseif postFight then tickKeyPickup()
+            else tickGrab(); if bossToolsBusy() then sampleVacuum() end; tick() end
+            if os.clock()>=nextRoundSave then nextRoundSave=os.clock()+5; saveTrace() end
+            task.wait(0.05)
+        end
+    end)
+    if not ok then log("Test error: "..tostring(err)) end
+    stop()
+end)
+
+    end
+    installChapter3Boss()
+
 
 
     do
@@ -3545,4 +3999,5 @@ end
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end
+
 

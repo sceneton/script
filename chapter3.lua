@@ -2048,7 +2048,7 @@ end
         end
         local function ranchUfoUnheld(piece)
             local holder=piece:GetAttribute("HeldBy")
-            return holder==nil or holder==false or holder=="" or tonumber(holder)==0
+            return holder==nil
         end
         local function ranchUfoExposedPart(model)
             if not model then return nil end
@@ -2058,8 +2058,7 @@ end
             -- proxies are NOT the collectible objects.
             for _,piece in ipairs(model:GetDescendants()) do
                 if piece:IsA("BasePart") and
-                    (piece:GetAttribute("UfoPiece")==true
-                        or piece:GetAttribute("Revealed")~=nil)
+                    piece:GetAttribute("UfoPiece")==true
                     and piece:GetAttribute("Revealed")==true
                     and piece:GetAttribute("Returned")~=true
                     and ranchUfoUnheld(piece) then
@@ -2243,7 +2242,7 @@ end
                 camera.CFrame=CFrame.lookAt(camPos,aim)
                 local screen,visible
                 if stage=="pickup" then
-                    screen,visible=camera:WorldToViewportPoint(aim)
+                    screen,visible=camera:WorldToScreenPoint(aim)
                 else
                     screen,visible=camera:WorldToScreenPoint(aim)
                 end
@@ -2299,7 +2298,7 @@ end
                     else
                         -- Chapter 1/2 pickup method: viewport center,
                         -- stable Scriptable camera and short repeated clicks.
-                        local atCenter=(pos-camera.ViewportSize*0.5).Magnitude
+                        local atCenter=(pos-(camera.ViewportSize*0.5+Vector2.new(0,ranchGuiInsetY()))).Magnitude
                         if atCenter>18 then
                             print(string.format(
                                 "[Ranch UFO] pickup %s angle=%d off-center %.1fpx",
@@ -2356,6 +2355,33 @@ end
                 tostring(stage),target.Name,#angles,attempts,occluded),true)
             return check(),"unconfirmed after angle sweep"
         end
+        -- UfoPartsClient sends the part Instance for TAKE and no args for RETURN.
+        -- Approach first; successful delivery alone never confirms progress.
+        local function ranchUfoApproachRequest(target,root,check,remoteName,argument)
+            if check() then return true end
+            if not target or not root or not root.Parent or not ranchUfoSafeToMove() then return false end
+            local model=ranchUfoModel()
+            local center=remoteName=="ReturnPart" and model and model:GetPivot().Position or target.Position
+            local offset=root.Position-center
+            local horizontal=Vector3.new(offset.X,0,offset.Z)
+            local direction=horizontal.Magnitude>0.01 and horizontal.Unit or Vector3.new(1,0,0)
+            local stand=center+direction*3+Vector3.new(0,1.15,0)
+            root.CFrame=CFrame.lookAt(stand,Vector3.new(center.X,stand.Y,center.Z))
+            root.AssemblyLinearVelocity=Vector3.zero
+            root.AssemblyAngularVelocity=Vector3.zero
+            task.wait(0.15)
+            if check() then return true end
+            if not ranchUfoSafeToMove() or not target.Parent or not root.Parent then return false end
+            -- Match the client proximity checks using the actual position after moving.
+            if remoteName=="ReturnPart" then center=model:GetPivot().Position else center=target.Position end
+            local maxDistance=remoteName=="ReturnPart" and 30 or 14
+            if (root.Position-center).Magnitude>maxDistance then return false end
+            local sent
+            if remoteName=="ReturnPart" then sent=ranchUfoRemote("ReturnPart")
+            else sent=ranchUfoRemote("PickUpPart",argument) end
+            if sent and ranchUfoWaitFor(check,0.85) then return true end
+            return check()
+        end
         local function ranchUfoPickup(part,root,camera)
             local name=part.Name
             local function received()
@@ -2364,6 +2390,8 @@ end
                     or part:GetAttribute("HeldBy")==tostring(LocalPlayer.UserId)
             end
             if received() then return true end
+            if ranchUfoApproachRequest(part,root,received,"PickUpPart",part) then return true end
+            if not ranchUfoSafeToMove() then return false end
             -- Chapter 2's reliable key pickup disables nearby hay queries
             -- and collisions JUST during targeting. A revealed UFO piece
             -- can overlap the same hay. Restore everything without exception
@@ -2413,7 +2441,7 @@ end
             end
             local clickDetector=part:FindFirstChildWhichIsA("ClickDetector",true)
             ranchUfoNotice(string.format(
-                "Revealed part %s: query=%s detector=%s (using Chapter 2-style viewport aim)",
+                "Revealed part %s: query=%s detector=%s (screen aim fallback after client pickup request)",
                 name,tostring(part.CanQuery),
                 tostring(clickDetector and clickDetector:GetFullName() or "none")))
             local callOK,clicked,why=xpcall(function()
@@ -2434,7 +2462,7 @@ end
             -- Only one existing remote fallback; delivery is NOT treated as
             -- successful unless the replicated carrying state confirms it.
             if ranchUfoSafeToMove() then
-                local sent=ranchUfoRemote("PickUpPart",name)
+                local sent=ranchUfoRemote("PickUpPart",part)
                 if sent and ranchUfoWaitFor(received,0.65) then return true end
             end
             return received()
@@ -2453,13 +2481,15 @@ end
                 ranchUfoNotice("UFO Main attach surface not found",true)
                 return false
             end
+            if ranchUfoApproachRequest(main,root,attached,"ReturnPart") then return true end
+            if not ranchUfoSafeToMove() then return false end
             ranchUfoNotice("Carrying "..carrying.."; attaching from alternate angles")
             local clicked,why=ranchUfoWorldClick(main,root,camera,attached,"attach")
             if clicked then return true end
             if why=="interrupted" then return false end
             -- No FireServer call is regarded as a confirmed attachment.
             if ranchUfoSafeToMove() then
-                local sent=ranchUfoRemote("ReturnPart",carrying)
+                local sent=ranchUfoRemote("ReturnPart")
                 if sent and ranchUfoWaitFor(attached,0.75) then return true end
             end
             return attached()

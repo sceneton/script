@@ -393,18 +393,18 @@ local function watchVacuumFocus(onTransition)
 end
 
 local function createVacuumHeatWatchdog()
-    local running,lastHeat,lastProgress=false,nil,0
+    local running,lastHeat,lastProgress,lastPeak=false,nil,0,nil
     local watchdog={}
     function watchdog.Start(heat)
-        running=true;lastHeat=heat;lastProgress=os.clock()
+        running=true;lastHeat=heat;lastPeak=heat;lastProgress=os.clock()
     end
-    function watchdog.Stop() running=false;lastHeat=nil end
+    function watchdog.Stop() running=false;lastHeat=nil;lastPeak=nil end
     function watchdog.Check(heat)
         if not running or type(heat)~="number" or heat~=heat then return nil end
         local previous=lastHeat
-        if previous==nil or heat>previous+0.0002 then lastProgress=os.clock() end
+        if lastPeak==nil or heat>lastPeak+0.002 then lastProgress=os.clock();lastPeak=heat end
         lastHeat=heat
-        if previous and heat<previous-0.001 then return "cooling" end
+        if previous and heat<previous-0.005 then return "cooling" end
         if os.clock()-lastProgress>=4 then return "stalled" end
         return nil
     end
@@ -2266,6 +2266,7 @@ end
 
 do
     Header(ToolsTab, "Auto Tool Usage")
+    afkOrbitTelemetry.VacuumStatus=ToolsTab:Paragraph({Title="Vacuum Status",Desc="Waiting for vacuum automation"})
     Info(ToolsTab, "Tools work independently of AFK mode. With AFK enabled, TNT targets remaining hay around the orbiting camera's current angle.")
     AddToggle(ToolsTab, "AutoUseTNT", "Auto Use TNT", false)
     tntTelemetry.Element=ToolsTab:Paragraph({Title="TNT Status",Desc="Waiting for automatic TNT"})
@@ -3534,11 +3535,16 @@ do
         return runtimeSeconds, coolingSeconds, runtimeLevel, coolingLevel
     end
 
+    local forceVacuumReselect=false
     local function readHeat()
         local playerGui = LocalPlayer:FindFirstChildOfClass("PlayerGui")
         local hud = playerGui and playerGui:FindFirstChild("HUD")
         local overheat = hud and hud:FindFirstChild("Overheat")
         local fill = overheat and overheat:FindFirstChild("Fill")
+        local replicated=LocalPlayer:GetAttribute("VacuumHeat")
+        if type(replicated)=="number" and replicated==replicated and replicated>=0 and replicated<=1 then
+            return replicated,fill and fill:IsA("GuiObject") and fill or nil
+        end
         if not fill or not fill:IsA("GuiObject") then return nil, nil end
         local value = fill.Size.Y.Scale
         if type(value) ~= "number" or value ~= value or value < -0.05 or value > 1.05 then
@@ -3598,6 +3604,21 @@ do
     end
 
     local function equipVacuum()
+        if forceVacuumReselect then
+            if not canVacuum() then return false end
+            local x,y=mousePoint()
+            if not x then return false end
+            VirtualInputManager:SendMouseButtonEvent(x,y,0,false,game,0)
+            local humanoid=LocalPlayer.Character and LocalPlayer.Character:FindFirstChildOfClass("Humanoid")
+            if humanoid then humanoid:UnequipTools() end
+            local downOK=pcall(function() VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.One,false,game) end)
+            task.wait(0.05)
+            local upOK=pcall(function() VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.One,false,game) end)
+            if not downOK or not upOK then return false end
+            task.wait(0.15)
+            if not canVacuum() then return false end
+            forceVacuumReselect=false
+        end
         local character = LocalPlayer.Character
         if not character then return false end
         local backpack = LocalPlayer:FindFirstChildOfClass("Backpack")
@@ -3668,9 +3689,10 @@ do
                     coolingPending = true
                 end
                 if coolingPending then
+                    if afkOrbitTelemetry.VacuumStatus then afkOrbitTelemetry.VacuumStatus:SetDesc("Cooling; waiting for replicated ready state or empty heat") end
                     releaseVacuum()
                     if heat ~= nil then
-                        if heat <= HEAT_EMPTY then
+                        if heat <= HEAT_EMPTY or (LocalPlayer:GetAttribute("VacuumState")=="Ready" and LocalPlayer:GetAttribute("VacuumOverheated")~=true) then
                             coolingPending = false
                             readyAt = 0
                             print("[Vacuum] Heat returned to 0%; ready to resume suction")
@@ -3715,7 +3737,8 @@ do
                             if activeFill then
                                 local previousValue = startHeat
                                 sizeConnection = activeFill:GetPropertyChangedSignal("Size"):Connect(function()
-                                    local current = activeFill.Size.Y.Scale
+                                    local current = readHeat()
+                                    if current==nil then return end
 
                                     if current >= HEAT_FULL or (previousValue and previousValue >= 0.95 and current < previousValue - 0.15) then
                                         reachedFull = true
@@ -3735,6 +3758,7 @@ do
                             end)
                             if not pressed then return end
                             held = true
+                            if afkOrbitTelemetry.VacuumStatus then afkOrbitTelemetry.VacuumStatus:SetDesc("Holding vacuum; monitoring heat progress") end
                             if focusGeneration~=vacuumFocus.Generation() then releaseVacuum(); return end
                             didHold = true
                             print(string.format("[Vacuum] Cycle %d: holding Mouse1 to 100%% heat (Runtime L%d)", cycle, runtimeLevel))
@@ -3742,6 +3766,7 @@ do
                             local started = os.clock()
                             local lastHeat = startHeat
                             local lastRisingAt = started
+                            local lastRisingHeat=startHeat
 
                             local fallbackDeadline = started + runtime + RUNTIME_FALLBACK_EXTRA
                             while held and not reachedFull and not mustReleaseForPriority() do
@@ -3753,12 +3778,14 @@ do
                                         reachedFull = true
                                         break
                                     end
-                                    if lastHeat == nil or current > lastHeat + 0.0002 then
-                                        lastRisingAt = os.clock()
+                                    if lastRisingHeat == nil or current > lastRisingHeat + 0.002 then
+                                        lastRisingAt = os.clock();lastRisingHeat=current
                                     end
                                     lastHeat = current
 
                                     if os.clock() - lastRisingAt > HEAT_STALLED_SECONDS then
+                                        forceVacuumReselect=true
+                                        if afkOrbitTelemetry.VacuumStatus then afkOrbitTelemetry.VacuumStatus:SetDesc("Stall detected; releasing input and reselecting vacuum") end
                                         if os.clock() - lastStallWarning > 30 then
                                             lastStallWarning = os.clock()
                                             warn("[Vacuum] Heat stalled; releasing stale VIM hold and retrying a fresh press")

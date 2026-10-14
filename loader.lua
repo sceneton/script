@@ -4,8 +4,8 @@
 local VERSION = "103.00"
 local BASE_RAW_URL = "https://raw.githubusercontent.com/sceneton/script/main"
 local CACHE_FOLDER = "BeyyHub"
-local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_tabs3_"
-local REVISION_FILE = CACHE_FOLDER .. "/github_revision.txt"
+local CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_native_tabs3_"
+local REVISION_FILE = CACHE_FOLDER .. "/native_github_revision.txt"
 
 local MODULES = {
     [77108422251420] = {file="lobby.lua", name="Lobby"},
@@ -20,11 +20,15 @@ if not target then
     return
 end
 
+local validatedSource, validatedModule, validatedFunction
 local function valid(source, moduleName)
+    if source == validatedSource and moduleName == validatedModule and validatedFunction then return validatedFunction end
     if type(source) ~= "string" or #source < 1500 then return nil end
     if not source:find('local __BEYY_SCRIPT_VERSION = "' .. VERSION .. '"', 1, true) then return nil end
     if not source:find('local __BEYY_MODULE = "' .. moduleName .. '"', 1, true) then return nil end
-    return loadstring(source)
+    local fn, err = loadstring(source)
+    if fn then validatedSource, validatedModule, validatedFunction = source, moduleName, fn end
+    return fn, err
 end
 
 pcall(function()
@@ -53,7 +57,7 @@ local checked, response = pcall(function()
 end)
 if checked and type(response) == "table" and validRevision(response.sha) then revision = response.sha end
 local selectedRevision = revision or previousRevision
-if selectedRevision then CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_" .. selectedRevision .. "_" end
+if selectedRevision then CACHE_PREFIX = CACHE_FOLDER .. "/v103_00_native_" .. selectedRevision .. "_" end
 local downloadBase = selectedRevision and ("https://raw.githubusercontent.com/sceneton/script/" .. selectedRevision) or BASE_RAW_URL
 if not revision then
     warn("[BeyyHub] Could not check the latest GitHub revision; this run may use an older release")
@@ -61,12 +65,19 @@ end
 local moduleCache = CACHE_PREFIX .. target.file
 local source = nil
 local url = downloadBase .. "/" .. target.file
-local onlineOK, onlineSource = pcall(fetchFresh, url)
-if onlineOK and valid(onlineSource, target.name) then
-    source = onlineSource
-    if type(writefile) == "function" then pcall(writefile, moduleCache, source) end
+-- A confirmed SHA names immutable source; validate and reuse its local cache.
+if revision then
+    local cached = readCache(moduleCache)
+    if valid(cached, target.name) then source = cached end
 end
--- Cached modules are an offline fallback, never preferred over a valid update.
+if not source then
+    local onlineOK, onlineSource = pcall(fetchFresh, url)
+    if onlineOK and valid(onlineSource, target.name) then
+        source = onlineSource
+        if type(writefile) == "function" then pcall(writefile, moduleCache, source) end
+    end
+end
+-- Without a confirmed revision, retain the online attempt before offline fallback.
 if not source and type(readfile) == "function" then
     local ok, result = pcall(readfile, moduleCache)
     if ok and valid(result, target.name) then source = result end
@@ -82,8 +93,8 @@ end
 if revision then
     if revision ~= previousRevision then
         if type(delfile) == "function" then
-            local oldPrefixes = {"v103_00_", "v103_00_ui1_", "v103_00_rot2_", "v103_00_tabs3_"}
-            if previousRevision then table.insert(oldPrefixes, "v103_00_" .. previousRevision .. "_") end
+            local oldPrefixes = {"v103_00_native_", "v103_00_native_ui1_", "v103_00_native_rot2_", "v103_00_native_tabs3_"}
+            if previousRevision then table.insert(oldPrefixes, "v103_00_native_" .. previousRevision .. "_") end
             for _, prefix in ipairs(oldPrefixes) do
                 for _, file in ipairs({"loader.lua", "lobby.lua", "chapter1.lua", "chapter2.lua", "chapter3.lua"}) do
                     pcall(delfile, CACHE_FOLDER .. "/" .. prefix .. file)
@@ -100,7 +111,10 @@ print("[BeyyHub] Loading " .. target.name .. " | revision " .. (selectedRevision
 -- Only the module for the current place is downloaded and executed.
 local loaderCache = CACHE_PREFIX .. "loader.lua"
 local loaderURL = BASE_RAW_URL .. "/loader.lua"
-if type(writefile) == "function" then
+local cachedLoader = revision and readCache(loaderCache)
+local cachedLoaderValid = type(cachedLoader) == "string" and #cachedLoader > 1500
+    and cachedLoader:find("-- beyy v103.00 | GitHub PlaceId router", 1, true) and loadstring(cachedLoader)
+if type(writefile) == "function" and not cachedLoaderValid then
         local ok, data = pcall(fetchFresh, downloadBase .. "/loader.lua")
         if ok and type(data) == "string" and #data > 1500
             and data:find("-- beyy v103.00 | GitHub PlaceId router", 1, true)
@@ -151,12 +165,13 @@ if queue then
         else warn("[BeyyHub] No cached or online v103.00 loader after teleport") end
     ]==], loaderCache, loaderURL)
     local ok, err = pcall(queue, payload)
-    if not ok then warn("[BeyyHub] Could not register teleport reload: " .. tostring(err)) end
+    if ok then _G.__BEYY_TELEPORT_RELOAD_JOB=game.JobId
+    else warn("[BeyyHub] Could not register teleport reload: " .. tostring(err)) end
 else
     warn("[BeyyHub] queue_on_teleport unavailable; rerun loader after changing chapters")
 end
 
-local fn, compileError = loadstring(source)
+local fn, compileError = valid(source, target.name)
 if not fn then error("[BeyyHub] " .. target.name .. " compile error: " .. tostring(compileError)) end
 local ok, err = pcall(fn)
 if not ok then warn("[BeyyHub] " .. target.name .. " error: " .. tostring(err)) end

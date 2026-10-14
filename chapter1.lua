@@ -7,8 +7,6 @@ if game.PlaceId ~= 108628039999641 then
 end
 
 local CACHE_FOLDER = "BeyyHub"
-local WINDUIT_CACHE = CACHE_FOLDER .. "/windui.lua"
-local WINDUIT_URL = "https://github.com/Footagesus/WindUI/releases/latest/download/main.lua"
 
 pcall(function()
     if type(makefolder) == "function" and (type(isfolder) ~= "function" or not isfolder(CACHE_FOLDER)) then
@@ -27,25 +25,6 @@ local function safeWrite(path, content)
     if not content or #content == 0 or type(writefile) ~= "function" then return false end
     local ok = pcall(writefile, path, content)
     return ok
-end
-
-local function isValidWindUI(content)
-    if not content or #content < 5000 then return false end
-    local head = content:sub(1, 200):lower()
-    if head:sub(1, 1) == "<" or head:find("<!doctype", 1, true) then return false end
-    return loadstring(content) ~= nil
-end
-
-local function fetchValidated(url, validator)
-    local ok, content = pcall(function() return game:HttpGet(url) end)
-    if not ok or type(content) ~= "string" or not validator(content) then return nil end
-    return content
-end
-
-local cachedWindUI = safeRead(WINDUIT_CACHE)
-if not isValidWindUI(cachedWindUI) then
-    cachedWindUI = fetchValidated(WINDUIT_URL, isValidWindUI)
-    if cachedWindUI then safeWrite(WINDUIT_CACHE, cachedWindUI) end
 end
 
 if _G.__BEYY_HUB_LOADED then
@@ -81,48 +60,355 @@ end
 
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
-local function installMenuCursorRelease(menu, isRunning)
-    local bindName = "BeyyV103_00MenuCursor_" .. tostring(LocalPlayer.UserId)
-    local wasOpen = false
-    local previousBehavior, previousIcon
-
-    local function restoreMouse()
-        if not wasOpen then return end
-        wasOpen = false
-        pcall(function()
-            if previousBehavior then UserInputService.MouseBehavior = previousBehavior end
-            if previousIcon ~= nil then UserInputService.MouseIconEnabled = previousIcon end
+local function installAntiIdle(tab, registry, isRunning)
+    local enabled, alive, warned = true, true, false
+    local virtualUser
+    local status = tab:Paragraph({Title="Anti AFK Status",Desc="Enabled; waiting for idle signal"})
+    registry.AntiAFK = tab:Toggle({
+        Title = "Anti AFK Kick", Value = true,
+        Callback = function(value) enabled = value == true; status:SetDesc(enabled and "Enabled; waiting for idle signal" or "Disabled") end,
+    })
+    local idleConnection = LocalPlayer.Idled:Connect(function()
+        if not alive or not enabled or not isRunning() then return end
+        local ok,err = pcall(function()
+            virtualUser = virtualUser or game:GetService("VirtualUser")
+            local camera = Workspace.CurrentCamera
+            virtualUser:CaptureController()
+            virtualUser:ClickButton2(Vector2.zero, camera and camera.CFrame or CFrame.new())
         end)
-        previousBehavior, previousIcon = nil, nil
+        local method = "VirtualUser"
+        if not ok then
+            method = "VirtualInputManager"
+            local pressed=false
+            ok,err=pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(0,0,1,true,game,0)
+                pressed=true
+            end)
+            if pressed then
+                local released,releaseErr=pcall(function() VirtualInputManager:SendMouseButtonEvent(0,0,1,false,game,0) end)
+                if not released then ok=false;err=releaseErr end
+            end
+        end
+        status:SetDesc(ok and ("Idle input sent via "..method) or ("Idle input failed: "..tostring(err)))
+        if ok then
+            print("[BeyyHub] Anti AFK idle input sent via "..method)
+        elseif not warned then
+            warned = true
+            warn("[BeyyHub] Anti AFK input unavailable: " .. tostring(err))
+        end
+    end)
+    local previousCleanup = _G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP = function()
+    stopEarlyIntro()
+    stopPitchforkSelector()
+    stopCollectHay(); stopDroppedHay(); stopCollectGem()
+        alive = false
+        idleConnection:Disconnect()
+        if previousCleanup then previousCleanup() end
     end
+end
 
-    local function updateCursor()
-        if not isRunning() then return end
-        local menuOpen = menu and menu.Closed == false
-        if menuOpen then
-            if not wasOpen then
-                previousBehavior = UserInputService.MouseBehavior
-                previousIcon = UserInputService.MouseIconEnabled
-                wasOpen = true
-            end
-
-            if UserInputService.MouseBehavior ~= Enum.MouseBehavior.Default then
-                UserInputService.MouseBehavior = Enum.MouseBehavior.Default
-            end
-            if not UserInputService.MouseIconEnabled then
-                UserInputService.MouseIconEnabled = true
-            end
-        else
-            restoreMouse()
+-- Pitchfork-only targeting: maintain child slots and budget large searches.
+local function createPitchforkSelector(allowModels, preferHovered, options)
+    options=options or {}
+    local folderName=options.FolderName or "HaystackClient"
+    local idName=options.IdName or "HayId"
+    local range=options.Range or 30
+    local function targetId(part,obj)
+        if options.ObjectId then return obj end
+        return part:GetAttribute(idName) or (allowModels and not options.PartIdOnly and obj:GetAttribute(idName))
+    end
+    local alive, folder = true, nil
+    local slots, positions, freeSlots, connections = {}, {}, {}, {}
+    local slotCount = 0
+    local lastTarget, lastTargetTime
+    local function clearFolder()
+        for _,c in ipairs(connections) do c:Disconnect() end
+        table.clear(connections); table.clear(slots); table.clear(positions); table.clear(freeSlots)
+        slotCount=0; lastTarget=nil; lastTargetTime=nil
+    end
+    local function add(obj)
+        if positions[obj] or not (obj:IsA("BasePart") or (allowModels and (obj:IsA("Model") or options.AllowContainers))) then return end
+        local index=table.remove(freeSlots)
+        if not index then slotCount+=1; index=slotCount end
+        slots[index]=obj; positions[obj]=index
+    end
+    local function remove(obj)
+        local index=positions[obj]
+        if not index then return end
+        positions[obj]=nil; slots[index]=false; freeSlots[#freeSlots+1]=index
+        if lastTarget==obj or (lastTarget and lastTarget:IsDescendantOf(obj)) then lastTarget=nil end
+    end
+    local function watchFolder(current)
+        if current==folder then return end
+        clearFolder(); folder=current
+        if not folder then return end
+        connections[1]=folder.ChildAdded:Connect(add)
+        connections[2]=folder.ChildRemoved:Connect(remove)
+        local scanFolder=folder
+        local sliceStarted=os.clock()
+        for index,obj in ipairs(folder:GetChildren()) do
+            if not alive or folder~=scanFolder then return end
+            if obj.Parent==scanFolder then add(obj) end
+            if index%32==0 and os.clock()-sliceStarted>=0.002 then task.wait(); sliceStarted=os.clock() end
         end
     end
-
-    pcall(function() RunService:UnbindFromRenderStep(bindName) end)
-    RunService:BindToRenderStep(bindName, Enum.RenderPriority.Last.Value + 100, updateCursor)
-    return function()
-        pcall(function() RunService:UnbindFromRenderStep(bindName) end)
-        restoreMouse()
+    local function stop()
+        alive=false; clearFolder(); folder=nil
     end
+    local function selectTarget(isAllowed, cacheSeconds)
+        if not alive or not isAllowed() then return nil end
+        local current=Workspace:FindFirstChild(folderName)
+        watchFolder(current)
+        if not alive or not isAllowed() then return nil end
+        local character=LocalPlayer.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        if not folder or not root then return nil end
+        local hovered=preferHovered and LocalPlayer:GetAttribute("HoveredHayId") or nil
+        if lastTarget and lastTarget.Parent and lastTarget:IsDescendantOf(folder)
+            and os.clock()-(lastTargetTime or 0)<(cacheSeconds or 0)
+            and not options.ObjectId and lastTarget:GetAttribute(idName) then return lastTarget,lastTarget:GetAttribute(idName) end
+        local best,bestId,hoveredPart,hoveredId=nil,nil,nil,nil
+        local bestObject,hoveredObject
+        local bestDistance=range*range
+        local sliceStarted=os.clock()
+        local origin=root.Position
+        local scanFolder=folder
+        local index=1
+        while index<=slotCount do
+            if not alive or folder~=scanFolder or not scanFolder.Parent then return nil end
+            local obj=slots[index]
+            if obj and obj.Parent==scanFolder then
+                local part=obj:IsA("BasePart") and obj or ((obj:IsA("Model") and obj.PrimaryPart) or obj:FindFirstChildWhichIsA("BasePart",options.Recursive~=false))
+                if part then
+                    local id=targetId(part,obj)
+                    if id then
+                        if hovered and id==hovered then hoveredPart,hoveredId,hoveredObject=part,id,obj end
+                        local delta=part.Position-origin
+                        local distance=delta:Dot(delta)
+                        if distance<bestDistance then best,bestId,bestDistance,bestObject=part,id,distance,obj end
+                    end
+                end
+            end
+            index+=1
+            if index%32==0 and os.clock()-sliceStarted>=0.002 then
+                if not isAllowed() then return nil end
+                task.wait()
+                sliceStarted=os.clock()
+            end
+        end
+        best,bestId=hoveredPart or best,hoveredId or bestId
+        bestObject=hoveredObject or bestObject
+        if not best or not best.Parent or not best:IsDescendantOf(scanFolder) then return nil end
+        if not alive or not isAllowed() or Workspace:FindFirstChild(folderName)~=scanFolder
+            or LocalPlayer.Character~=character then return nil end
+        -- Recheck range after any yield; hovered selection keeps Chapter 1's rules.
+        local delta=best.Position-root.Position
+        if not hoveredPart and delta:Dot(delta)>=range*range then return nil end
+        lastTarget,lastTargetTime=best,os.clock()
+        local currentId=targetId(best,bestObject)
+        if not currentId then lastTarget=nil; return nil end
+        return options.ReturnObject and bestObject or best,currentId
+    end
+    return selectTarget,stop
+end
+local function budgetedFolderChildren(folder,isAllowed,descendants)
+    local children=descendants and folder:GetDescendants() or folder:GetChildren()
+    local index,started=0,os.clock()
+    return function()
+        if not folder.Parent or not isAllowed() then return nil end
+        index+=1
+        local obj=children[index]
+        if not obj then return nil end
+        if index%32==0 and os.clock()-started>=0.002 then task.wait(); started=os.clock() end
+        if not folder.Parent or not isAllowed() then return nil end
+        return index,obj
+    end
+end
+
+local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(false, true)
+-- Start intro input before constructing the menu or waiting for gameplay assets.
+local earlyIntroRunning = true
+local earlyIntroPending = false
+local earlyIntroGui, earlyIntroConnection
+local earlyIntroButtons = setmetatable({}, {__mode="k"})
+local function stopEarlyIntro()
+    earlyIntroRunning = false; earlyIntroPending = false
+    if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
+    table.clear(earlyIntroButtons)
+end
+local function watchEarlyIntroGui(pg)
+    if pg==earlyIntroGui then return end
+    if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
+    earlyIntroGui=pg; table.clear(earlyIntroButtons)
+    if not pg then return end
+    local function index(obj) if obj:IsA("GuiButton") then earlyIntroButtons[obj]=true end end
+    earlyIntroConnection=pg.DescendantAdded:Connect(index)
+    for _,obj in ipairs(pg:GetDescendants()) do index(obj) end
+end
+local function earlyIntroVisible(obj)
+    if not obj or not obj.Parent then return false end
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local ancestor = obj
+    while ancestor and ancestor ~= pg do
+        if ancestor:IsA("GuiObject") and not ancestor.Visible then return false end
+        if ancestor:IsA("ScreenGui") and not ancestor.Enabled then return false end
+        if ancestor.Name == "BeyyNativeHub" or ancestor.Name == "NeedleEndingUI" then return false end
+        ancestor = ancestor.Parent
+    end
+    return ancestor == pg and obj.AbsoluteSize.X > 0 and obj.AbsoluteSize.Y > 0
+end
+local function findEarlyIntroSkip()
+    if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true or LocalPlayer:GetAttribute("NeedleOwned") == true then return nil end
+    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    watchEarlyIntroGui(pg)
+    if not pg then return nil end
+    for obj in pairs(earlyIntroButtons) do
+        if not obj.Parent then earlyIntroButtons[obj]=nil
+        elseif earlyIntroVisible(obj) then
+            local context = obj.Name:lower()
+            if obj:IsA("TextButton") then context = context .. " " .. obj.Text:lower() end
+            for _,child in ipairs(obj:GetDescendants()) do
+                if child:IsA("TextLabel") then context = context .. " " .. child.Text:lower() end
+            end
+            local ancestor = obj.Parent
+            while ancestor and ancestor ~= pg do
+                context = context .. " " .. ancestor.Name:lower()
+                ancestor = ancestor.Parent
+            end
+            if context:find("skip",1,true) and not context:find("ending",1,true)
+                and not context:find("outro",1,true) and not context:find("replay",1,true) then return obj end
+        end
+    end
+end
+task.spawn(function()
+    local deadline = os.clock() + 20
+    local lastAttempt = -math.huge
+    while earlyIntroRunning and os.clock() < deadline do
+        if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true then break end
+        pcall(function()
+            local btn = findEarlyIntroSkip()
+            earlyIntroPending = btn ~= nil
+            if not btn or os.clock() - lastAttempt < 0.2 then return end
+            lastAttempt = os.clock()
+            -- Signals avoid an overlapping startup menu when supported.
+            if type(firesignal) == "function" then
+                pcall(function() firesignal(btn.Activated) end)
+                pcall(function() firesignal(btn.MouseButton1Click) end)
+                task.wait(0.05)
+            end
+            if not earlyIntroRunning or not earlyIntroVisible(btn)
+                or LocalPlayer:GetAttribute("IntroCutsceneFinished") == true then return end
+            local inset = GuiService:GetGuiInset()
+            local pos,size = btn.AbsolutePosition,btn.AbsoluteSize
+            local x,y = pos.X+size.X/2+inset.X,pos.Y+size.Y/2+inset.Y
+            VirtualInputManager:SendMouseMoveEvent(x,y,game)
+            local pressed = false
+            pcall(function()
+                VirtualInputManager:SendMouseButtonEvent(x,y,0,true,game,0)
+                pressed = true
+                task.wait(0.03)
+            end)
+            if pressed then pcall(function() VirtualInputManager:SendMouseButtonEvent(x,y,0,false,game,0) end) end
+        end)
+        task.wait(0.05)
+    end
+    stopEarlyIntro()
+end)
+
+local selectCollectHay,stopCollectHay=createPitchforkSelector(false,true)
+local selectDroppedHay,stopDroppedHay=createPitchforkSelector(true,false,{FolderName="DroppedHay",ObjectId=true,Range=28,ReturnObject=true,Recursive=false,AllowContainers=true})
+local selectCollectGem,stopCollectGem=createPitchforkSelector(true,false,{FolderName="GemsClient",IdName="GemId",Range=35,Recursive=false,PartIdOnly=true})
+local replayStatus
+local replayStatusText="Waiting for results"
+local function setReplayStatus(text)
+    replayStatusText=text
+    if replayStatus then replayStatus:SetDesc(text) end
+end
+local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
+    local pending
+    local function nextVacuum()
+        local config=getConfig()
+        local tracks=config and config.UPGRADE_TRACKS
+        if not tracks then return nil end
+        local best
+        for _,entry in ipairs({{Flag="UpgVacPower",Name="VacuumPower"},{Flag="UpgVacCooling",Name="VacuumCooling"}}) do
+            if state[entry.Flag] then
+                local track=tracks[entry.Name]
+                local level=getLevel(entry.Name)
+                local nextLevel=track and track.Levels and track.Levels[level+1]
+                local cost=nextLevel and tonumber(nextLevel.Cost or 0)
+                if cost and cost>=0 and cost<math.huge and (not best or cost<best.Cost) then
+                    best={Name=entry.Name,Level=level,Cost=cost}
+                end
+            end
+        end
+        return best
+    end
+    local function awaiting()
+        if pending and (getLevel(pending.Name)~=pending.Level or os.clock()>=pending.Until) then pending=nil end
+        return pending~=nil
+    end
+    local priority={}
+    function priority.Reserve()
+        if awaiting() then return true end
+        local target=nextVacuum()
+        return target~=nil and (tonumber(getCash()) or 0)>=target.Cost*0.75
+    end
+    function priority.Purchase()
+        if awaiting() then return false end
+        local target=nextVacuum()
+        if not target or (tonumber(getCash()) or 0)<target.Cost then return false end
+        if send(target.Name) then
+            pending={Name=target.Name,Level=target.Level,Until=os.clock()+2}
+            return true
+        end
+        return false
+    end
+    return priority
+end
+
+local function watchVacuumFocus(onTransition)
+    local alive,generation,resumeAt=true,0,0
+    local function changed()
+        if not alive then return end
+        generation+=1
+        resumeAt=os.clock()+0.25
+        onTransition()
+    end
+    local connections={}
+    if BEYY_CHAPTER~="Lobby" then
+        connections[1]=UserInputService.WindowFocused:Connect(changed)
+        connections[2]=UserInputService.WindowFocusReleased:Connect(changed)
+    end
+    return {
+        Generation=function() return generation end,
+        Ready=function() return alive and os.clock()>=resumeAt end,
+        Stop=function()
+            alive=false
+            for _,connection in ipairs(connections) do connection:Disconnect() end
+            table.clear(connections)
+        end,
+    }
+end
+
+local function createVacuumHeatWatchdog()
+    local running,lastHeat,lastProgress=false,nil,0
+    local watchdog={}
+    function watchdog.Start(heat)
+        running=true;lastHeat=heat;lastProgress=os.clock()
+    end
+    function watchdog.Stop() running=false;lastHeat=nil end
+    function watchdog.Check(heat)
+        if not running or type(heat)~="number" or heat~=heat then return nil end
+        local previous=lastHeat
+        if previous==nil or heat>previous+0.0002 then lastProgress=os.clock() end
+        lastHeat=heat
+        if previous and heat<previous-0.001 then return "cooling" end
+        if os.clock()-lastProgress>=4 then return "stalled" end
+        return nil
+    end
+    return watchdog
 end
 
 local BEYY_PLACE_IDS = {
@@ -219,28 +505,287 @@ local function clickGuiObjectEarly(obj)
     return true
 end
 
-print("[BeyyHub] Loading WindUI...")
-local WindUI
-do
-    local source = cachedWindUI
-    if not source then source = fetchValidated(WINDUIT_URL, isValidWindUI) end
-    if source then
-        local fn, err = loadstring(source)
-        if fn then
-            local ok2, result = pcall(fn)
-            if ok2 then WindUI = result else warn("[BeyyHub] WindUI execution failed: ".. tostring(result)) end
-        else
-            warn("[BeyyHub] WindUI loadstring failed: ".. tostring(err))
+-- Beyy native UI. Embedded into each module; no remote UI dependency.
+local function createNativeUI()
+    local UI = {}
+    local input = game:GetService("UserInputService")
+    local run = game:GetService("RunService")
+    local http = game:GetService("HttpService")
+    local colors = {bg=Color3.fromRGB(20,22,27), row=Color3.fromRGB(32,35,42), text=Color3.fromRGB(231,234,240), accent=Color3.fromRGB(58,104,153)}
+    local function node(class, parent, props)
+        local obj = Instance.new(class)
+        for k,v in pairs(props or {}) do obj[k]=v end
+        obj.Parent=parent
+        return obj
+    end
+    local function label(parent, text, height)
+        return node("TextLabel", parent, {Size=UDim2.new(1,0,0,height or 24), BackgroundTransparency=1, Text=tostring(text or ""), TextColor3=colors.text, TextSize=14, Font=Enum.Font.SourceSans, TextWrapped=true, TextXAlignment=Enum.TextXAlignment.Left})
+    end
+    local function button(parent,text,size,pos)
+        return node("TextButton",parent,{Size=size or UDim2.new(1,0,0,28),Position=pos or UDim2.new(),BackgroundColor3=colors.row,BorderSizePixel=0,AutoButtonColor=false,Text=tostring(text or ""),TextColor3=colors.text,TextSize=14,Font=Enum.Font.SourceSans})
+    end
+    local function layout(parent)
+        node("UIListLayout",parent,{Padding=UDim.new(0,6),SortOrder=Enum.SortOrder.LayoutOrder})
+        node("UIPadding",parent,{PaddingLeft=UDim.new(0,8),PaddingRight=UDim.new(0,8),PaddingTop=UDim.new(0,8),PaddingBottom=UDim.new(0,8)})
+    end
+    local function configManager(folder)
+        local manager={Path="WindUI/"..folder.."/config/"}
+        if type(makefolder)=="function" then
+            for _,path in ipairs({"WindUI","WindUI/"..folder,manager.Path}) do
+                pcall(function() if type(isfolder)~="function" or not isfolder(path) then makefolder(path) end end)
+            end
+        end
+        function manager:AllConfigs()
+            local names={}
+            if type(listfiles)=="function" then
+                local ok,files=pcall(listfiles,self.Path)
+                if ok then for _,path in ipairs(files) do local name=path:match("([^/\\]+)%.json$"); if name then table.insert(names,name) end end end
+            end
+            return names
+        end
+        function manager:CreateConfig(name)
+            assert(type(name)=="string" and name~="" and not name:find("[/\\]"),"Invalid config name")
+            local cfg={Path=self.Path..name..".json",Elements={},CustomData={},Version=1.2,AutoLoad=false}
+            function cfg:Register(key,el) self.Elements[key]=el end
+            function cfg:Save()
+                assert(type(writefile)=="function","Config saving requires writefile")
+                local saved={__version=self.Version,__elements={},__custom=self.CustomData,__autoload=self.AutoLoad}
+                for key,el in pairs(self.Elements) do
+                    local value=el.Value
+                    if el.__type=="Slider" then value=value.Default end
+                    saved.__elements[key]={__type=el.__type,value=value}
+                end
+                writefile(self.Path,http:JSONEncode(saved))
+                return saved
+            end
+            function cfg:Load()
+                if type(readfile)~="function" then return false,"Config loading requires readfile" end
+                local ok,data=pcall(function() return http:JSONDecode(readfile(self.Path)) end)
+                if not ok or type(data)~="table" then return false,"Failed to read config" end
+                for key,entry in pairs(data.__elements or data) do
+                    local el=self.Elements[key]
+                    if el and type(entry)=="table" and entry.__type==el.__type then
+                        if el.__type=="Dropdown" then el:Select(entry.value) else el:Set(entry.value) end
+                    end
+                end
+                self.CustomData=data.__custom or {}
+                return self.CustomData
+            end
+            return cfg
+        end
+        return manager
+    end
+    function UI:Notify(options)
+        if self.Window and not self.Window.Destroyed then
+            local text=tostring(options.Title or "Beyy")..": "..tostring(options.Content or "")
+            if self.Window.Notice.Text~=text then self.Window.Notice.Text=text end
         end
     end
-    if not WindUI then
-        warn("[BeyyHub] Could not load WindUI — aborting.")
-        return
+    function UI:CreateWindow(options)
+        local w={Closed=false,Destroyed=false,Connections={},Tabs={},ToggleKey=Enum.KeyCode.RightControl}
+        self.Window=w
+        local parent=game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+        if type(gethui)=="function" then local ok,value=pcall(gethui); if ok and value then parent=value end end
+        local gui=node("ScreenGui",parent,{Name="BeyyNativeHub",ResetOnSpawn=false,IgnoreGuiInset=false,DisplayOrder=10000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
+        w.Gui=gui
+        local root=node("Frame",gui,{AnchorPoint=Vector2.new(.5,.5),Position=UDim2.fromScale(.5,.5),Size=UDim2.fromOffset(640,480),BackgroundColor3=colors.bg,BorderSizePixel=0})
+        node("UISizeConstraint",root,{MaxSize=Vector2.new(640,480),MinSize=Vector2.new(320,240)})
+        -- UIScale keeps the fixed panel inside small screens, without layout animation.
+        local scale=node("UIScale",root,{Scale=1})
+        local function fit()
+            local viewport=gui.AbsoluteSize
+            scale.Scale=math.min(1,math.max(.1,(viewport.X-12)/640),math.max(.1,(viewport.Y-12)/480))
+        end
+        local function connect(signal,fn) local c=signal:Connect(fn); table.insert(w.Connections,c); return c end
+        connect(gui:GetPropertyChangedSignal("AbsoluteSize"),fit); fit()
+        local title=label(root,options.Title or "Beyy Hub",30); title.Position=UDim2.fromOffset(10,0); title.Size=UDim2.new(1,-48,0,30)
+        title.Active=true
+        local dragInput,dragX,dragY,dragPosition
+        connect(title.InputBegan,function(event)
+            if w.Closed or dragInput then return end
+            if event.UserInputType==Enum.UserInputType.MouseButton1 or event.UserInputType==Enum.UserInputType.Touch then
+                dragInput=event; dragX=event.Position.X; dragY=event.Position.Y; dragPosition=root.Position
+            end
+        end)
+        connect(input.InputChanged,function(event)
+            if not dragInput or w.Closed then return end
+            local mouse=dragInput.UserInputType==Enum.UserInputType.MouseButton1
+            if (mouse and event.UserInputType~=Enum.UserInputType.MouseMovement) or (not mouse and event~=dragInput) then return end
+            local viewport=gui.AbsoluteSize
+            local halfWidth,halfHeight=320*scale.Scale,240*scale.Scale
+            local x=dragPosition.X.Scale*viewport.X+dragPosition.X.Offset+event.Position.X-dragX
+            local y=dragPosition.Y.Scale*viewport.Y+dragPosition.Y.Offset+event.Position.Y-dragY
+            x=math.clamp(x,halfWidth,math.max(halfWidth,viewport.X-halfWidth))
+            y=math.clamp(y,halfHeight,math.max(halfHeight,viewport.Y-halfHeight))
+            root.Position=UDim2.new(dragPosition.X.Scale,x-dragPosition.X.Scale*viewport.X,dragPosition.Y.Scale,y-dragPosition.Y.Scale*viewport.Y)
+        end)
+        connect(input.InputEnded,function(event)
+            if event==dragInput or (dragInput and dragInput.UserInputType==Enum.UserInputType.MouseButton1 and event.UserInputType==Enum.UserInputType.MouseButton1) then dragInput=nil end
+        end)
+        local close=button(root,"X",UDim2.fromOffset(28,24),UDim2.new(1,-34,0,3))
+        local sidebar=node("ScrollingFrame",root,{Position=UDim2.fromOffset(0,34),Size=UDim2.new(0,180,1,-72),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=4,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y})
+        layout(sidebar)
+        w.Notice=label(root,"",32); w.Notice.Position=UDim2.new(0,10,1,-34); w.Notice.Size=UDim2.new(1,-20,0,32)
+        local bind="BeyyNativeCursor_"..tostring(game:GetService("Players").LocalPlayer.UserId)
+        local cursorBound
+        local function releaseCursor()
+            if cursorBound then return end
+            cursorBound=true
+            run:BindToRenderStep(bind,Enum.RenderPriority.Last.Value+100,function()
+                input.MouseBehavior=Enum.MouseBehavior.Default; input.MouseIconEnabled=true
+            end)
+        end
+        local function restoreCursor()
+            if not cursorBound then return end
+            run:UnbindFromRenderStep(bind); cursorBound=false
+            -- Release menu ownership; Roblox's camera resumes its current mode.
+            -- A saved lock may belong to an earlier cutscene or camera state.
+            input.MouseBehavior=Enum.MouseBehavior.Default; input.MouseIconEnabled=true
+        end
+        function w:Open() if self.Destroyed then return end; self.Closed=false; gui.Enabled=true; releaseCursor() end
+        function w:Close() self.Closed=true; gui.Enabled=false; self.Capture=nil; dragInput=nil; restoreCursor() end
+        function w:SetToggleKey(key) self.ToggleKey=typeof(key)=="EnumItem" and key or Enum.KeyCode[tostring(key)] or Enum.KeyCode.RightControl end
+        function w:EditOpenButton() end
+        function w:Destroy()
+            if self.Destroyed then return end
+            self:Close(); self.Destroyed=true
+            for _,c in ipairs(self.Connections) do c:Disconnect() end
+            table.clear(self.Connections); gui:Destroy()
+        end
+        connect(close.Activated,function() w:Close() end)
+        connect(input.InputBegan,function(event,processed)
+            if w.Capture and event.UserInputType==Enum.UserInputType.Keyboard and event.KeyCode~=Enum.KeyCode.Unknown then
+                local capture=w.Capture; w.Capture=nil; capture:Set(event.KeyCode.Name); return
+            end
+            if not processed and not input:GetFocusedTextBox() and event.KeyCode==w.ToggleKey then if w.Closed then w:Open() else w:Close() end end
+        end)
+        w.ConfigManager=configManager(options.Folder or "BeyyHub")
+        function w:Tab(opts)
+            local tab={Window=self}
+            local nav=button(sidebar,opts.Title)
+            local page=node("ScrollingFrame",root,{Position=UDim2.fromOffset(184,34),Size=UDim2.new(1,-190,1,-72),BackgroundTransparency=1,BorderSizePixel=0,ScrollBarThickness=5,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y,Visible=false})
+            layout(page)
+            tab.Page=page; tab.Nav=nav; table.insert(self.Tabs,tab)
+            function tab:Select() for _,other in ipairs(w.Tabs) do other.Page.Visible=other==self; other.Nav.BackgroundColor3=other==self and colors.accent or colors.row end end
+            connect(nav.Activated,function() tab:Select() end)
+            if #self.Tabs==1 then tab:Select() end
+            local function row(opts,height)
+                local frame=node("Frame",page,{Size=UDim2.new(1,-2,0,height or 42),BackgroundColor3=colors.row,BorderSizePixel=0})
+                local heading=label(frame,opts.Title,24); heading.Position=UDim2.fromOffset(8,2); heading.Size=UDim2.new(1,-160,0,24)
+                return frame
+            end
+            local function control(kind,opts,value)
+                local el={__type=kind,Value=value}
+                function el:Callback(v)
+                    if opts.Callback then local ok,err=pcall(opts.Callback,v); if not ok then UI:Notify({Title="Control error",Content=tostring(err)}) end end
+                end
+                return el
+            end
+            function tab:Section(opts) return label(page,opts.Title,26) end
+            function tab:Paragraph(opts)
+                -- Static help paragraphs are omitted; live status panels remain.
+                local live=opts.Title=="Session" or tostring(opts.Title):find("Status",1,true)~=nil
+                if not live and opts.Title~="Configs unavailable" then
+                    return {SetDesc=function() end,SetTitle=function() end}
+                end
+                local frame=node("Frame",page,{Size=UDim2.new(1,-2,0,0),AutomaticSize=Enum.AutomaticSize.Y,BackgroundTransparency=1})
+                layout(frame)
+                local heading=label(frame,opts.Title); heading.AutomaticSize=Enum.AutomaticSize.Y
+                local desc=label(frame,live and opts.Desc or ""); desc.AutomaticSize=Enum.AutomaticSize.Y
+                local el={}
+                function el:SetDesc(v) local text=tostring(v or ""); if desc.Text~=text then desc.Text=text end end
+                function el:SetTitle(v) local text=tostring(v or ""); if heading.Text~=text then heading.Text=text end end
+                return el
+            end
+            function tab:Button(opts)
+                local b=button(page,opts.Title)
+                connect(b.Activated,function() if opts.Callback then local ok,err=pcall(opts.Callback); if not ok then UI:Notify({Title="Action error",Content=tostring(err)}) end end end)
+                return b
+            end
+            function tab:Toggle(opts)
+                local el=control("Toggle",opts,opts.Value==true)
+                local frame=row(opts); local b=button(frame,"",UDim2.fromOffset(100,28),UDim2.new(1,-108,0,5))
+                local function redraw() b.Text=el.Value and "ON" or "OFF"; b.BackgroundColor3=el.Value and colors.accent or colors.bg end
+                function el:Set(v) self.Value=v==true; redraw(); self:Callback(self.Value) end
+                connect(b.Activated,function() el:Set(not el.Value) end); redraw(); return el
+            end
+            function tab:Slider(opts)
+                local spec=opts.Value or {}; local el=control("Slider",opts,{Min=spec.Min or 0,Max=spec.Max or 100,Default=spec.Default or 0})
+                local frame=row(opts); local field=node("TextBox",frame,{Size=UDim2.fromOffset(64,28),Position=UDim2.new(1,-100,0,5),Text=tostring(el.Value.Default),BackgroundColor3=colors.bg,TextColor3=colors.text,TextSize=14,Font=Enum.Font.SourceSans,ClearTextOnFocus=false})
+                function el:Set(v)
+                    local n=tonumber(v); if not n then field.Text=tostring(self.Value.Default); return end
+                    local step=tonumber(opts.Step) or 1
+                    if step>0 then n=self.Value.Min+math.round((n-self.Value.Min)/step)*step end
+                    self.Value.Default=math.clamp(n,self.Value.Min,self.Value.Max); field.Text=tostring(self.Value.Default); self:Callback(self.Value.Default)
+                end
+                local minus=button(frame,"-",UDim2.fromOffset(26,28),UDim2.new(1,-130,0,5)); local plus=button(frame,"+",UDim2.fromOffset(26,28),UDim2.new(1,-32,0,5))
+                connect(minus.Activated,function() el:Set(el.Value.Default-(opts.Step or 1)) end)
+                connect(plus.Activated,function() el:Set(el.Value.Default+(opts.Step or 1)) end)
+                connect(field.FocusLost,function() el:Set(field.Text) end); return el
+            end
+            function tab:Input(opts)
+                local el=control("Input",opts,tostring(opts.Value or "")); local frame=row(opts,70)
+                local field=node("TextBox",frame,{Position=UDim2.fromOffset(8,32),Size=UDim2.new(1,-16,0,28),Text=el.Value,PlaceholderText=opts.Placeholder or "",BackgroundColor3=colors.bg,TextColor3=colors.text,TextSize=14,Font=Enum.Font.SourceSans,ClearTextOnFocus=false})
+                function el:Set(v) self.Value=tostring(v or ""); field.Text=self.Value; self:Callback(self.Value) end
+                connect(field.FocusLost,function() el:Set(field.Text) end); return el
+            end
+            function tab:Keybind(opts)
+                local initial=opts.Value or "RightControl"; if typeof(initial)=="EnumItem" then initial=initial.Name end
+                local el=control("Keybind",opts,initial); local frame=row(opts)
+                local b=button(frame,initial,UDim2.fromOffset(140,28),UDim2.new(1,-148,0,5))
+                function el:Set(v) self.Value=typeof(v)=="EnumItem" and v.Name or tostring(v); b.Text=self.Value; self:Callback(self.Value) end
+                connect(b.Activated,function() w.Capture=el; b.Text="Press a key" end); return el
+            end
+            function tab:Dropdown(opts)
+                local el=control("Dropdown",opts,opts.Value or (opts.Multi and {} or ""))
+                local frame=row(opts); local b=button(frame,"",UDim2.fromOffset(140,28),UDim2.new(1,-148,0,5))
+                local choices=node("ScrollingFrame",page,{Size=UDim2.new(1,-2,0,160),Visible=false,BackgroundColor3=colors.bg,BorderSizePixel=0,ScrollBarThickness=4,CanvasSize=UDim2.new(),AutomaticCanvasSize=Enum.AutomaticSize.Y}); layout(choices)
+                local choiceButtons={}; local choiceConnections={}
+                local function selected(value) if type(el.Value)~="table" then return el.Value==value end; for k,v in pairs(el.Value) do if v==value or (k==value and v==true) then return true end end; return false end
+                local function redraw()
+                    local values={}; if type(el.Value)=="table" then for k,v in pairs(el.Value) do table.insert(values,tostring(v==true and k or v)) end else table.insert(values,tostring(el.Value)) end
+                    b.Text=#values>0 and table.concat(values,", ") or "Choose"
+                    for value,cb in pairs(choiceButtons) do cb.Text=(selected(value) and "[x] " or "[ ] ")..tostring(value) end
+                end
+                function el:Select(v) self.Value=opts.Multi and (type(v)=="table" and table.clone(v) or {v}) or v; redraw(); self:Callback(self.Value) end
+                el.Set=el.Select
+                function el:Refresh(values)
+                    for _,c in ipairs(choiceConnections) do
+                        c:Disconnect()
+                        local index=table.find(w.Connections,c)
+                        if index then table.remove(w.Connections,index) end
+                    end
+                    table.clear(choiceConnections)
+                    for _,cb in pairs(choiceButtons) do cb:Destroy() end; table.clear(choiceButtons)
+                    for _,value in ipairs(values or {}) do
+                        local cb=button(choices,tostring(value)); choiceButtons[value]=cb
+                        local c=cb.Activated:Connect(function()
+                            if opts.Multi then
+                                local nextValues={}; for _,candidate in ipairs(values) do if (candidate==value and not selected(candidate)) or (candidate~=value and selected(candidate)) then table.insert(nextValues,candidate) end end
+                                el:Select(nextValues)
+                            else el:Select(value); choices.Visible=false end
+                        end)
+                        table.insert(choiceConnections,c); table.insert(w.Connections,c)
+                    end
+                    redraw()
+                end
+                connect(b.Activated,function() choices.Visible=not choices.Visible end); el:Refresh(opts.Values); return el
+            end
+            return tab
+        end
+        function w:Section(opts)
+            label(sidebar,opts.Title,24)
+            local group={}; function group:Tab(tabOpts) return w:Tab(tabOpts) end
+            return group
+        end
+        w:Open()
+        return w
     end
+    return UI
 end
-print("[BeyyHub] WindUI loaded")
+local NativeUI = createNativeUI()
 
-local Window = WindUI:CreateWindow({
+local Window = NativeUI:CreateWindow({
     Title = "Search For The Needle v103.00",
     Author = "by beyy",
     Icon = "search",
@@ -270,7 +815,7 @@ local function closeMenuOnStartup()
 end
 
 closeMenuOnStartup()
-local menuCursorCleanup = installMenuCursorRelease(Window, function() return not Unloaded end)
+local menuCursorCleanup = function() Window:Destroy() end
 local previousMenuCleanup = _G.__BEYY_HUB_CLEANUP
 _G.__BEYY_HUB_CLEANUP = function()
     if menuCursorCleanup then pcall(menuCursorCleanup) end
@@ -281,7 +826,7 @@ local ConfigManager = Window.ConfigManager
 
 local function Notify(title, content, duration, icon)
     pcall(function()
-        WindUI:Notify({ Title = title, Content = content, Duration = duration or 3, Icon = icon })
+        NativeUI:Notify({ Title = title, Content = content, Duration = duration or 3, Icon = icon })
     end)
 end
 
@@ -294,6 +839,7 @@ local function Info(tab, text)
 end
 
 local SAVE_WHITELIST = {
+    AutoRoundFailsafe = true,
     AutoPickHay = true, AutoCollectDroppedHay = true, AutoCollectGems = true,
     CollectInterval = true,
     AutoSellHay = true, SellThreshold = true, SellOnlyIfFull = true,
@@ -404,30 +950,7 @@ local function findHayById(hayId)
 end
 
 local function findClosestHayCached()
-    local now = tick()
-    if HayCache.part and HayCache.part.Parent and (now - HayCache.time) < HayCache.ttl then return HayCache.part end
-    local hoveredId = LocalPlayer:GetAttribute("HoveredHayId")
-    if hoveredId then
-        local part = findHayById(hoveredId)
-        if part then
-            HayCache.part = part; HayCache.id = hoveredId; HayCache.time = now
-            return part
-        end
-    end
-    local hrp = getHRP()
-    if not hrp then return nil end
-    local folder = HayFolder
-    if not folder or not folder.Parent then HayFolder = Workspace:FindFirstChild("HaystackClient"); folder = HayFolder end
-    if not folder then return nil end
-    local best, bestDist = nil, math.huge
-    for _, inst in ipairs(folder:GetChildren()) do
-        if inst:IsA("BasePart") and inst:GetAttribute("HayId") then
-            local d = (inst.Position - hrp.Position).Magnitude
-            if d < bestDist and d < 30 then bestDist = d; best = inst end
-        end
-    end
-    HayCache.part = best; HayCache.time = now
-    return best
+    return selectCollectHay(function() return not Unloaded and (State.AutoPickHay or State.AutoFindNeedle) end,HayCache.ttl)
 end
 
 local function isPileHay(part)
@@ -480,7 +1003,7 @@ local function getGrabCandidates(centerPart, radiusHint)
     local folder = HayFolder
     if not folder or not folder.Parent then HayFolder = Workspace:FindFirstChild("HaystackClient"); folder = HayFolder end
     if not folder then return out end
-    for _, inst in ipairs(folder:GetChildren()) do
+    for _, inst in budgetedFolderChildren(folder,function() return not Unloaded and centerPart.Parent~=nil and (State.AutoPickHay or State.AutoFindNeedle) end) do
         if inst ~= centerPart and inst:IsA("BasePart") and inst:GetAttribute("HayId") then
             if (inst.Position - cp).Magnitude <= radius + 1 then
                 table.insert(out, inst:GetAttribute("HayId"))
@@ -494,49 +1017,13 @@ end
 local DroppedCache = { part = nil, time = 0, ttl = 1.5 }
 
 local function findClosestDroppedCached()
-    local now = tick()
-    if DroppedCache.part and DroppedCache.part.Parent and (now - DroppedCache.time) < DroppedCache.ttl then return DroppedCache.part end
-    local folder = DroppedFolder
-    if not folder or not folder.Parent then DroppedFolder = Workspace:FindFirstChild("DroppedHay"); folder = DroppedFolder end
-    if not folder then return nil end
-    local hrp = getHRP()
-    if not hrp then return nil end
-    local best, bestDist = nil, 28
-    for _, m in ipairs(folder:GetChildren()) do
-        local part = m:IsA("BasePart") and m or m:FindFirstChildWhichIsA("BasePart")
-        if part then
-            local d = (part.Position - hrp.Position).Magnitude
-            if d < bestDist then bestDist = d; best = part.Parent:IsA("BasePart") and part.Parent or m end
-        end
-    end
-    DroppedCache.part = best; DroppedCache.time = now
-    return best
+    return selectDroppedHay(function() return not Unloaded and State.AutoCollectDroppedHay end)
 end
 
 local GemsCache = { part = nil, id = nil, time = 0, ttl = 1.5 }
 
 local function findClosestGemCached()
-    local now = tick()
-    if GemsCache.part and GemsCache.part.Parent and (now - GemsCache.time) < GemsCache.ttl then return GemsCache.part, GemsCache.id end
-    local root = GemsFolder
-    if not root or not root.Parent then GemsFolder = Workspace:FindFirstChild("GemsClient"); root = GemsFolder end
-    if not root then return nil, nil end
-    local hrp = getHRP()
-    if not hrp then return nil, nil end
-    local best, bestDist, bestId = nil, 35, nil
-    for _, mdl in ipairs(root:GetChildren()) do
-        local p = mdl
-        if mdl:IsA("Model") then p = mdl.PrimaryPart or mdl:FindFirstChildWhichIsA("BasePart") end
-        if p and p:IsA("BasePart") then
-            local gId = p:GetAttribute("GemId")
-            if gId then
-                local d = (p.Position - hrp.Position).Magnitude
-                if d < bestDist then bestDist = d; best = p; bestId = gId end
-            end
-        end
-    end
-    GemsCache.part = best; GemsCache.id = bestId; GemsCache.time = now
-    return best, bestId
+    return selectCollectGem(function() return not Unloaded and State.AutoCollectGems end,GemsCache.ttl)
 end
 
 local needlePickupActive = false
@@ -560,27 +1047,120 @@ local function roundEndingVisible()
     local results = ending and ending:FindFirstChild("ReturnToLobby")
     return guiReallyVisible(results)
 end
+local lastNeedleDiagnostic=-math.huge
+local function recordNeedleDiagnostic(needle)
+    if os.clock()-lastNeedleDiagnostic<60 then return end
+    lastNeedleDiagnostic=os.clock()
+    task.spawn(function()
+        local ok,err=pcall(function()
+            local function describe(obj)
+                local attributes={}
+                for key,value in pairs(obj:GetAttributes()) do attributes[key]={Type=typeof(value),Value=tostring(value)} end
+                return {Path=obj:GetFullName(),Class=obj.ClassName,Attributes=attributes}
+            end
+            local report={PlayerAttributes=describe(LocalPlayer).Attributes,Target=describe(needle),Parents={},EquippedTools={},ClientCandidates={}}
+            local position=needle.Position
+            local ancestor=needle.Parent
+            for i=1,5 do
+                if not ancestor or ancestor==Workspace then break end
+                report.Parents[#report.Parents+1]=describe(ancestor)
+                ancestor=ancestor.Parent
+            end
+            local character=LocalPlayer.Character
+            if character then for _,obj in ipairs(character:GetChildren()) do if obj:IsA("Tool") then report.EquippedTools[#report.EquippedTools+1]=describe(obj) end end end
+            local folder=Workspace:FindFirstChild("HaystackClient")
+            if folder then
+                for _,part in budgetedFolderChildren(folder,function() return not Unloaded end,true) do
+                    if part:IsA("BasePart") and (part:GetAttribute("IsNeedleObjective")==true or (part.Position-position).Magnitude<=0.5) then
+                        local entry=describe(part);entry.Distance=(part.Position-position).Magnitude
+                        report.ClientCandidates[#report.ClientCandidates+1]=entry
+                        if #report.ClientCandidates>=20 then break end
+                    end
+                end
+            end
+            local json=game:GetService("HttpService"):JSONEncode(report)
+            _G.__BEYY_NEEDLE_DIAGNOSTIC=json
+            if type(writefile)=="function" then pcall(writefile,"BeyyHub/needle_diagnostic.json",json) end
+            warn("[Needle Diagnostic] Target "..report.Target.Path.."; full report in BeyyHub/needle_diagnostic.json or _G.__BEYY_NEEDLE_DIAGNOSTIC")
+        end)
+        if not ok then warn("[Needle Diagnostic] Capture failed: "..tostring(err)) end
+    end)
+end
+
+local function resolveNeedleHayId(part)
+    local server=Workspace:FindFirstChild("NeedleObjectiveServer")
+    local node=part
+    while node and node~=server do
+        local id=node:GetAttribute("HayId")
+        if type(id)=="number" then return id end
+        node=node.Parent
+    end
+    return nil
+end
+local needlePickupStatus
+local function setNeedlePickupStatus(text)
+    if needlePickupStatus then needlePickupStatus:SetDesc(text) end
+end
 local lastUnusableNeedleLogAt = -math.huge
+local function createObjectiveIndex()
+    local current, items, positions, connections = nil, {}, {}, {}
+    local function stop()
+        for _,connection in ipairs(connections) do connection:Disconnect() end
+        current, items, positions, connections = nil, {}, {}, {}
+    end
+    local function add(item)
+        if item:IsA("BasePart") and not positions[item] then
+            items[#items+1]=item; positions[item]=#items
+        end
+    end
+    local function remove(item)
+        local index=positions[item]
+        if not index then return end
+        local last=items[#items]
+        items[index]=last; positions[last]=index
+        items[#items]=nil; positions[item]=nil
+    end
+    local function get(folder)
+        if folder~=current then
+            stop(); current=folder
+            if folder then
+                connections[1]=folder.DescendantAdded:Connect(add)
+                connections[2]=folder.DescendantRemoving:Connect(remove)
+                for _,item in ipairs(folder:GetDescendants()) do add(item) end
+            end
+        end
+        return items
+    end
+    return get,stop
+end
+
+local indexedObjectives, stopObjectiveIndex = createObjectiveIndex()
+local previousObjectiveCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    stopObjectiveIndex()
+    if previousObjectiveCleanup then pcall(previousObjectiveCleanup) end
+end
 local function findExposedNeedlePart()
     if not IN_GAME then return nil end
     local server = Workspace:FindFirstChild("NeedleObjectiveServer")
     local folder = server and server:FindFirstChild("Needle")
-    if not folder then return nil end
-    local invalidCount, invalidIdType = 0, nil
-    for _, part in ipairs(folder:GetDescendants()) do
+    if not folder then indexedObjectives(nil); return nil end
+    local invalidCount, invalidIdType, physicalCandidate = 0, nil, nil
+    for _, part in ipairs(indexedObjectives(folder)) do
         if part:IsA("BasePart") and part:GetAttribute("IsNeedleObjective") == true
             and part:GetAttribute("HIDDEN_WITHIN") == nil then
-            local id = part:GetAttribute("HayId")
+            local id = resolveNeedleHayId(part)
             if type(id) == "number" then return part end
+            if part.CanQuery and part.Transparency<0.98 and part.LocalTransparencyModifier<0.98 then physicalCandidate=physicalCandidate or part end
             invalidCount += 1
             invalidIdType = type(id)
         end
     end
     if invalidCount > 0 and State.AutoPickupNeedle and os.clock() - lastUnusableNeedleLogAt >= 30 then
         lastUnusableNeedleLogAt = os.clock()
-        warn(string.format("[Needle] %d exposed marker(s) have unusable HayId (%s); waiting for valid objective, not attempting pickup", invalidCount, tostring(invalidIdType)))
+        warn(string.format("[Needle] %d exposed marker(s) have unusable HayId (%s); using verified physical-click fallback when the objective is visible", invalidCount, tostring(invalidIdType)))
     end
-    return nil
+    return physicalCandidate
 end
 local function needleHasPriority()
     if Unloaded or not IN_GAME then return false end
@@ -605,8 +1185,13 @@ local function trySell()
     end)
 end
 
+local vacuumUpgradePriority=createVacuumUpgradePriority(State,function() return GameConfig end,getCash,
+    function(name) return tonumber(LocalPlayer:GetAttribute("HayUpgrade"..name)) or 1 end,
+    function(name) return pcall(function() BuyUpgrade:FireServer(name) end) end)
 local function tryBuyTrack(trackName)
     if not IN_GAME or not GameConfig then return end
+    if trackName=="VacuumPower" or trackName=="VacuumCooling" then vacuumUpgradePriority.Purchase(); return end
+    if vacuumUpgradePriority.Reserve() then return end
     local track = GameConfig.UPGRADE_TRACKS[trackName]
     if not track then return end
     local cur = tonumber(LocalPlayer:GetAttribute("HayUpgrade"..trackName)) or 1
@@ -649,9 +1234,18 @@ task.spawn(function()
     end
 end)
 
+local tntTelemetry={}
+function tntTelemetry.SetStatus(text)
+    local message=text.." | phase: "..tostring(LocalPlayer:GetAttribute("TntPhase"))
+    if message~=tntTelemetry.LastText then
+        tntTelemetry.LastText=message
+        if tntTelemetry.Element then tntTelemetry.Element:SetDesc(message) end
+    end
+end
+local afkOrbitTelemetry={}
 local vacuumSuctionActive = false
 local function farmLoopEnabled()
-    return not Unloaded and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
+    return not Unloaded and not afkOrbitTelemetry.RecoveryPending and not cutsceneBypassActive and not needleHasPriority() and not roundEndingVisible()
 end
 
 local function afkFarmModeActive()
@@ -667,11 +1261,21 @@ end
 local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
-
-    { name = "base", radius = 22.0, standoff = 2.2, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "lower-middle", radius = 18.0, standoff = 2.0, cameraLift = 5.0, focusYOffset = -0.1 },
-    { name = "upper-middle", radius = 14.0, standoff = 1.9, cameraLift = 5.2, focusYOffset = -1.5 },
+    { name = "base-lower", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
+    { name = "base-lower-second-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
+    { name = "base-lower-third-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
+    { name = "base-lower-fourth-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
+    { name = "base", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-second-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-third-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-fourth-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
+    { name = "base-transition", radius = 20.0, standoff = 2.1, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 0.7 },
+    { name = "lower-middle", radius = 18.0, standoff = 2.0, characterInset = 1.5, cameraLift = 5.0, focusYOffset = -0.1 },
+    { name = "middle-transition", radius = 16.0, standoff = 1.95, characterInset = 1.5, cameraLift = 5.1, focusYOffset = -0.8 },
+    { name = "upper-middle", radius = 14.0, standoff = 1.9, characterInset = 1.5, cameraLift = 5.2, focusYOffset = -1.5 },
+    { name = "upper-transition", radius = 11.0, standoff = 1.8, characterInset = 1.0, cameraLift = 5.6, focusYOffset = -0.75 },
     { name = "peak", radius = 8.0, standoff = 1.7, cameraLift = 6.0, focusYOffset = 0.0 },
+    { name = "inner-peak", radius = 5.0, standoff = 1.6, cameraLift = 6.0, focusYOffset = 0.2 },
 }
 local afkOrbitAngle = 0
 local afkOrbitLap = 0
@@ -739,7 +1343,8 @@ local function measureAfkBandSurfaces(center)
         folder = Workspace:FindFirstChild("HaystackClient")
         HayFolder = folder
     end
-    local radialTops = {{}, {}, {}, {}}
+    local radialTops = {}
+    for i = 1, #AFK_ORBIT_BANDS do radialTops[i] = {} end
     local floorY, highestY = math.huge, -math.huge
     if folder then
         for _, part in ipairs(folder:GetChildren()) do
@@ -761,7 +1366,7 @@ local function measureAfkBandSurfaces(center)
     end
     if floorY == math.huge then floorY = center.Y - 4 end
     if highestY == -math.huge then highestY = center.Y + 8 end
-    local fractions = {0.12, 0.36, 0.63, 0.88}
+    local fractions = {0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
     local surfaces = {}
     for i, samples in ipairs(radialTops) do
         local baseline = floorY + (highestY - floorY) * fractions[i]
@@ -775,7 +1380,11 @@ local function measureAfkBandSurfaces(center)
         end
         if i > 1 then surfaces[i] = math.max(surfaces[i], surfaces[i - 1]) end
     end
-    print(string.format("[AFK Orbit] Fixed level heights: base=%.1f lower=%.1f upper=%.1f peak=%.1f", table.unpack(surfaces)))
+    -- Apply intentional lower rings after the ascending surface calculation.
+    for i, band in ipairs(AFK_ORBIT_BANDS) do surfaces[i] += band.heightOffset or 0 end
+    local heightLabels = {}
+    for i, band in ipairs(AFK_ORBIT_BANDS) do heightLabels[i] = string.format("%s=%.1f", band.name, surfaces[i]) end
+    print("[AFK Orbit] Fixed level heights: " .. table.concat(heightLabels, " "))
     return surfaces, highestY
 end
 
@@ -816,6 +1425,32 @@ local function enterNeedleCamera()
     end
     print("[Camera] Needle exposed; AFK overhead view OFF (normal camera)")
 end
+function afkOrbitTelemetry.CanAdvance()
+    if afkOrbitTelemetry.RecoveryPending then return false,"Returning to lobby" end
+    if not afkVacuumOrbitEnabled() then return true,"Running" end
+    local root=getHRP()
+    if not root or not root.Parent or not afkCameraAnchor or not afkSweepRadius or not afkSweepSurfaceY then
+        return false,"Waiting for character and orbit position"
+    end
+    local band=afkCurrentBand()
+    local radius=afkSweepRadius-(band.characterInset or 0)
+    local wanted=Vector3.new(afkCameraAnchor.X+math.cos(afkOrbitAngle)*radius,
+        afkSweepSurfaceY+3.25,afkCameraAnchor.Z+math.sin(afkOrbitAngle)*radius)
+    if (root.Position-wanted).Magnitude>3 then return false,"Waiting for character to reach this ring" end
+    return true,"Running"
+end
+function afkOrbitTelemetry.Update(allowed,reason)
+    local band=afkCurrentBand()
+    local text=string.format("%s | %s | route %d/%d",reason,band.name,(afkOrbitLap % #AFK_ORBIT_BANDS)+1,#AFK_ORBIT_BANDS)
+    if text~=afkOrbitTelemetry.LastText then
+        afkOrbitTelemetry.LastText=text
+        if afkOrbitTelemetry.Element then afkOrbitTelemetry.Element:SetDesc(text) end
+        if afkOrbitTelemetry.Paused~=not allowed then
+            print("[AFK Orbit] "..text)
+        end
+        afkOrbitTelemetry.Paused=not allowed
+    end
+end
 local function bindAfkCameraView()
     local ok, err = pcall(function()
         RunService:BindToRenderStep(AFK_CAMERA_BIND, Enum.RenderPriority.Last.Value + 10, function(dt)
@@ -823,7 +1458,9 @@ local function bindAfkCameraView()
             local current = Workspace.CurrentCamera
             if not current or not afkCameraAnchor then return end
             local delta = math.max(0, math.min(dt, 0.25))
-            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * delta
+            local advance,reason=afkOrbitTelemetry.CanAdvance()
+            afkOrbitTelemetry.Update(advance,reason)
+            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * (advance and delta or 0)
             if nextAngle >= 2 * math.pi then
                 afkOrbitLap += 1
                 local nextBand = afkCurrentBand()
@@ -846,9 +1483,9 @@ local function bindAfkCameraView()
                     + (wantedFocusOffsetY - (afkSweepFocusOffsetY or wantedFocusOffsetY)) * alpha
                 local radial = Vector3.new(math.cos(afkOrbitAngle), 0, math.sin(afkOrbitAngle))
                 local camAt = Vector3.new(
-                    afkCameraAnchor.X + radial.X * (afkSweepRadius + 2.6),
+                    afkCameraAnchor.X + radial.X * (afkSweepRadius + 0.6),
                     afkSweepSurfaceY + band.cameraLift,
-                    afkCameraAnchor.Z + radial.Z * (afkSweepRadius + 2.6)
+                    afkCameraAnchor.Z + radial.Z * (afkSweepRadius + 0.6)
                 )
                 local focus = Vector3.new(
                     afkCameraAnchor.X + radial.X * math.max(0, afkSweepRadius - 5),
@@ -891,7 +1528,7 @@ local function startAfkCamera()
     afkOrbitRadius = estimateAfkOrbitRadius(center)
     afkBandSurfaceHeights, afkCameraPileTopY = measureAfkBandSurfaces(center)
     afkSweepRadius = afkCurrentBand().radius + afkCurrentBand().standoff
-    afkSweepSurfaceY = afkBandSurfaceHeights[1]
+    afkSweepSurfaceY = afkBandSurfaceHeights[(afkOrbitLap % #AFK_ORBIT_BANDS)+1]
     afkSweepFocusOffsetY = afkCurrentBand().focusYOffset
     afkPreviousCamera = cam
     afkPreviousType = cam.CameraType
@@ -899,7 +1536,7 @@ local function startAfkCamera()
     afkPreviousCFrame = cam.CFrame
     pcall(function() RunService:UnbindFromRenderStep(AFK_CAMERA_BIND) end)
     if bindAfkCameraView() then
-        print(string.format("[Camera] FIXED 4-band sweep started: %.1f deg/s, %ds full sweep, bands base/lower/upper/peak = 22/18/14/8 studs",
+        print(string.format("[Camera] FIXED 8-band sweep started: %.1f deg/s, %ds full sweep, bands = 22/20/18/16/14/11/8/5 studs",
             AFK_ORBIT_SPEED_DEG, math.floor(360 / AFK_ORBIT_SPEED_DEG * #AFK_ORBIT_BANDS + 0.5)))
     end
 end
@@ -1033,6 +1670,7 @@ task.spawn(function()
             local root = getHRP()
             local anchor = afkCameraAnchor
             local radius = afkSweepRadius
+            if radius then radius -= afkCurrentBand().characterInset or 0 end
             local surface = afkSweepSurfaceY
             if character and root and anchor and radius and surface then
                 local radial = Vector3.new(math.cos(afkOrbitAngle), 0, math.sin(afkOrbitAngle))
@@ -1392,7 +2030,43 @@ do
         if not replayButton then return false end
         local voteText = collectVisibleText(replayButton)
         local count, total = voteText:match("(%d+)%s*/%s*(%d+)")
-        return count ~= nil and tonumber(count) > 0 and tonumber(total) > 0
+        count,total=tonumber(count),tonumber(total)
+        -- The label is a shared count, not a local-player acknowledgement.
+        return count~=nil and total~=nil and total>0 and count>=total
+    end
+    local function replayCounts(button)
+        local a,b=collectVisibleText(button):match("(%d+)%s*/%s*(%d+)")
+        return tonumber(a),tonumber(b)
+    end
+    local function activateReplayButton(button)
+        if autoUiMouseBusy or not Window.Closed or needlePickupActive then
+            setReplayStatus(not Window.Closed and "Waiting for the hub menu to close" or "Waiting for mouse input to be free")
+            return false
+        end
+        local x,y=getClickCoords(button)
+        if not x then setReplayStatus("Replay target is not visible or has no click area"); return false end
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return false end
+        local before,total=replayCounts(button)
+        autoUiMouseBusy=true
+        local method="VIM click"
+        -- Works for frame wrappers too; no signal access or hit-stack gate.
+        local clicked,result=pcall(vimClick,x,y)
+        setReplayStatus("Attempt "..tostring(replayClickStreak)..": "..method.."; votes "..tostring(before).."/"..tostring(total))
+        local confirmed=false
+        if clicked and result then
+            local deadline=os.clock()+0.8
+            repeat
+                if Unloaded or not isEndingVisible() or not guiReallyVisible(button) then confirmed=not Unloaded; break end
+                local current=replayCounts(button)
+                if before and current and current>before then confirmed=true; break end
+                task.wait(0.05)
+            until os.clock()>=deadline
+        end
+        autoUiMouseBusy=false
+        if confirmed then setReplayStatus("Replay count advanced or results closed; waiting for the group")
+        else setReplayStatus("No Replay confirmation via "..method.."; retry pending") end
+        return clicked and result==true and confirmed
     end
 
     local function getReplayCooldown()
@@ -1405,15 +2079,19 @@ do
 
     local resultsScreenWasVisible = false
     local replayVoteLogged = false
+    local replayButtonFirstSeenAt = nil
+    local trackedReplayButton = nil
+    local REPLAY_READY_DELAY = 0.25
 
     task.spawn(function()
         while not Unloaded do
-            task.wait(0.35)
+            task.wait(resultsScreenWasVisible and 0.05 or 0.35)
             if not IN_GAME then
                 hasOwnedNeedleThisRound = false
                 replayFiredForThisEnding = false
                 replayVoteLogged = false
                 resultsScreenWasVisible = false
+                replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                 introSkipStreak = 0
                 introSkipPending = false
                 introSkipFirstSeenAt = nil
@@ -1432,6 +2110,7 @@ do
                     introFailsafeActive = false
                     if not resultsScreenWasVisible then
                         resultsScreenWasVisible = true
+                        replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                         replayFiredForThisEnding = false
                         replayClickStreak = 0
                         lastReplayClickTime = 0
@@ -1442,26 +2121,36 @@ do
                     if afkFarmModeActive() then
                         local replayButton = findReplayButton()
                         if replayButton then
+                            if trackedReplayButton ~= replayButton then
+                                trackedReplayButton = replayButton
+                                replayButtonFirstSeenAt = now
+                            end
                             if hasReplayVote(replayButton) then
                                 replayFiredForThisEnding = true
                                 if not replayVoteLogged then
                                     replayVoteLogged = true
-                                    print("[AutoUI] Replay vote registered; waiting for next round")
+                                    setReplayStatus("All Replay votes registered; waiting for teleport")
+                                    print("[AutoUI] All Replay votes registered; waiting for next round")
                                 end
                             elseif not replayFiredForThisEnding then
                                 local cooldown = getReplayCooldown()
-                                if now - lastReplayClickTime >= cooldown and not autoUiMouseBusy and not needlePickupActive then
+                                if now - replayButtonFirstSeenAt >= REPLAY_READY_DELAY
+                                    and now - lastReplayClickTime >= cooldown and not autoUiMouseBusy and not needlePickupActive then
                                     replayClickStreak = replayClickStreak + 1
                                     lastReplayClickTime = now
-                                    local clicked = activateButton(replayButton)
+                                    local clicked = activateReplayButton(replayButton)
+                                    if clicked then
+                                        replayFiredForThisEnding = true
+                                        print("[AutoUI] Local Replay click sent; waiting for other players or teleport")
+                                    end
                                     if not clicked then
                                         warn("[AutoUI] Replay input was blocked; retry pending")
                                     end
 
                                 end
                             end
-                        elseif replayClickStreak == 0 then
-
+                        else
+                            replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                         end
                     end
                 else
@@ -1469,13 +2158,14 @@ do
                         print("[AutoUI] Results screen closed")
                     end
                     resultsScreenWasVisible = false
+                    replayButtonFirstSeenAt, trackedReplayButton = nil, nil
                     replayFiredForThisEnding = false
                     replayVoteLogged = false
                     replayClickStreak = 0
                     lastReplayClickTime = 0
 
                     local btn = nil
-                    if not needleHasPriority() then btn = findSkipButton() end
+                    if not earlyIntroPending and not needleHasPriority() then btn = findSkipButton() end
                     if btn then
                         introSkipPending = true
                         if not introSkipFirstSeenAt then
@@ -1525,18 +2215,23 @@ local SettingsTab = MainTab
 
 do
     Header(MainTab, "Dashboard")
+    AddToggle(MainTab,"AutoRoundFailsafe","Restart Stalled Rounds After 5 Minutes",true)
+    afkOrbitTelemetry.TimeoutStatus=MainTab:Paragraph({Title="Round Failsafe Status",Desc="Waiting for round timer"})
+    afkOrbitTelemetry.Element=MainTab:Paragraph({Title="Orbit Status",Desc="Waiting for auto farm"})
+    replayStatus=MainTab:Paragraph({Title="Replay Status",Desc=replayStatusText})
+    installAntiIdle(MainTab, Registry, function() return not Unloaded end)
     Info(MainTab, "Game: ".. (IN_GAME and "Chapter 1 (FARMHOUSE)" or "Lobby"))
     Info(MainTab, "Toggle UI: RightControl")
 
     AddToggle(MainTab, "AutoFarmWins", "Auto Farm Wins (AFK Farm Mode)", false,
-        "AFK round-create, 48 deg/s four-band sweep (22 / 18 / 14 / 8 studs), and automatic vacuum when enabled below.",
+        "AFK round-create, 48 deg/s eight-band sweep (22 / 20 / 18 / 16 / 14 / 11 / 8 / 5 studs), and automatic vacuum when enabled below.",
         function(v)
             if not v then releaseAfkCamera() end
             safeWrite(CACHE_FOLDER .. "/autofarmwins_shared.txt", tostring(v))
             print("[Mode] AFK Farm Mode = ".. tostring(State.AutoFarmWins))
         end)
     AddToggle(MainTab, "AutoFarmVacuum", "Vacuum During Auto Farm Wins", true,
-        "Use heat-bar-controlled suction while the character follows the base, lower-middle, upper-middle and peak sweep.")
+        "Use heat-bar-controlled suction while the character follows the eight circular sweep routes.")
 
     local sessionPara = MainTab:Paragraph({ Title = "Session", Desc = "0s elapsed" })
     task.spawn(function()
@@ -1573,6 +2268,7 @@ do
     Header(ToolsTab, "Auto Tool Usage")
     Info(ToolsTab, "Tools work independently of AFK mode. With AFK enabled, TNT targets remaining hay around the orbiting camera's current angle.")
     AddToggle(ToolsTab, "AutoUseTNT", "Auto Use TNT", false)
+    tntTelemetry.Element=ToolsTab:Paragraph({Title="TNT Status",Desc="Waiting for automatic TNT"})
     AddToggle(ToolsTab, "AutoUsePitchfork", "Auto Use Pitchfork", false)
     AddToggle(ToolsTab, "AutoDeployDrone", "Auto Deploy Drone", false)
     AddToggle(ToolsTab, "AutoUseVacuum", "Auto Use Vacuum (live heat + cooldown)", false,
@@ -1588,6 +2284,7 @@ do
     AddToggle(NeedleTab, "AutoFindNeedle", "Auto Find Needle", false)
     AddToggle(NeedleTab, "AutoPickupNeedle", "Auto Pick Up Needle", false)
     AddToggle(NeedleTab, "AutoHandInNeedle", "Auto Hand In Needle", false)
+    needlePickupStatus = NeedleTab:Paragraph({Title="Needle Pickup Status",Desc="Waiting for an exposed needle"})
     AddSlider(NeedleTab, "NeedleInterval", "Needle Scan Interval (s)", 0.2, 3, 1, 0.1)
 end
 
@@ -1679,6 +2376,7 @@ local function setCutsceneBypassActive(value)
 end
 local cutsceneBypassStop = nil
 local function launchCutsceneBypass()
+    if BEYY_CHAPTER == "Lobby" then return true end
     if cutsceneBypassStop then return true end
     local ok, result = pcall(function()
 
@@ -2272,12 +2970,15 @@ local function launchCutsceneBypass()
         local function handleCameraInput()
             if not alive or not enabled or not active or not yaw then return end
             pcall(function()
-                if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
-                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
+                local dragging = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
+                local desired = cameraFirstPerson and Enum.MouseBehavior.LockCenter
+                    or (dragging and Enum.MouseBehavior.LockCurrentPosition or Enum.MouseBehavior.Default)
+                if UserInputService.MouseBehavior ~= desired then
+                    UserInputService.MouseBehavior = desired
                 end
             end)
             local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
-            if ok and md then
+            if ok and md and (cameraFirstPerson or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)) then
                 if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
                     yaw = yaw - md.X * 0.004
                     pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)
@@ -2594,7 +3295,7 @@ task.spawn(function()
         if not IN_GAME then break end
         local findingNeedle = State.AutoFindNeedle and LocalPlayer:GetAttribute("NeedleOwned") ~= true
             and findExposedNeedlePart() == nil
-        if farmLoopEnabled() and (State.AutoPickHay or findingNeedle) and not isBagFull() then
+        if (State.AutoPickHay or findingNeedle) and farmLoopEnabled() and not isBagFull() then
             HayCache.ttl = 1.5
             local hay = findClosestHayCached()
             if hay then
@@ -2602,7 +3303,7 @@ task.spawn(function()
                 if id then
                     local radiusHint = tonumber(LocalPlayer:GetAttribute("HayGrabRadius")) or 0
                     local candidates = getGrabCandidates(hay, radiusHint)
-                    if not needleHasPriority() then pcall(function() PickHay:FireServer(id, candidates) end) end
+                    if hay.Parent and hay:GetAttribute("HayId")==id and (State.AutoPickHay or State.AutoFindNeedle) and farmLoopEnabled() then pcall(function() PickHay:FireServer(id, candidates) end) end
                 else
                     if not needleHasPriority() then pcall(function() PickDroppedHay:FireServer(hay) end) end
                 end
@@ -2615,10 +3316,10 @@ task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.CollectInterval) or 0.5)
         if not IN_GAME then break end
-        if farmLoopEnabled() and State.AutoCollectDroppedHay and not isBagFull() then
+        if State.AutoCollectDroppedHay and farmLoopEnabled() and not isBagFull() then
             DroppedCache.ttl = 1.5
             local d = findClosestDroppedCached()
-            if d then
+            if d and State.AutoCollectDroppedHay and farmLoopEnabled() then
                 pcall(function() PickDroppedHay:FireServer(d) end)
             end
         end
@@ -2629,10 +3330,10 @@ task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.CollectInterval) or 0.5)
         if not IN_GAME then break end
-        if farmLoopEnabled() and State.AutoCollectGems then
+        if State.AutoCollectGems and farmLoopEnabled() then
             GemsCache.ttl = 1.5
             local gemPart, id = findClosestGemCached()
-            if gemPart and id then
+            if gemPart and id and State.AutoCollectGems and farmLoopEnabled() then
                 pcall(function() CollectGem:FireServer(id) end)
             end
         end
@@ -2643,7 +3344,7 @@ task.spawn(function()
     while not Unloaded do
         task.wait(1)
         if not IN_GAME then break end
-        if farmLoopEnabled() and State.AutoSellHay then
+        if State.AutoSellHay and farmLoopEnabled() then
             local held = getHayHeld()
             local thresh = tonumber(State.SellThreshold) or 25
             if (State.SellOnlyIfFull and isBagFull()) or (held >= thresh) then
@@ -2653,6 +3354,20 @@ task.spawn(function()
     end
 end)
 
+do
+local function tntScanChildren(folder)
+    local children=folder:GetChildren()
+    local index,started=0,os.clock()
+    return function()
+        if Unloaded or not State.AutoUseTNT then return nil end
+        index+=1
+        if index%32==0 and os.clock()-started>=0.002 then task.wait(); started=os.clock() end
+        if Unloaded or not State.AutoUseTNT then return nil end
+        local obj=children[index]
+        if not obj then return nil end
+        return index,obj
+    end
+end
 local function findOrbitHayTarget(anchor)
     local folder = HayFolder
     if not folder or not folder.Parent then
@@ -2663,8 +3378,8 @@ local function findOrbitHayTarget(anchor)
     local aimX = anchor.X + math.cos(afkOrbitAngle) * afkOrbitRadius * 0.82
     local aimZ = anchor.Z + math.sin(afkOrbitAngle) * afkOrbitRadius * 0.82
     local closest, bestScore = nil, math.huge
-    for _, part in ipairs(folder:GetChildren()) do
-        if part:IsA("BasePart") and part:GetAttribute("HayId") ~= nil then
+    for _, part in tntScanChildren(folder) do
+        if part.Parent==folder and part:IsA("BasePart") and part:GetAttribute("HayId") ~= nil then
             local dx, dz = part.Position.X - anchor.X, part.Position.Z - anchor.Z
             local distFromCentre = math.sqrt(dx * dx + dz * dz)
             if distFromCentre > 3 and distFromCentre <= afkOrbitRadius * 1.45 then
@@ -2678,6 +3393,13 @@ local function findOrbitHayTarget(anchor)
         end
     end
     return closest
+end
+local function afkTntDistanceLimit()
+    if not afkVacuumOrbitEnabled() then return 10 end
+    local band=afkCurrentBand()
+    local planned=band.radius+band.standoff-(band.characterInset or 0)
+    -- Include the smoothed radius while changing rings, plus the original tolerance.
+    return math.max(afkOrbitRadius,planned,afkSweepRadius or 0)+9
 end
 local function afkTntThrow(root, anchor)
     local origin = root.Position + Vector3.new(0, 1.5, 0)
@@ -2704,42 +3426,61 @@ task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.ToolInterval) or 0.5)
         if not IN_GAME then break end
-        if farmLoopEnabled() and State.AutoUseTNT and owns("TntOwned") then
-            if not LocalPlayer:GetAttribute("NeedleInputLocked") then
-                local afk = afkFarmModeActive()
-                local root = getHRP()
-                local target = afkPlayerAnchor or afkCameraAnchor
-                local maxAfkDistance = afkVacuumOrbitEnabled() and (afkOrbitRadius + 9) or 10
-                if not afk or (root and target and afkHorizontalDistance(root.Position, target) <= maxAfkDistance) then
-                    pcall(function() TntAction:FireServer("light") end)
-                    task.wait(0.4)
-                    if farmLoopEnabled() and not LocalPlayer:GetAttribute("NeedleInputLocked") then
-                        local c = Workspace.CurrentCamera
-                        root = getHRP()
-                        target = afkPlayerAnchor or afkCameraAnchor
-                        if afk then
-                            if root and target and afkHorizontalDistance(root.Position, target) <= maxAfkDistance then
-                                local throwCFrame, velocity = afkTntThrow(root, target)
-                                pcall(function() TntAction:FireServer("throw", throwCFrame, velocity) end)
-                            end
-                        elseif c then
-                            local velocity = c.CFrame.LookVector * 40 + Vector3.new(0, 8, 0)
-                            pcall(function() TntAction:FireServer("throw", c.CFrame, velocity) end)
-                        end
-                    end
-                end
+        local ok,err=xpcall(function()
+            if not State.AutoUseTNT then tntTelemetry.SetStatus("Disabled");return end
+            if not farmLoopEnabled() then
+                tntTelemetry.SetStatus(needleHasPriority() and "Paused for needle pickup/turn-in" or "Paused for cutscene or round ending");return
             end
-        end
+            if not owns("TntOwned") then tntTelemetry.SetStatus("Waiting for TNT ownership");return end
+            if LocalPlayer:GetAttribute("NeedleInputLocked") then tntTelemetry.SetStatus("Paused: NeedleInputLocked");return end
+            local afk=afkFarmModeActive()
+            local root=getHRP()
+            local target=afkPlayerAnchor or afkCameraAnchor
+            local function positionAllowed()
+                if not afk then return true end
+                if not root or not target then tntTelemetry.SetStatus("Waiting for character or pile anchor");return false end
+                local distance=afkHorizontalDistance(root.Position,target)
+                local limit=afkTntDistanceLimit()
+                if distance>limit then
+                    tntTelemetry.SetStatus(string.format("Paused: outside orbit allowance (%.1f / %.1f studs)",distance,limit));return false
+                end
+                return true
+            end
+            if not positionAllowed() then return end
+            tntTelemetry.SetStatus("Sending light request")
+            TntAction:FireServer("light")
+            task.wait(0.4)
+            if not State.AutoUseTNT or not farmLoopEnabled() or LocalPlayer:GetAttribute("NeedleInputLocked") then
+                tntTelemetry.SetStatus("Cancelled before throw: priority or setting changed");return
+            end
+            local camera=Workspace.CurrentCamera
+            root=getHRP();target=afkPlayerAnchor or afkCameraAnchor
+            if not positionAllowed() then return end
+            if afk then
+                local from,velocity=afkTntThrow(root,target)
+                -- Target selection can yield; respect priority again before sending.
+                if not State.AutoUseTNT or not farmLoopEnabled() or LocalPlayer:GetAttribute("NeedleInputLocked") then
+                    tntTelemetry.SetStatus("Cancelled during target selection");return
+                end
+                if not root.Parent or root~=getHRP() or not positionAllowed() then return end
+                TntAction:FireServer("throw",from,velocity)
+            elseif camera then
+                TntAction:FireServer("throw",camera.CFrame,camera.CFrame.LookVector*40+Vector3.new(0,8,0))
+            else tntTelemetry.SetStatus("Waiting for camera");return end
+            tntTelemetry.SetStatus("Throw request sent")
+        end,function(errorText) return tostring(errorText) end)
+        if not ok then tntTelemetry.SetStatus("Worker error (will retry): "..err) end
     end
 end)
+
+end
 
 task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.ToolInterval) or 0.5)
         if not IN_GAME then break end
-        if farmLoopEnabled() and State.AutoUsePitchfork and owns("PitchforkOwned") then
-            HayCache.ttl = 1.5
-            local hay = findClosestHayCached()
+        if State.AutoUsePitchfork and farmLoopEnabled() and owns("PitchforkOwned") then
+            local hay = selectPitchforkHay(function() return not Unloaded and State.AutoUsePitchfork and farmLoopEnabled() end, 1.5)
             if hay then
                 local id = hay:GetAttribute("HayId")
                 if id and not needleHasPriority() then pcall(function() PitchforkDig:FireServer(id) end) end
@@ -2752,7 +3493,7 @@ task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.ToolInterval) or 0.5)
         if not IN_GAME then break end
-        if farmLoopEnabled() and State.AutoDeployDrone and owns("DroneOwned") then
+        if State.AutoDeployDrone and farmLoopEnabled() and owns("DroneOwned") then
             if not LocalPlayer:GetAttribute("DroneDeployed") then
                 pcall(function() DeployDrone:FireServer() end)
             end
@@ -2828,21 +3569,31 @@ do
         vacuumSuctionActive = false
     end
 
+    local vacuumFocus=watchVacuumFocus(function()
+        local interrupted=held
+        releaseVacuum()
+        if interrupted then
+            local _,cooling=getVacuumTimings()
+            coolingPending=true
+            readyAt=math.max(readyAt,os.clock()+cooling+COOLDOWN_SAFETY)
+        end
+    end)
     local previousCleanup = _G.__BEYY_HUB_CLEANUP
     _G.__BEYY_HUB_CLEANUP = function()
+        vacuumFocus.Stop()
         releaseVacuum()
         if previousCleanup then pcall(previousCleanup) end
     end
 
     local function mustReleaseForPriority()
-        return Unloaded or not IN_GAME or not vacuumRequested() or not Window.Closed
-            or introSkipPending or needleHasPriority() or roundEndingVisible() or needlePickupActive
+        return Unloaded or not IN_GAME or afkOrbitTelemetry.RecoveryPending or not vacuumRequested() or not Window.Closed
+            or earlyIntroPending or introSkipPending or needleHasPriority() or roundEndingVisible() or needlePickupActive
             or LocalPlayer:GetAttribute("NeedleInputLocked") == true
             or getHRP() == nil or Workspace.CurrentCamera == nil
     end
 
     local function canVacuum()
-        return not mustReleaseForPriority()
+        return vacuumFocus.Ready() and not mustReleaseForPriority()
             and (not afkVacuumOrbitEnabled() or afkVacuumTargetReady)
     end
 
@@ -2940,6 +3691,7 @@ do
                         end
                     end
                     if not coolingPending and canVacuum() and not autoUiMouseBusy then
+                        local focusGeneration=vacuumFocus.Generation()
                         cycle += 1
                         vacuumSuctionActive = true
                         autoUiMouseBusy = true
@@ -2972,12 +3724,18 @@ do
                                     previousValue = current
                                 end)
                             end
+                            if not vacuumFocus.Ready() or focusGeneration~=vacuumFocus.Generation() then return end
+                            -- Reconcile stale engine input before every new hold, including in background.
+                            pcall(function() VirtualInputManager:SendMouseButtonEvent(x,y,0,false,game,0) end)
+                            task.wait(0.05)
+                            if not canVacuum() or focusGeneration~=vacuumFocus.Generation() then return end
                             local pressed = pcall(function()
                                 VirtualInputManager:SendMouseMoveEvent(x, y, game)
                                 VirtualInputManager:SendMouseButtonEvent(x, y, 0, true, game, 0)
                             end)
                             if not pressed then return end
                             held = true
+                            if focusGeneration~=vacuumFocus.Generation() then releaseVacuum(); return end
                             didHold = true
                             print(string.format("[Vacuum] Cycle %d: holding Mouse1 to 100%% heat (Runtime L%d)", cycle, runtimeLevel))
 
@@ -3003,7 +3761,7 @@ do
                                     if os.clock() - lastRisingAt > HEAT_STALLED_SECONDS then
                                         if os.clock() - lastStallWarning > 30 then
                                             lastStallWarning = os.clock()
-                                            warn("[Vacuum] Heat not increasing; releasing Mouse1 and retrying equip (not cooling)")
+                                            warn("[Vacuum] Heat stalled; releasing stale VIM hold and retrying a fresh press")
                                         end
                                         break
                                     end
@@ -3027,7 +3785,7 @@ do
                             end
                         elseif didHold then
 
-                            readyAt = os.clock() + 0.3
+                            readyAt = math.max(readyAt, os.clock() + 0.3)
                             print("[Vacuum] Suction interrupted below 100%; will resume from current heat")
                         else
                             readyAt = os.clock() + 1.0
@@ -3038,6 +3796,156 @@ do
         end
         releaseVacuum()
     end)
+end
+
+-- Bounded tracing runs only while a needle pickup is active.
+local needleTraceLoadedAt=os.clock()
+local needleTraceSequence=0
+local needleTraceLastSuccess
+local needleTraceFailedTarget
+local needleTraceBaselineLoaded=false
+local function beginNeedleTrace(needle,character,root,camera,started)
+    if not needleTraceBaselineLoaded then
+        needleTraceBaselineLoaded=true
+        needleTraceLastSuccess=_G.__BEYY_NEEDLE_LAST_SUCCESS
+        if not needleTraceLastSuccess and type(readfile)=="function" then
+            local ok,previous=pcall(function()
+                return game:GetService("HttpService"):JSONDecode(readfile("BeyyHub/needle_success_trace.json"))
+            end)
+            if ok and type(previous)=="table" and previous.Schema==1 and previous.Success==true and previous.PlaceId==game.PlaceId then needleTraceLastSuccess=previous end
+        end
+    end
+    needleTraceSequence+=1
+    local report={Schema=1,Attempt=needleTraceSequence,Time=os.time(),SessionUptime=os.clock()-needleTraceLoadedAt,PlaceId=game.PlaceId,JobId=game.JobId,
+        Events={},Snapshots={},DroppedEvents=0}
+    local connections={}
+    local stopped=false
+    local lastObserved={}
+    local originalParent=needle.Parent
+    local originalServer=Workspace:FindFirstChild("NeedleObjectiveServer")
+    local mouse
+    pcall(function() mouse=LocalPlayer:GetMouse() end)
+    local function path(object)
+        if not object then return "nil" end
+        local ok,value=pcall(object.GetFullName,object)
+        return ok and value or tostring(object)
+    end
+    local function vector(v)
+        local result={X=v.X,Y=v.Y}
+        if typeof(v)=="Vector3" then result.Z=v.Z end
+        return result
+    end
+    local function event(kind,data)
+        if stopped then return end
+        local observationKey,observationValue
+        if kind=="CameraType" or kind=="CameraSubject" then observationKey=kind;observationValue=data.Value
+        elseif kind=="PlayerAttribute" then observationKey=kind..tostring(data.Name);observationValue=data.Value end
+        if observationKey then
+            if lastObserved[observationKey]==observationValue then return end
+            lastObserved[observationKey]=observationValue
+        end
+        if #report.Events>=128 then report.DroppedEvents+=1;return end
+        report.Events[#report.Events+1]={At=os.clock()-started,Kind=kind,Data=data}
+    end
+    local function watch(signal,kind,describe)
+        local ok,connection=pcall(function()
+            return signal:Connect(function(...)
+                local args={...}
+                local captured,data=pcall(describe,table.unpack(args))
+                event(kind,captured and data or {CaptureError=tostring(data)})
+            end)
+        end)
+        if ok then connections[#connections+1]=connection end
+    end
+    local function mouseState()
+        return {LeftPressed=UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton1),
+            Behavior=tostring(UserInputService.MouseBehavior),Position=vector(UserInputService:GetMouseLocation()),
+            GameMouseTarget=mouse and path(mouse.Target) or "unavailable"}
+    end
+    local function snapshot(stage)
+        if stopped or #report.Snapshots>=24 then return end
+        local ok,data=pcall(function()
+            local tools={}
+            for _,item in ipairs(character:GetChildren()) do if item:IsA("Tool") then tools[#tools+1]=item.Name end end
+            local viewport=camera.ViewportSize/2
+            local params=RaycastParams.new();params.FilterType=Enum.RaycastFilterType.Exclude
+            params.FilterDescendantsInstances={character}
+            local ray=camera:ViewportPointToRay(viewport.X,viewport.Y)
+            local hit=Workspace:Raycast(ray.Origin,ray.Direction*50,params)
+            local inset=GuiService:GetGuiInset()
+            return {Stage=stage,Mouse=mouseState(),Tools=tools,MenuClosed=Window.Closed,UIOwnsMouse=autoUiMouseBusy==true,
+                Unloaded=Unloaded,PickupOwnsMouse=needlePickupActive==true,OrbitEnabled=afkVacuumOrbitEnabled(),CharacterSame=LocalPlayer.Character==character,CharacterLive=character.Parent~=nil,RootLive=root.Parent~=nil,
+                ObjectiveLive=needle.Parent~=nil,ObjectiveParentSame=needle.Parent==originalParent,
+                ObjectiveServerSame=Workspace:FindFirstChild("NeedleObjectiveServer")==originalServer,
+                Target=path(needle),TargetPosition=vector(needle.Position),Distance=(root.Position-needle.Position).Magnitude,
+                TargetHayId=resolveNeedleHayId(needle),Hidden=needle:GetAttribute("HIDDEN"),HiddenWithin=needle:GetAttribute("HIDDEN_WITHIN"),
+                CameraSame=Workspace.CurrentCamera==camera,CameraType=tostring(camera.CameraType),CameraSubject=path(camera.CameraSubject),
+                CameraPosition=vector(camera.CFrame.Position),CameraLook=vector(camera.CFrame.LookVector),
+                CenterRayHit=hit and path(hit.Instance) or "none",GuiInset=vector(inset),
+                VacuumActive=LocalPlayer:GetAttribute("VacuumActive"),VacuumState=LocalPlayer:GetAttribute("VacuumState"),NeedleEquippedSlot=LocalPlayer:GetAttribute("NeedleEquippedSlot"),NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),
+                CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),HoveredHayId=LocalPlayer:GetAttribute("HoveredHayId")}
+        end)
+        report.Snapshots[#report.Snapshots+1]={At=os.clock()-started,Data=ok and data or {Stage=stage,CaptureError=tostring(data)}}
+    end
+    -- Signal callbacks are observation only; they never change input or gameplay state.
+    watch(UserInputService.InputBegan,"InputBegan",function(input,processed)
+        return {Type=tostring(input.UserInputType),Key=tostring(input.KeyCode),GameProcessed=processed}
+    end)
+    watch(UserInputService.InputEnded,"InputEnded",function(input,processed)
+        return {Type=tostring(input.UserInputType),Key=tostring(input.KeyCode),GameProcessed=processed}
+    end)
+    watch(UserInputService.WindowFocused,"Focus",function() return {Focused=true} end)
+    watch(UserInputService.WindowFocusReleased,"Focus",function() return {Focused=false} end)
+    watch(UserInputService:GetPropertyChangedSignal("MouseBehavior"),"MouseBehavior",function() return mouseState() end)
+    watch(Workspace:GetPropertyChangedSignal("CurrentCamera"),"CurrentCamera",function() return {Same=Workspace.CurrentCamera==camera} end)
+    watch(camera:GetPropertyChangedSignal("CameraType"),"CameraType",function() return {Value=tostring(camera.CameraType)} end)
+    watch(camera:GetPropertyChangedSignal("CameraSubject"),"CameraSubject",function() return {Value=path(camera.CameraSubject)} end)
+    watch(character.ChildAdded,"CharacterChildAdded",function(item) return {Path=path(item),Class=item.ClassName,Tool=item:IsA("Tool")} end)
+    watch(character.ChildRemoved,"CharacterChildRemoved",function(item) return {Path=path(item),Class=item.ClassName,Tool=item:IsA("Tool")} end)
+    watch(LocalPlayer.CharacterAdded,"CharacterAdded",function(item) return {Same=item==character} end)
+    watch(needle.AncestryChanged,"ObjectiveAncestry",function(_,parent) return {Parent=path(parent),Same=parent==originalParent} end)
+    for _,attribute in ipairs({"NeedleOwned","NeedleInputLocked","CutsceneActive","VacuumActive","HandHoldEnabled","PitchforkHoldEnabled"}) do
+        watch(LocalPlayer:GetAttributeChangedSignal(attribute),"PlayerAttribute",function() return {Name=attribute,Value=tostring(LocalPlayer:GetAttribute(attribute))} end)
+    end
+    local lastCameraEvent=-math.huge
+    local function checkCamera(expected)
+        if not expected or stopped or os.clock()-lastCameraEvent<0.1 then return end
+        local ok,changed=pcall(function()
+            return Workspace.CurrentCamera~=camera or camera.CameraType~=Enum.CameraType.Scriptable
+                or (camera.CFrame.Position-expected.Position).Magnitude>0.1
+                or camera.CFrame.LookVector:Dot(expected.LookVector)<0.999
+        end)
+        if ok and changed then lastCameraEvent=os.clock();event("CameraChangedBeforeAim",{Position=vector(camera.CFrame.Position),Type=tostring(camera.CameraType)}) end
+    end
+    local function finish(success,reason,clicks)
+        if stopped then return end
+        snapshot("after-cleanup")
+        report.Success=success;report.Reason=reason;report.Clicks=clicks;report.Duration=os.clock()-started
+        stopped=true
+        for _,connection in ipairs(connections) do pcall(connection.Disconnect,connection) end
+        task.defer(function()
+            local ok,err=pcall(function()
+                local history=_G.__BEYY_NEEDLE_TRACE_HISTORY or {}
+                history[#history+1]=report
+                if #history>12 then table.remove(history,1) end
+                _G.__BEYY_NEEDLE_TRACE_HISTORY=history
+                if success then needleTraceLastSuccess=report;_G.__BEYY_NEEDLE_LAST_SUCCESS=report end
+                local payload=success and report or {Failure=report,LastSuccess=needleTraceLastSuccess}
+                local json=game:GetService("HttpService"):JSONEncode(payload)
+                local filename="BeyyHub/needle_"..(success and "success" or (needleTraceFailedTarget==needle and "retry" or "failure")).."_trace.json"
+                if success then needleTraceFailedTarget=nil else needleTraceFailedTarget=needle end
+                local saved=false
+                if type(writefile)=="function" then saved=pcall(writefile,filename,json) end
+                if not success then
+                    _G.__BEYY_NEEDLE_FAILURE_TRACE=json
+                    warn(string.format("[Needle Trace] Attempt %d failed (%d clicks); %s. Trace %s",report.Attempt,clicks,tostring(reason),saved and filename or "available in _G.__BEYY_NEEDLE_FAILURE_TRACE"))
+                end
+            end)
+            if not ok then warn("[Needle Trace] Save failed: "..tostring(err)) end
+        end)
+    end
+    snapshot("start")
+    return {Event=event,Snapshot=snapshot,CheckCamera=checkCamera,Finish=finish}
 end
 
 do
@@ -3058,14 +3966,14 @@ do
     end
     local function owned() return LocalPlayer:GetAttribute("NeedleOwned") == true end
     local function tryPickup(needle)
-        if busy or Unloaded or roundEndingVisible() or not State.AutoPickupNeedle or owned() or not needle or not needle.Parent then return false end
+        if busy or Unloaded or roundEndingVisible() or not State.AutoPickupNeedle or not Window.Closed or owned() or not needle or not needle.Parent then return false end
         busy = true
         needlePickupActive = true
         local started = os.clock()
         local char = LocalPlayer.Character
         local root = char and char:FindFirstChild("HumanoidRootPart")
         local cam = Workspace.CurrentCamera
-        local needleId = needle:GetAttribute("HayId")
+        local needleId = resolveNeedleHayId(needle)
         if not char or not char.Parent or not root or not root.Parent then
             reportPrerequisite("character or HumanoidRootPart unavailable")
             busy = false
@@ -3078,13 +3986,9 @@ do
             needlePickupActive = false
             return false
         end
-        if type(needleId) ~= "number" then
-            reportPrerequisite("needle HayId invalid (type=" .. type(needleId) .. "); refreshing target")
-            trackedNeedle = nil
-            busy = false
-            needlePickupActive = false
-            return false
-        end
+        local physicalFallback = type(needleId) ~= "number"
+        setNeedlePickupStatus(physicalFallback and "Attempting normal mouse pickup; no numeric HayId found" or ("Picking up needle ID "..tostring(needleId)))
+        local trace=beginNeedleTrace(needle,char,root,cam,started)
         local initialPivot = char:GetPivot()
         local originalHover = LocalPlayer:GetAttribute("HoveredHayId")
         local previousPickupCameraType, previousPickupCameraSubject, previousPickupCameraCFrame
@@ -3120,7 +4024,7 @@ do
                 for _, folderName in ipairs({"HaystackClient", "HaystackCollision"}) do
                     local folder = Workspace:FindFirstChild(folderName)
                     if folder then
-                        for _, part in ipairs(folder:GetDescendants()) do
+                        for _, part in budgetedFolderChildren(folder,function() return not Unloaded and State.AutoPickupNeedle and needle.Parent~=nil end,true) do
                             if queryStats.filtered >= SETTINGS.FilterMaxParts then break end
                             if Unloaded or not State.AutoPickupNeedle or observedOwnership then return end
                             if part:IsA("BasePart") and part ~= needle
@@ -3174,6 +4078,7 @@ do
             if not mouseDown then return end
             local center = cam.ViewportSize / 2
             pcall(function() VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0) end)
+            trace.Event("ReleaseRequested",{Click=clicks})
             mouseDown = false
         end
         local function waitForConfirmation(seconds)
@@ -3189,6 +4094,10 @@ do
         local function cleanup()
             if cleaned then return end
             cleaned = true
+            captureOwnership()
+            success=success or observedOwnership
+            trace.Event("CleanupStarted",{})
+            trace.Snapshot("before-cleanup")
             releaseMouse()
             if bound then
                 pcall(function() RunService:UnbindFromRenderStep(renderName) end)
@@ -3219,7 +4128,7 @@ do
             captureOwnership()
             success = success or observedOwnership
             pcall(function()
-                if LocalPlayer:GetAttribute("HoveredHayId") == needleId then
+                if not physicalFallback and LocalPlayer:GetAttribute("HoveredHayId") == needleId then
                     LocalPlayer:SetAttribute("HoveredHayId", originalHover)
                 end
             end)
@@ -3228,6 +4137,8 @@ do
             elseif char.Parent then
                 pcall(function() char:PivotTo(initialPivot) end)
             end
+            if physicalFallback and not success then recordNeedleDiagnostic(needle) end
+            setNeedlePickupStatus(success and "Needle collected; waiting for turn-in" or ("Pickup failed: "..tostring(failureReason)))
             local elapsed = os.clock() - started
             if success then
                 print(string.format("[Needle] Picked up HayId=%s in %.2fs (%d clicks)",
@@ -3236,6 +4147,7 @@ do
                 warn(string.format("[Needle] Pickup failed HayId=%s: %s (%d clicks)",
                     tostring(needleId), tostring(failureReason), clicks))
             end
+            trace.Finish(success,success and "NeedleOwned confirmed" or failureReason,clicks)
             activeCleanup = nil
             busy = false
             needlePickupActive = false
@@ -3265,8 +4177,10 @@ do
                 horizontalForward = Vector3.new(0, 0, -1)
             end
             horizontalForward = horizontalForward.Unit
-            local targetRootPosition = needle.Position - horizontalForward * SETTINGS.HorizontalOffsetStuds
-                + Vector3.new(0, SETTINGS.HeightAboveNeedle, 0)
+            local pickupHorizontalOffset=physicalFallback and 0.75 or SETTINGS.HorizontalOffsetStuds
+            local pickupHeight=physicalFallback and 2.0 or SETTINGS.HeightAboveNeedle
+            local targetRootPosition = needle.Position - horizontalForward * pickupHorizontalOffset
+                + Vector3.new(0, pickupHeight, 0)
             local intendedDistance = (targetRootPosition - needle.Position).Magnitude
             local correctionLimit = intendedDistance + 0.35
             local retryLimit = intendedDistance + 0.80
@@ -3281,35 +4195,64 @@ do
 
             local cameraPosition = targetRootPosition - horizontalForward * 3.5
                 + Vector3.new(0, 3.5, 0)
+            local expectedPickupCamera
             local function aimAtNeedle()
                 if Unloaded or not needle.Parent or observedOwnership or roundEndingVisible() then return end
                 if Workspace.CurrentCamera ~= cam then return end
+                trace.CheckCamera(expectedPickupCamera)
                 cam.CameraType = Enum.CameraType.Scriptable
                 cam.CFrame = CFrame.lookAt(cameraPosition, needle.Position, Vector3.yAxis)
+                expectedPickupCamera=cam.CFrame
+            end
+            local function selectHandForNeedle()
+                if Unloaded or not State.AutoPickupNeedle or not Window.Closed then return false,"Hand selection cancelled" end
+                local center=cam.ViewportSize/2
+                local releaseOK,releaseError=pcall(function() VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0) end)
+                if not releaseOK then return false,"Could not release vacuum input: "..tostring(releaseError) end
+                local humanoid=char:FindFirstChildOfClass("Humanoid")
+                if humanoid then humanoid:UnequipTools() end
+                trace.Event("HandSelectionRequested",{Slot=1})
+                local downOK,downError=pcall(function() VirtualInputManager:SendKeyEvent(true,Enum.KeyCode.One,false,game) end)
+                task.wait(0.05)
+                -- Always pair the release, including cancellation while waiting.
+                local upOK,upError=pcall(function() VirtualInputManager:SendKeyEvent(false,Enum.KeyCode.One,false,game) end)
+                if not downOK or not upOK then return false,"Hand hotbar input failed: "..tostring(downOK and upError or downError) end
+                task.wait(0.15)
+                local deadline=os.clock()+0.5
+                while not Unloaded and State.AutoPickupNeedle and Window.Closed and LocalPlayer:GetAttribute("VacuumActive")==true and os.clock()<deadline do task.wait(0.025) end
+                if Unloaded or not State.AutoPickupNeedle or not Window.Closed then return false,"Hand selection cancelled" end
+                trace.Snapshot("after-hand-selection")
+                if LocalPlayer:GetAttribute("VacuumActive")==true then return false,"Vacuum still active after selecting hand slot 1" end
+                return true
+            end
+            if physicalFallback then
+                local handReady,handReason=selectHandForNeedle()
+                if not handReady then failureReason=handReason;return end
             end
             placeNearNeedle()
+            trace.Snapshot("after-positioning")
             captureOwnership()
             if observedOwnership then success = true; return end
             local function forceHover()
                 if not Unloaded and State.AutoPickupNeedle and needle.Parent and not observedOwnership then
                     aimAtNeedle()
-                    if LocalPlayer:GetAttribute("HoveredHayId") ~= needleId then
+                    if not physicalFallback and LocalPlayer:GetAttribute("HoveredHayId") ~= needleId then
                         LocalPlayer:SetAttribute("HoveredHayId", needleId)
                     end
                 end
             end
-            LocalPlayer:SetAttribute("HoveredHayId", needleId)
+            if not physicalFallback then LocalPlayer:SetAttribute("HoveredHayId", needleId) end
             aimAtNeedle()
             RunService:BindToRenderStep(renderName, Enum.RenderPriority.Last.Value + 30, forceHover)
             bound = true
             RunService.RenderStepped:Wait()
-            applyQueryFilter()
+            if not physicalFallback then applyQueryFilter() end
 
             RunService.RenderStepped:Wait()
             for i = 1, SETTINGS.MaxClicks do
                 captureOwnership()
                 if observedOwnership then success = true; break end
-                if Unloaded or not State.AutoPickupNeedle or roundEndingVisible() then failureReason = "Pickup cancelled at round end"; break end
+                if Unloaded or not State.AutoPickupNeedle or not Window.Closed or roundEndingVisible() then failureReason = "Pickup cancelled at round end"; break end
                 if not needle.Parent then failureReason = "Needle disappeared before confirmation"; break end
                 if not char.Parent or not root.Parent then failureReason = "Character disappeared"; break end
                 local distance = (root.Position - needle.Position).Magnitude
@@ -3327,7 +4270,20 @@ do
                 pcall(function() VirtualInputManager:SendMouseMoveEvent(center.X, center.Y, game) end)
                 RunService.RenderStepped:Wait()
                 forceHover()
-                local hoverMatches = LocalPlayer:GetAttribute("HoveredHayId") == needleId
+                local hoverMatches = physicalFallback or LocalPlayer:GetAttribute("HoveredHayId") == needleId
+                if physicalFallback then
+                    local ray=cam:ViewportPointToRay(center.X,center.Y)
+                    local params=RaycastParams.new()
+                    params.FilterType=Enum.RaycastFilterType.Exclude
+                    params.FilterDescendantsInstances={char}
+                    local hit=Workspace:Raycast(ray.Origin,ray.Direction*50,params)
+                    local needleModel=needle.Parent
+                    local hitNeedle=hit and (hit.Instance==needle or (needleModel and needleModel:IsA("Model") and hit.Instance:IsDescendantOf(needleModel) and hit.Instance:GetAttribute("IsNeedleObjective")==true))
+                    if not hitNeedle then
+                        failureReason="Physical click ray blocked by "..(hit and hit.Instance:GetFullName() or "no target")
+                        break
+                    end
+                end
                 local projectedNeedle, onScreen = cam:WorldToViewportPoint(needle.Position)
                 local screenOffset = onScreen and (Vector2.new(projectedNeedle.X, projectedNeedle.Y) - center).Magnitude or -1
                 if not hoverMatches then failureReason = "HoveredHayId did not stick"; break end
@@ -3335,16 +4291,26 @@ do
                     failureReason = "Needle camera did not centre the target"
                     break
                 end
+                if physicalFallback then
+                    trace.Event("FreshReleaseRequested",{Click=i})
+                    VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, false, game, 0)
+                    RunService.RenderStepped:Wait()
+                    if Unloaded or not State.AutoPickupNeedle or not Window.Closed then failureReason="Pickup cancelled before fresh click"; break end
+                end
+                trace.Snapshot("before-press-"..tostring(i))
+                trace.Event("PressRequested",{Click=i,OwnedMouseDown=mouseDown,PhysicalFallback=physicalFallback})
                 local pressed, pressErr = pcall(function()
                     VirtualInputManager:SendMouseButtonEvent(center.X, center.Y, 0, true, game, 0)
                 end)
                 if not pressed then failureReason = "VIM press failed: " .. tostring(pressErr); break end
+                trace.Event("PressResult",{OK=pressed,Error=pressErr and tostring(pressErr) or nil})
                 clicks += 1
                 mouseDown = true
                 task.wait(SETTINGS.MousePressSeconds)
                 releaseMouse()
+                trace.Snapshot("after-release-"..tostring(i))
                 if waitForConfirmation(SETTINGS.OwnershipWaitSeconds) then success = true; break end
-                if i == 4 then applyQueryFilter() end
+                if i == 4 and not physicalFallback then applyQueryFilter() end
             end
             captureOwnership()
             success = success or observedOwnership
@@ -3368,14 +4334,14 @@ do
                 if not trackedNeedle or not trackedNeedle.Parent
                     or trackedNeedle:GetAttribute("HIDDEN_WITHIN") ~= nil
                     or trackedNeedle:GetAttribute("IsNeedleObjective") ~= true
-                    or type(trackedNeedle:GetAttribute("HayId")) ~= "number" then
+                    then
                     trackedNeedle = findExposedNeedlePart()
                 end
-                if trackedNeedle and trackedNeedle == confirmedNeedlePart
-                    and trackedNeedle:GetAttribute("HayId") == confirmedNeedleId then
+                if confirmedNeedleId~=nil and trackedNeedle and trackedNeedle == confirmedNeedlePart
+                    and resolveNeedleHayId(trackedNeedle) == confirmedNeedleId then
                     continue
                 end
-                if trackedNeedle and not busy and (os.clock() - lastAttempt) >= SETTINGS.RetryDelay then
+                if trackedNeedle and not busy and (os.clock() - lastAttempt) >= (resolveNeedleHayId(trackedNeedle) and SETTINGS.RetryDelay or 5) then
                     lastAttempt = os.clock()
                     local target = trackedNeedle
                     task.spawn(function() tryPickup(target) end)
@@ -3386,13 +4352,13 @@ do
 end
 
 local lastNeedleHandIn = 0
-RunService.Heartbeat:Connect(function()
+local needleHandInConnection = RunService.Heartbeat:Connect(function()
     if Unloaded or not IN_GAME then return end
     if not State.AutoHandInNeedle then return end
-    if needlePickupActive or roundEndingVisible() then return end
     if LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
     if os.clock() - lastNeedleHandIn < 0.12 then return end
     lastNeedleHandIn = os.clock()
+    if needlePickupActive or roundEndingVisible() then return end
     local farmer = Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("Farmer_NPC")
     local hrp = getHRP()
     if not farmer or not hrp then return end
@@ -3402,12 +4368,18 @@ RunService.Heartbeat:Connect(function()
     end
     pcall(function() NeedleHandIn:FireServer() end)
 end)
+local previousHandInCleanup = _G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP = function()
+    needleHandInConnection:Disconnect()
+    if previousHandInCleanup then pcall(previousHandInCleanup) end
+end
+
 
 task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.BuyInterval) or 1)
         if not IN_GAME then break end
-        if State.AutoBuyTools then
+        if State.AutoBuyTools and not vacuumUpgradePriority.Reserve() then
             local sel = State.BuyToolsList or {}
             local list = {}
             if type(sel) == "table" then
@@ -3418,6 +4390,7 @@ task.spawn(function()
                 end
             end
             for _, name in ipairs(list) do
+                if vacuumUpgradePriority.Reserve() then break end
                 if name == "Pitchfork" and not owns("PitchforkOwned") then
                     pcall(function() BuyShopItem:FireServer("Pitchfork") end)
                 elseif name == "TNT" and not owns("TntOwned") then
@@ -3454,6 +4427,7 @@ task.spawn(function()
     while not Unloaded do
         task.wait(3)
         if not IN_GAME then break end
+        vacuumUpgradePriority.Purchase()
         if State.UpgCapacity then tryBuyTrack("Capacity") end
         if State.UpgHandSpeed then tryBuyTrack("Speed") end
         if State.UpgHandGrab then tryBuyTrack("Grab") end
@@ -3561,8 +4535,130 @@ pcall(function()
     task.defer(function()
         if not Unloaded then pcall(function() CollectingTab:Select() end) end
 
-        if not Unloaded and not Window.Closed then closeMenuOnStartup() end
     end)
 end)
 
 print("[Needle] Loaded v103.00")
+
+task.spawn(function()
+    local teleport=game:GetService("TeleportService")
+    local active=true
+    local pending=false
+    local pendingSince=0
+    local retryAt=0
+    local timerIncreasing=false
+    local lastTimer
+    local cachedTimer
+    local searchAt=0
+    local clock=_G.__BEYY_ROUND_TIMEOUT_CLOCK
+    if type(clock)~="table" or clock.JobId~=game.JobId or clock.PlaceId~=game.PlaceId then
+        clock={JobId=game.JobId,PlaceId=game.PlaceId};_G.__BEYY_ROUND_TIMEOUT_CLOCK=clock
+    end
+    local function status(text)
+        if afkOrbitTelemetry.TimeoutStatus then afkOrbitTelemetry.TimeoutStatus:SetDesc(text) end
+    end
+    local function parseTimer(text)
+        if type(text)~="string" then return nil end
+        local h,m,s=text:match("^%s*(%d+):(%d%d):(%d%d)%s*$")
+        if h and tonumber(m)<60 and tonumber(s)<60 then return tonumber(h)*3600+tonumber(m)*60+tonumber(s) end
+        m,s=text:match("^%s*(%d+):(%d%d)%s*$")
+        if not m then m,s=text:match("^[Tt]ime%s*:?%s*(%d+):(%d%d)%s*$") end
+        if m and tonumber(s)<60 then return tonumber(m)*60+tonumber(s) end
+        return nil
+    end
+    local function visibleTimer(obj)
+        local current=obj
+        local named=false
+        while current and current~=LocalPlayer:FindFirstChildOfClass("PlayerGui") do
+            local name=current.Name:lower()
+            if name:find("beyynative",1,true) or name:find("ending",1,true) or name:find("results",1,true) or name:find("puzzle",1,true) then return false end
+            if name:find("timer",1,true) or name=="time" then named=true end
+            if current:IsA("GuiObject") and not current.Visible then return false end
+            if current:IsA("ScreenGui") and not current.Enabled then return false end
+            current=current.Parent
+        end
+        local camera=Workspace.CurrentCamera
+        local bottomRight=camera and obj:IsA("GuiObject") and obj.AbsolutePosition.X>=camera.ViewportSize.X*0.65 and obj.AbsolutePosition.Y>=camera.ViewportSize.Y*0.65
+        return named or bottomRight
+    end
+    local function readTimer()
+        if cachedTimer and cachedTimer.Parent and visibleTimer(cachedTimer) then
+            local value=parseTimer(cachedTimer.Text)
+            if value then return value end
+        end
+        cachedTimer=nil
+        if os.clock()<searchAt then return nil end
+        searchAt=os.clock()+5
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        if not pg then return nil end
+        local found
+        for _,obj in ipairs(pg:GetDescendants()) do
+            if (obj:IsA("TextLabel") or obj:IsA("TextButton")) and parseTimer(obj.Text) and visibleTimer(obj) then
+                if found then return nil end -- Ambiguous timers use the elapsed-time fallback.
+                found=obj
+            end
+        end
+        cachedTimer=found
+        return found and parseTimer(found.Text) or nil
+    end
+    local function ensureReload()
+        if _G.__BEYY_TELEPORT_RELOAD_JOB==game.JobId then return true end
+        local env=_G
+        if type(getgenv)=="function" then local ok,value=pcall(getgenv);if ok and type(value)=="table" then env=value end end
+        local queue=queue_on_teleport or env.queue_on_teleport or env.queueonteleport or env.queue_on_tp
+        if type(queue)~="function" then return false,"teleport reload is unsupported" end
+        local ok,err=pcall(queue,[==[loadstring(game:HttpGet("https://raw.githubusercontent.com/sceneton/script/main/loader.lua?refresh="..tostring(os.time()).."-"..tostring(math.random(1,1000000000))))()]==])
+        if ok then _G.__BEYY_TELEPORT_RELOAD_JOB=game.JobId end
+        return ok,tostring(err)
+    end
+    local failed=teleport.TeleportInitFailed:Connect(function(player,result,message,placeId)
+        if active and pending and player==LocalPlayer and placeId==BEYY_PLACE_IDS.Lobby then
+            pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15
+            status("Teleport failed; retrying in 15s: "..tostring(message))
+        end
+    end)
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        active=false;failed:Disconnect();afkOrbitTelemetry.RecoveryPending=false
+        if previous then pcall(previous) end
+    end
+    while active and not Unloaded do
+        task.wait(1)
+        if not active or Unloaded then break end
+        if LocalPlayer:GetAttribute("IntroCutsceneFinished")==true and not clock.Started then clock.Started=os.clock() end
+        local timer=readTimer()
+        if timer and lastTimer then
+            if timer>lastTimer then timerIncreasing=true
+            elseif timer<lastTimer then
+                if timerIncreasing and timer<lastTimer-10 then clock.Started=os.clock();retryAt=0 end
+                timerIncreasing=false
+            end
+        end
+        if timer then lastTimer=timer end
+        if timer and timerIncreasing then clock.Started=os.clock()-timer else timer=nil end
+        local elapsed=timer or (clock.Started and os.clock()-clock.Started)
+        if pending then
+            if os.clock()-pendingSince>=30 then
+                pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15
+                status("Teleport has not completed; retrying in 15s")
+            end
+        elseif not State.AutoRoundFailsafe then status("Disabled")
+        elseif not elapsed then status("Waiting for round timer or intro completion")
+        elseif os.clock()<retryAt then -- Keep the failure reason visible during retry cooldown.
+        elseif elapsed<=300 then
+            status(string.format("%s: %d:%02d / 5:00",timer and "Game timer" or "Elapsed since intro",math.floor(elapsed/60),math.floor(elapsed%60)))
+        else
+            local ready,reason=ensureReload()
+            if not ready then status("Cannot restart automatically: "..tostring(reason));retryAt=os.clock()+15
+            else
+                safeWrite(CACHE_FOLDER.."/autofarmwins_shared.txt","true")
+                pending=true;pendingSince=os.clock();afkOrbitTelemetry.RecoveryPending=true
+                status("Round exceeded 5 minutes; returning to lobby")
+                local ok,err=pcall(function()
+                    teleport:Teleport(BEYY_PLACE_IDS.Lobby,LocalPlayer,{BeyyHubTimeoutRecovery=true,AutoFarmWins=true,Created=os.time()})
+                end)
+                if not ok then pending=false;afkOrbitTelemetry.RecoveryPending=false;retryAt=os.clock()+15;status("Teleport error; retrying in 15s: "..tostring(err)) end
+            end
+        end
+    end
+end)

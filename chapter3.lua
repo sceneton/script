@@ -770,6 +770,7 @@ end
         UpgPitchCooldown=false, UpgPitchHold=false, UpgPitchSweep=false,
         UpgDroneSpeed=false, UpgDroneGrab=false, UpgDroneCapacity=false,
         UpgVacPower=false, UpgVacCooling=false, UpgVacRuntime=false,
+        AutoSolveRanchPuzzles=true, AutoGrabAttachUfoParts=false,
     }
     local sharedFarmState = {}
     for key, value in pairs(sharedFarmDefaults) do sharedFarmState[key] = value end
@@ -927,7 +928,7 @@ end
     end
     local function farmBlocked()
         return hubUnloaded or BEYY_CHAPTER=="Lobby"
-            or (BEYY_CHAPTER=="Chapter2" and sharedFarmPuzzleBusy())
+            or sharedFarmPuzzleBusy()
             or LocalPlayer:GetAttribute("NeedleInputLocked")==true
             or LocalPlayer:GetAttribute("CutsceneActive")==true
             or LocalPlayer:GetAttribute("HintViewerOpen")==true
@@ -1443,8 +1444,1101 @@ end
     end)
 
 
-        local tab = hubWindow:Tab({ Title = "Chapter 3", Icon = "construction" })
-        tab:Paragraph({ Title = "Chapter 3", Desc = "Chapter detected. No puzzle automation has been implemented for this map yet." })
+    -- Chapter 3 options adapted from BeyyTU/needlehub chapter3.lua
+    -- Reference blob: 1e4025b9bd9d261effa6b45334038d532c08c4ed
+    local function installRanchOptions()
+        -- Ranch GUI solver. The three GUI layouts and interactive controls
+        -- were obtained from the live read-only Ranch JSON captures.
+        -- Server-side puzzle remote arguments are NOT known. Normal solving
+        -- uses real GUI dragging, not speculative remote requests.
+        local ranchPuzzleNames = {
+            "UfoWireMinigame", "UfoVentMinigame", "UfoAlignMinigame"
+        }
+        local ranchPuzzleInputBusy = false
+        local ranchUfoBusy = false
+        local ranchMouseHeld = false
+        local ranchLastPuzzleGui = nil
+        local ranchSession = nil
+        local ranchAttempts = 0
+        local ranchNextAttemptAt = 0
+        local ranchInstantProbeActive = false
+
+        local function ranchActivePuzzle()
+            local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
+            if not pg then return nil, nil end
+            for _, name in ipairs(ranchPuzzleNames) do
+                local gui = pg:FindFirstChild(name)
+                if gui and gui:IsA("ScreenGui") and gui.Enabled then
+                    local panel = gui:FindFirstChild("Panel")
+                    if panel and panel:IsA("GuiObject") and panel.Visible then
+                        return name, gui
+                    end
+                end
+            end
+            return nil, nil
+        end
+        local function ranchPuzzleAlive(gui)
+            return gui ~= nil and gui.Parent ~= nil
+                and gui:IsA("ScreenGui") and gui.Enabled == true
+                and gui:FindFirstChild("Panel") ~= nil
+        end
+        sharedFarmPuzzleBusy = function()
+            return ranchUfoBusy or ranchPuzzleInputBusy or ranchInstantProbeActive
+                or ranchActivePuzzle() ~= nil
+        end
+
+        local function ranchPoint(element)
+            local pos, size = element.AbsolutePosition, element.AbsoluteSize
+            return Vector2.new(pos.X + size.X*0.5, pos.Y + size.Y*0.5)
+        end
+        local function ranchMouseMove(point)
+            VirtualInputManager:SendMouseMoveEvent(math.floor(point.X+0.5),
+                math.floor(point.Y+0.5), game)
+        end
+        local function ranchMouseButton(point, down)
+            VirtualInputManager:SendMouseButtonEvent(math.floor(point.X+0.5),
+                math.floor(point.Y+0.5), 0, down, game, 0)
+        end
+        local function ranchReleaseMouse()
+            if not ranchMouseHeld then return end
+            ranchMouseHeld = false
+            local point = UserInputService:GetMouseLocation()
+            pcall(function() ranchMouseButton(point, false) end)
+        end
+        -- Validated in standalone Ranch GUI pilot v6 (frame input for wire/align)
+        -- and Vent Teleport pilot v2 (0.29 clip-height jump with GUI inset).
+        -- This block is ONLY called by the existing AutoSolveRanchPuzzles loop.
+        local function ranchGuiActive(gui)
+            if not ranchPuzzleAlive(gui) then return false end
+            local panel=gui:FindFirstChild("Panel")
+            return panel and panel:IsA("GuiObject") and panel.Visible
+        end
+        local function ranchCanSolve(gui)
+            return not hubUnloaded and sharedFarmState.AutoSolveRanchPuzzles
+                and hubWindow.Closed and not ranchInstantProbeActive
+                and not ranchUfoBusy and not needleBusy
+                and LocalPlayer:GetAttribute("CutsceneActive")~=true
+                and LocalPlayer:GetAttribute("NeedleInputLocked")~=true
+                and ranchGuiActive(gui)
+        end
+        local function ranchWaitClosed(gui,seconds)
+            local deadline=os.clock()+seconds
+            while ranchGuiActive(gui) and os.clock()<deadline do
+                if not ranchCanSolve(gui) then return false end
+                task.wait(0.06)
+            end
+            return not ranchGuiActive(gui)
+        end
+        local function ranchGuiInsetY()
+            local ok,top=pcall(function() return GuiService:GetGuiInset() end)
+            return ok and top.Y or 0
+        end
+        local function ranchInsidePanel(panel,point)
+            local p,s=panel.AbsolutePosition,panel.AbsoluteSize
+            return point.X>=p.X-8 and point.X<=p.X+s.X+8
+                and point.Y>=p.Y-8 and point.Y<=p.Y+s.Y+8
+        end
+        -- Every mouse hold has a corresponding release, even if input is
+        -- interrupted by closing the hub, disabling the toggle or an error.
+        -- mode="frame" is the tested wire/align gesture. mode="jump" is the
+        -- tested Vent gesture, with ONE intermediate-free mouse move.
+        -- mode="timed" preserves the proven GUI input as a fallback.
+        local function ranchGuiDrag(gui,origin,goal,insetY,profile)
+            if not ranchCanSolve(gui) then return false end
+            local offset=Vector2.new(0,insetY or 0)
+            local first,last=origin+offset,goal+offset
+            local began=false
+            local ok,err=pcall(function()
+                ranchMouseMove(first)
+                RunService.RenderStepped:Wait()
+                if not ranchCanSolve(gui) then return end
+                ranchMouseButton(first,true)
+                began=true
+                ranchMouseHeld=true
+                if ranchSession and ranchSession.gui==gui then
+                    ranchSession.drags+=1
+                end
+                RunService.RenderStepped:Wait()
+                if profile.mode=="frame" then
+                    if ranchCanSolve(gui) then
+                        ranchMouseMove(first:Lerp(last,0.55))
+                        RunService.RenderStepped:Wait()
+                    end
+                    if ranchCanSolve(gui) then
+                        ranchMouseMove(last)
+                        RunService.RenderStepped:Wait()
+                    end
+                elseif profile.mode=="jump" then
+                    if ranchCanSolve(gui) then
+                        ranchMouseMove(last)
+                        RunService.RenderStepped:Wait()
+                    end
+                else
+                    local steps=profile.steps or 20
+                    local duration=profile.duration or 0.32
+                    for i=1,steps do
+                        if not ranchCanSolve(gui) then break end
+                        ranchMouseMove(first:Lerp(last,i/steps))
+                        task.wait(duration/steps)
+                    end
+                    if ranchCanSolve(gui) then
+                        ranchMouseMove(last)
+                        task.wait(profile.hold or 0.09)
+                    end
+                end
+            end)
+            if began then
+                pcall(function() ranchMouseButton(last,false) end)
+                ranchMouseHeld=false
+            end
+            if not ok then
+                warn("[Ranch Puzzles] Mouse input error: "..tostring(err))
+            end
+            return ok and began
+        end
+
+        local ranchAlignProfiles={
+            {mode="frame",window=1.33}, -- successful v6
+            {mode="timed",duration=0.26,steps=15,hold=0.045,window=1.55},
+            {mode="timed",duration=0.42,steps=22,hold=0.09,window=1.70},
+        }
+        local function ranchSolveLaser(gui,insetY,attempt)
+            local panel=gui:FindFirstChild("Panel")
+            local arrow=panel and panel:FindFirstChild("Arrow")
+            local track=panel and panel:FindFirstChild("Track")
+            if not arrow or not track or not arrow:IsA("GuiObject") then
+                return false,"Laser Arrow/Track missing"
+            end
+            local cy=tonumber(track:GetAttribute("CenterY"))
+            if not cy then return false,"Laser CenterY attribute missing" end
+            local tpos,tsize=track.AbsolutePosition,track.AbsoluteSize
+            local before=ranchPoint(arrow)
+            local target=Vector2.new(math.clamp(before.X,tpos.X+4,
+                tpos.X+tsize.X-4),tpos.Y+cy*tsize.Y)
+            for index,profile in ipairs(ranchAlignProfiles) do
+                if not ranchCanSolve(gui) then
+                    return not ranchGuiActive(gui),"Laser input interrupted"
+                end
+                local start=ranchPoint(arrow)
+                print(string.format(
+                    "[Ranch Puzzles] ALIGN profile=%d mode=%s inset=%d targetY=%.1f",
+                    index,profile.mode,insetY,target.Y))
+                if not ranchGuiDrag(gui,start,target,insetY,profile) then
+                    return false,"Laser GUI drag failed"
+                end
+                if ranchWaitClosed(gui,profile.window) then
+                    return true,"Laser solved using "..profile.mode.." input"
+                end
+            end
+            return false,"Laser still open after verified GUI profiles"
+        end
+
+        local ranchWireProfiles={
+            {mode="frame",settle=0.075}, -- successful v6
+            {mode="timed",duration=0.23,steps=14,hold=0.045,settle=0.12},
+            {mode="timed",duration=0.38,steps=22,hold=0.09,settle=0.20},
+        }
+        local function ranchSolveWires(gui,insetY,attempt)
+            local panel=gui:FindFirstChild("Panel")
+            local left=panel and panel:FindFirstChild("Left")
+            local right=panel and panel:FindFirstChild("Right")
+            local lines=panel and panel:FindFirstChild("Lines")
+            if not left or not right or not lines then
+                return false,"Wire Left/Right/Lines missing"
+            end
+            local pairs={}
+            for _,wire in ipairs(left:GetChildren()) do
+                local color=wire:GetAttribute("Wire")
+                local tip=wire:FindFirstChild("Tip")
+                if type(color)=="string" and tip and tip:IsA("GuiObject") then
+                    for _,other in ipairs(right:GetChildren()) do
+                        if other:GetAttribute("Wire")==color then
+                            local matching=other:FindFirstChild("Tip")
+                            if matching and matching:IsA("GuiObject") then
+                                pairs[#pairs+1]={color=color,source=tip,target=matching}
+                                break
+                            end
+                        end
+                    end
+                end
+            end
+            if #pairs~=4 then
+                return false,"Expected four wire pairs; got "..#pairs
+            end
+            table.sort(pairs,function(x,y)
+                return x.source.AbsolutePosition.Y<y.source.AbsolutePosition.Y
+            end)
+            local completeCount=#pairs+1 -- one native Lines child is a template
+            local last=#lines:GetChildren()
+            local connected=0
+            for _,pair in ipairs(pairs) do
+                if not ranchGuiActive(gui) then return true,"Wire GUI closed" end
+                if not ranchCanSolve(gui) then return false,"Wire input interrupted" end
+                if #lines:GetChildren()>=completeCount then break end
+                local registered=false
+                for index,profile in ipairs(ranchWireProfiles) do
+                    if not ranchCanSolve(gui) then
+                        return not ranchGuiActive(gui),"Wire input interrupted"
+                    end
+                    -- Exact matching Tip centers: no extra 45-94px overshoot.
+                    local from,to=ranchPoint(pair.source),ranchPoint(pair.target)
+                    if not ranchGuiDrag(gui,from,to,insetY,profile) then
+                        return false,"Wire drag failed: "..pair.color
+                    end
+                    task.wait(profile.settle)
+                    if not ranchGuiActive(gui) then
+                        return true,"Wire GUI closed after "..pair.color
+                    end
+                    local count=#lines:GetChildren()
+                    if count>last then
+                        connected+=count-last
+                        last=count
+                        registered=true
+                        print("[Ranch Puzzles] WIRE "..pair.color..
+                            " connected; profile="..index.." lines="..count)
+                        break
+                    end
+                end
+                if not registered and #lines:GetChildren()<completeCount then
+                    return false,"Wire "..pair.color.." did not connect after three profiles"
+                end
+            end
+            if #lines:GetChildren()>=completeCount then
+                if ranchWaitClosed(gui,1.45) then
+                    return true,"All four wires connected and GUI closed"
+                end
+                return true,"All four wires connected; waiting for native finish"
+            end
+            return false,"Wires incomplete; lines="..#lines:GetChildren()
+        end
+
+        local ranchVentProfiles={
+            {label="PREFERRED-JUMP",fraction=0.29,mode="jump"},
+            {label="EXTENDED-JUMP",fraction=0.34,mode="jump"},
+            {label="PROVEN-DRAG",fraction=0.34,mode="timed",
+                duration=0.32,steps=20,hold=0.09},
+        }
+        local function ranchVentCount(clip)
+            local counter=clip:FindFirstChild("Counter")
+            local text=counter and counter:IsA("TextLabel") and counter.Text or ""
+            return tonumber(text:match("^(%d+)")),text
+        end
+        local function ranchVentSnapshot(strands)
+            local sample={}
+            for _,obj in ipairs(strands:GetChildren()) do
+                if obj:IsA("GuiObject") then
+                    local grab=obj:FindFirstChild("Grab")
+                    if grab and grab:IsA("GuiObject") then
+                        sample[obj]={position=ranchPoint(grab),
+                            visible=obj.Visible,grabVisible=grab.Visible}
+                    end
+                end
+            end
+            return sample
+        end
+        local function ranchVentCandidates(strands,pulled)
+            local list={}
+            for obj,state in pairs(ranchVentSnapshot(strands)) do
+                if state.visible and state.grabVisible and not pulled[obj] then
+                    local grab=obj:FindFirstChild("Grab")
+                    if grab then list[#list+1]={strand=obj,grab=grab} end
+                end
+            end
+            table.sort(list,function(x,y)
+                if x.strand.ZIndex==y.strand.ZIndex then
+                    return x.strand.Name>y.strand.Name
+                end
+                return x.strand.ZIndex>y.strand.ZIndex
+            end)
+            return list
+        end
+        local function ranchVentTarget(panel,clip,from,fraction)
+            local d=clip.AbsoluteSize.Y*fraction
+            local p,s=panel.AbsolutePosition,panel.AbsoluteSize
+            local margin=8
+            local options={
+                Vector2.new(math.clamp(from.X+d,p.X+margin,p.X+s.X-margin),from.Y),
+                Vector2.new(math.clamp(from.X-d,p.X+margin,p.X+s.X-margin),from.Y),
+                Vector2.new(from.X,math.clamp(from.Y+d,p.Y+margin,p.Y+s.Y-margin)),
+                Vector2.new(from.X,math.clamp(from.Y-d,p.Y+margin,p.Y+s.Y-margin)),
+            }
+            local target,distance=options[1],-1
+            for _,option in ipairs(options) do
+                local n=(option-from).Magnitude
+                if n>distance then target,distance=option,n end
+            end
+            return target,distance/math.max(1,clip.AbsoluteSize.Y)
+        end
+        local function ranchSolveVent(gui,insetY,attempt)
+            local panel=gui:FindFirstChild("Panel")
+            local clip=panel and panel:FindFirstChild("Clip")
+            local strands=clip and clip:FindFirstChild("Strands")
+            if not clip or not strands then
+                return false,"Vent Clip/Strands missing"
+            end
+            local initial=select(1,ranchVentCount(clip))
+            if not initial then return false,"Vent counter unreadable" end
+            local pulled,visits={},{}
+            local progress,failures=0,0
+            local opened=os.clock()
+            for trial=1,math.max(initial*3,45) do
+                if not ranchGuiActive(gui) then return true,"Vent GUI closed" end
+                if not ranchCanSolve(gui) then return false,"Vent input interrupted" end
+                if os.clock()-opened>=27 then
+                    return false,"Vent safety window elapsed, progress="..progress
+                end
+                local before=select(1,ranchVentCount(clip))
+                if before and before<=0 then
+                    print("[Ranch Puzzles] VENT all "..initial..
+                        " strands removed in "..string.format("%.2f",os.clock()-opened).."s")
+                    return true,"Vent counter reached zero"
+                end
+                local selected,least=nil,math.huge
+                for _,candidate in ipairs(ranchVentCandidates(strands,pulled)) do
+                    local point=ranchPoint(candidate.grab)
+                    local n=visits[candidate.strand] or 0
+                    if ranchInsidePanel(panel,point)
+                        and n<#ranchVentProfiles and n<least then
+                        selected,least=candidate,n
+                        if n==0 then break end
+                    end
+                end
+                if not selected then
+                    return false,"No eligible Vent strand; remaining="..tostring(before)
+                end
+                local piece=selected.strand
+                local profileIndex=(visits[piece] or 0)+1
+                visits[piece]=profileIndex
+                local profile=ranchVentProfiles[profileIndex]
+                local from=ranchPoint(selected.grab)
+                local goal,pull=ranchVentTarget(panel,clip,from,profile.fraction)
+                if pull<=0.205 then
+                    visits[piece]=#ranchVentProfiles
+                else
+                    local prior=ranchVentSnapshot(strands)
+                    if not ranchGuiDrag(gui,from,goal,insetY,profile) then
+                        return false,"Vent "..piece.Name.." input failed"
+                    end
+                    local after=select(1,ranchVentCount(clip))
+                    local deadline=os.clock()+0.22
+                    while ranchGuiActive(gui) and
+                        (not after or not before or after>=before)
+                        and os.clock()<deadline do
+                        if not ranchCanSolve(gui) then break end
+                        task.wait(0.015)
+                        after=select(1,ranchVentCount(clip))
+                    end
+                    if after and before and after<before then
+                        progress+=before-after
+                        -- Overlapping hitboxes can intercept the pointer;
+                        -- identify the real pulled strand by movement instead
+                        -- of assuming it was the candidate we clicked.
+                        local now=ranchVentSnapshot(strands)
+                        for obj,old in pairs(prior) do
+                            if not pulled[obj] then
+                                local newer=now[obj]
+                                local shift=newer and
+                                    (newer.position-old.position).Magnitude or 0
+                                local hidden=old.visible and
+                                    (not newer or not newer.visible)
+                                if shift>85 or hidden then pulled[obj]=true end
+                            end
+                        end
+                        print("[Ranch Puzzles] VENT "..profile.label..
+                            " progress="..progress.."/"..initial)
+                        task.wait(0.025)
+                    else
+                        failures+=1
+                        print("[Ranch Puzzles] VENT "..profile.label..
+                            " missed "..piece.Name.."; retrying alternate strand")
+                        task.wait(0.21)
+                        if not ranchInsidePanel(panel,ranchPoint(selected.grab)) then
+                            visits[piece]=#ranchVentProfiles
+                        end
+                    end
+                end
+            end
+            return false,"Vent attempt limit, progress="..progress..
+                " misses="..failures
+        end
+
+        local ranchSolvers={
+            UfoWireMinigame=ranchSolveWires,
+            UfoVentMinigame=ranchSolveVent,
+            UfoAlignMinigame=ranchSolveLaser,
+        }
+        task.spawn(function()
+            while not hubUnloaded do
+                task.wait(0.18)
+                local name,gui=ranchActivePuzzle()
+                if ranchSession and gui~=ranchSession.gui then
+                    local past=ranchSession
+                    local elapsed=os.clock()-past.openedAt
+                    print(string.format(
+                        "[Ranch Puzzles] %s closed after %.1fs | autoAttempts=%d | GUI drags=%d | instantRequests=%d | autoAtOpen=%s; closure alone does not prove server completion",
+                        past.name,elapsed,past.autoAttempts,past.drags,
+                        past.instantRequests,tostring(past.autoEnabledAtOpen)))
+                    if past.autoAttempts==0 and past.drags==0 then
+                        print("[Ranch Puzzles] No automatic GUI dragging occurred in this session; possible built-in idle completion or manual input")
+                    end
+                    ranchSession=nil
+                end
+                if not gui then
+                    ranchLastPuzzleGui=nil
+                    ranchAttempts=0
+                    ranchNextAttemptAt=0
+                elseif gui~=ranchLastPuzzleGui then
+                    ranchLastPuzzleGui=gui
+                    ranchAttempts=0
+                    ranchNextAttemptAt=0
+                    ranchSession={
+                        gui=gui,name=name,openedAt=os.clock(),
+                        autoEnabledAtOpen=sharedFarmState.AutoSolveRanchPuzzles,
+                        autoAttempts=0,drags=0,instantRequests=0
+                    }
+                    print("[Ranch Puzzles] Opened "..name
+                        .." | AutoSolve="..tostring(sharedFarmState.AutoSolveRanchPuzzles))
+                end
+                if gui and sharedFarmState.AutoSolveRanchPuzzles
+                    and hubWindow.Closed and not ranchPuzzleInputBusy
+                    and not ranchUfoBusy and not needleBusy
+                    and LocalPlayer:GetAttribute("CutsceneActive")~=true
+                    and LocalPlayer:GetAttribute("NeedleInputLocked")~=true
+                    and not ranchInstantProbeActive
+                    and ranchAttempts<3 and os.clock()>=ranchNextAttemptAt then
+                    ranchAttempts+=1
+                    ranchNextAttemptAt=os.clock()+8
+                    ranchPuzzleInputBusy=true
+                    releaseSharedVacuum()
+                    if ranchSession and ranchSession.gui==gui then
+                        ranchSession.autoAttempts+=1
+                    end
+                    local solver=ranchSolvers[name]
+                    local attempt=ranchAttempts
+                    task.spawn(function()
+                        -- All three verified solvers need the correct inset immediately.
+                        local insetY=ranchGuiInsetY()
+                        print(string.format("[Ranch Puzzles] %s GUI solve attempt %d (inset=%d)",
+                            name,attempt,insetY))
+                        local ok,submitted,details=pcall(solver,gui,insetY,attempt)
+                        ranchReleaseMouse()
+                        ranchPuzzleInputBusy=false
+                        if not ok then
+                            warn("[Ranch Puzzles] Solver failed: "..tostring(submitted))
+                        else
+                            print("[Ranch Puzzles] "..tostring(details))
+                            if not submitted then
+                                warn("[Ranch Puzzles] Puzzle still needs manual action: "..tostring(details))
+                            end
+                        end
+                        task.wait(0.65)
+                        if not ranchPuzzleAlive(gui) then
+                            print("[Ranch Puzzles] "..name.." GUI closed after solve; verify puzzle progression")
+                        elseif attempt>=3 then
+                            warn("[Ranch Puzzles] "..name.." still open after three drag attempts; stopped automatic retries")
+                        end
+                    end)
+                end
+            end
+            ranchReleaseMouse()
+        end)
+
+        local function ranchInstantCompletionProbe()
+            if hubUnloaded or ranchInstantProbeActive or ranchPuzzleInputBusy or ranchUfoBusy or needleBusy then
+                warn("[Ranch Puzzles] Input already busy; instant test skipped")
+                return
+            end
+            local name,gui=ranchActivePuzzle()
+            if not name or not gui then
+                warn("[Ranch Puzzles] Open a wire, vent or laser GUI before testing instant completion")
+                return
+            end
+            local folder=ReplicatedStorage:FindFirstChild("UfoCrash")
+            local remotes=folder and folder:FindFirstChild("Remotes")
+            local remote=remotes and remotes:FindFirstChild("PuzzleDone")
+            if not remote or not remote:IsA("RemoteEvent") then
+                warn("[Ranch Puzzles] PuzzleDone RemoteEvent not available")
+                return
+            end
+            ranchInstantProbeActive=true
+            releaseSharedVacuum()
+            pcall(function() hubWindow:Close() end)
+            task.spawn(function()
+                task.wait(0.2)
+                if not ranchPuzzleAlive(gui) or hubUnloaded then
+                    ranchInstantProbeActive=false
+                    warn("[Ranch Puzzles] Instant test aborted: puzzle closed or module unloaded")
+                    return
+                end
+                -- Exactly ONE no-argument request. The diagnostic only
+                -- identifies the remote, not its expected payload. This
+                -- test cannot prove whether other payloads are accepted.
+                local ok,err=pcall(function() remote:FireServer() end)
+                if ranchSession and ranchSession.gui==gui and ok then
+                    ranchSession.instantRequests+=1
+                end
+                print(string.format("[Ranch Puzzles] Instant test: %s PuzzleDone() sent=%s",
+                    name,tostring(ok)))
+                if not ok then warn("[Ranch Puzzles] Instant test error: "..tostring(err)) end
+                task.wait(2.0)
+                local closed=not ranchPuzzleAlive(gui)
+                if closed then
+                    warn("[Ranch Puzzles] Instant test: GUI CLOSED after PuzzleDone(); promising but server puzzle completion is NOT proven. Verify UFO progression.")
+                else
+                    warn("[Ranch Puzzles] Instant test: GUI STILL OPEN after PuzzleDone(); no-argument completion not confirmed (other payloads remain unknown).")
+                end
+                ranchInstantProbeActive=false
+            end)
+        end
+
+        -- Ranch UFO-part objective, independent of the hay/needle remotes.
+        -- Diagnostics show UfoSplitted piece flags (Revealed, Returned,
+        -- HeldBy), CarryingUfoPart on LocalPlayer, and PartsReturned on the
+        -- UFO model. Only these replicated state changes confirm progress.
+        -- Isolate UFO automation helpers into their own Luau function scope.
+        -- Chapter 3's shared module already has many local variables; keeping
+        -- these helpers in the enclosing block risks the compiler's 200-local
+        -- limit even though each pickup helper is independently small.
+        local function runRanchUfoAutomation()
+        local ranchUfoNextActionAt = 0
+        local ranchUfoFailedUntil = {}
+        local ranchUfoFailureCount = {}
+        local ranchUfoLastNotice = -math.huge
+        local function ranchUfoNotice(message, warning)
+            if warning and os.clock()-ranchUfoLastNotice < 6 then return end
+            if warning then
+                ranchUfoLastNotice=os.clock()
+                warn("[Ranch UFO] "..tostring(message))
+            else
+                print("[Ranch UFO] "..tostring(message))
+            end
+        end
+        local function ranchUfoModel()
+            local model=Workspace:FindFirstChild("UfoSplitted")
+            return model and model:IsA("Model") and model or nil
+        end
+        local function ranchUfoReturned(model)
+            return model and tonumber(model:GetAttribute("PartsReturned")) or 0
+        end
+        local function ranchUfoModelPiece(model,name)
+            if not model or type(name)~="string" then return nil end
+            local p=model:FindFirstChild(name,true)
+            return p and p:IsA("BasePart") and p or nil
+        end
+        local function ranchUfoCarried()
+            local name=LocalPlayer:GetAttribute("CarryingUfoPart")
+            if type(name)=="string" and #name>0 then return name end
+            -- Replication can deliver HeldBy before CarryingUfoPart. Do not
+            -- misclassify a completed pickup as a failed pickup.
+            local model=Workspace:FindFirstChild("UfoSplitted")
+            if model then
+                for _,p in ipairs(model:GetDescendants()) do
+                    if p:IsA("BasePart") and p:GetAttribute("Returned")~=true then
+                        local held=p:GetAttribute("HeldBy")
+                        if held==LocalPlayer.UserId or held==tostring(LocalPlayer.UserId) then
+                            return p.Name
+                        end
+                    end
+                end
+            end
+            return nil
+        end
+        local function ranchUfoExposedPart(model)
+            if not model then return nil end
+            local root=farmRoot()
+            local best,score=nil,math.huge
+            -- The true revealed UFO pieces live in UfoSplitted; Scatter
+            -- proxies are NOT the collectible objects.
+            for _,piece in ipairs(model:GetDescendants()) do
+                if piece:IsA("BasePart") and
+                    (piece:GetAttribute("UfoPiece")==true
+                        or piece:GetAttribute("Revealed")~=nil)
+                    and piece:GetAttribute("Revealed")==true
+                    and piece:GetAttribute("Returned")~=true
+                    and piece:GetAttribute("HeldBy")==nil then
+                    local distance=root and (root.Position-piece.Position).Magnitude or 0
+                    local untilAt=ranchUfoFailedUntil[piece.Name] or 0
+                    if os.clock()>=untilAt and distance<score then
+                        best,score=piece,distance
+                    end
+                end
+            end
+            return best
+        end
+        local function ranchUfoMainPart(model)
+            local main=model and model:FindFirstChild("Main")
+            if not main then return nil end
+            if main:IsA("BasePart") then return main end
+            -- Prefer the click-detector surface if one exists. The previous
+            -- largest-part heuristic could aim at an inert decorative hull.
+            for _,desc in ipairs(main:GetDescendants()) do
+                if desc:IsA("ClickDetector") and desc.Parent
+                    and desc.Parent:IsA("BasePart") then
+                    return desc.Parent
+                end
+            end
+            if main:IsA("Model") and main.PrimaryPart then return main.PrimaryPart end
+            local best,volume=nil,0
+            for _,part in ipairs(main:GetDescendants()) do
+                if part:IsA("BasePart") and part.Transparency<1 then
+                    local v=part.Size.X*part.Size.Y*part.Size.Z
+                    if v>volume then best,volume=part,v end
+                end
+            end
+            return best or main:FindFirstChildWhichIsA("BasePart",true)
+        end
+        local function ranchUfoRemote(name,...)
+            local folder=ReplicatedStorage:FindFirstChild("UfoCrash")
+            local remotes=folder and folder:FindFirstChild("Remotes")
+            local remote=remotes and remotes:FindFirstChild(name)
+            if not remote or not remote:IsA("RemoteEvent") then return false end
+            local args=table.pack(...)
+            local ok,err=pcall(function()
+                remote:FireServer(table.unpack(args,1,args.n))
+            end)
+            if not ok then ranchUfoNotice(name.." failed: "..tostring(err),true) end
+            return ok -- Local send only; never interpreted as server acceptance.
+        end
+        local function ranchUfoSafeToMove()
+            return not hubUnloaded and sharedFarmState.AutoGrabAttachUfoParts
+                and hubWindow.Closed and not needleBusy and not needlePriority()
+                and not ranchInstantProbeActive and not ranchPuzzleInputBusy
+                and ranchActivePuzzle()==nil
+                and LocalPlayer:GetAttribute("NeedleInputLocked")~=true
+                and LocalPlayer:GetAttribute("CutsceneActive")~=true
+                and LocalPlayer:GetAttribute("HintViewerOpen")~=true
+        end
+        local function ranchUfoWaitFor(check,timeout)
+            local deadline=os.clock()+timeout
+            repeat
+                if check() then return true end
+                if not ranchUfoSafeToMove() then return false end
+                task.wait(0.04)
+            until os.clock()>=deadline
+            return check()
+        end
+
+        -- Click from several CAMERA and ROOT angles. The old routine used
+        -- a fixed diagonal position and blindly clicked screen center, even
+        -- if a hay bale or decorative UFO part obscured the actual target.
+        -- UFO pickups use VIEWPORT pixel coordinates, exactly as the
+        -- working Chapter 1/2 needle pickup routines do. WorldToScreenPoint
+        -- adds the GUI inset and can miss small exposed UFO parts. Attachment
+        -- retains its already-working cursor targeting, unchanged.
+        local function ranchUfoWorldClick(target,root,camera,check,stage)
+            if not target or not target.Parent or not root or not camera then
+                return false,"missing target/root/camera"
+            end
+            if check() then return true,"already confirmed" end
+            local character=LocalPlayer.Character
+            local center=target.Position
+            local relative=root.Position-center
+            local base=math.atan2(relative.Z,relative.X)
+            local angles={0,math.pi/3,-math.pi/3,2*math.pi/3,
+                -2*math.pi/3,math.pi}
+            local attempts,occluded=0,0
+            local lookHeight=stage=="attach" and 1.8 or 1.0
+            for index,rotation in ipairs(angles) do
+                if check() then return true,"confirmed between angles" end
+                if not ranchUfoSafeToMove() or not target.Parent
+                    or not root.Parent or camera~=Workspace.CurrentCamera then
+                    return false,"interrupted"
+                end
+                local theta=base+rotation
+                local direction=Vector3.new(math.cos(theta),0,math.sin(theta))
+                local reach=stage=="attach" and 3.1 or 2.35
+                local stand=center+direction*reach+Vector3.new(0,1.15,0)
+                local aim=center
+                local cameraReach=math.max(reach+0.8,
+                    math.min(9.5,target.Size.Magnitude*0.50+1.3))
+                -- Try elevated camera views on the later angles as well:
+                -- an exposed piece can still sit behind a tall hay clump
+                -- when viewed from every horizontal side.
+                local height=index>=4
+                    and (stage=="attach" and 3.1 or 3.5) or lookHeight
+                local camPos=center+direction*cameraReach+
+                    Vector3.new(0,height,0)
+                -- Keep avatar upright; avoid placing the root directly into
+                -- the part. Angles are relative to the avatar's initial side.
+                root.CFrame=CFrame.lookAt(stand,
+                    Vector3.new(center.X,stand.Y,center.Z))
+                root.AssemblyLinearVelocity=Vector3.zero
+                root.AssemblyAngularVelocity=Vector3.zero
+                camera.CameraType=Enum.CameraType.Scriptable
+                camera.CFrame=CFrame.lookAt(camPos,aim)
+                -- The server validates proximity against replicated player
+                -- position. One render frame was too short for this to settle:
+                -- do not click until the moved root has had network time.
+                task.wait(0.12)
+                if check() then return true,"confirmed after approach" end
+                if not ranchUfoSafeToMove() then return false,"interrupted" end
+                local rootError=(root.Position-stand).Magnitude
+                if rootError>5 then
+                    print(string.format(
+                        "[Ranch UFO] %s %s angle=%d root moved %.1f studs away from requested position; click may fail proximity validation",
+                        tostring(stage),target.Name,index,rootError))
+                end
+                camera.CFrame=CFrame.lookAt(camPos,aim)
+                local screen,visible
+                if stage=="pickup" then
+                    screen,visible=camera:WorldToViewportPoint(aim)
+                else
+                    screen,visible=camera:WorldToScreenPoint(aim)
+                end
+                local params=RaycastParams.new()
+                params.FilterType=Enum.RaycastFilterType.Exclude
+                if character then params.FilterDescendantsInstances={character} end
+                params.IgnoreWater=true
+                local ray=Workspace:Raycast(camPos,(aim-camPos)*1.05,params)
+                local hit=ray and ray.Instance
+                local clear=not hit or hit==target
+                    or (stage=="attach" and target.Parent and
+                        hit:IsDescendantOf(target.Parent))
+                if not clear then
+                    occluded+=1
+                    print(string.format("[Ranch UFO] %s %s angle=%d obstructed by %s",
+                        tostring(stage),target.Name,index,hit:GetFullName()))
+                elseif visible then
+                    local pos=Vector2.new(screen.X,screen.Y)
+                    if stage~="pickup" then
+                        -- Preserved attachment input from the previously
+                        -- working release; do NOT modify its click semantics.
+                        local down=false
+                        local sent,err=pcall(function()
+                            VirtualInputManager:SendMouseMoveEvent(
+                                math.floor(pos.X+0.5),math.floor(pos.Y+0.5),game)
+                            RunService.RenderStepped:Wait()
+                            if not ranchUfoSafeToMove() then return end
+                            VirtualInputManager:SendMouseButtonEvent(
+                                math.floor(pos.X+0.5),math.floor(pos.Y+0.5),
+                                0,true,game,0)
+                            down=true
+                            task.wait(0.06)
+                        end)
+                        if down then
+                            pcall(function()
+                                VirtualInputManager:SendMouseButtonEvent(
+                                    math.floor(pos.X+0.5),math.floor(pos.Y+0.5),
+                                    0,false,game,0)
+                            end)
+                        end
+                        if not sent then
+                            ranchUfoNotice("World click error: "..tostring(err),true)
+                        end
+                        if down then
+                            attempts+=1
+                            if ranchUfoWaitFor(check,0.33) then
+                                print(string.format(
+                                    "[Ranch UFO] %s %s confirmed via angle=%d clicks=%d",
+                                    tostring(stage),target.Name,index,attempts))
+                                return true,"click confirmed"
+                            end
+                        end
+                    else
+                        -- Chapter 1/2 pickup method: viewport center,
+                        -- stable Scriptable camera and short repeated clicks.
+                        local atCenter=(pos-camera.ViewportSize*0.5).Magnitude
+                        if atCenter>18 then
+                            print(string.format(
+                                "[Ranch UFO] pickup %s angle=%d off-center %.1fpx",
+                                target.Name,index,atCenter))
+                        else
+                            for pressIndex=1,2 do
+                                if check() then return true,"confirmed before re-click" end
+                                if not ranchUfoSafeToMove() then
+                                    return false,"interrupted"
+                                end
+                                camera.CameraType=Enum.CameraType.Scriptable
+                                camera.CFrame=CFrame.lookAt(camPos,aim)
+                                local down=false
+                                local sent,err=pcall(function()
+                                    VirtualInputManager:SendMouseMoveEvent(
+                                        math.floor(pos.X+0.5),math.floor(pos.Y+0.5),game)
+                                    RunService.RenderStepped:Wait()
+                                    if not ranchUfoSafeToMove() then return end
+                                    camera.CameraType=Enum.CameraType.Scriptable
+                                    camera.CFrame=CFrame.lookAt(camPos,aim)
+                                    VirtualInputManager:SendMouseButtonEvent(
+                                        math.floor(pos.X+0.5),math.floor(pos.Y+0.5),
+                                        0,true,game,0)
+                                    down=true
+                                    task.wait(0.085)
+                                end)
+                                if down then
+                                    pcall(function()
+                                        VirtualInputManager:SendMouseButtonEvent(
+                                            math.floor(pos.X+0.5),math.floor(pos.Y+0.5),
+                                            0,false,game,0)
+                                    end)
+                                end
+                                if not sent then
+                                    ranchUfoNotice("Pickup click failed: "..tostring(err),true)
+                                end
+                                if down then
+                                    attempts+=1
+                                    if ranchUfoWaitFor(check,0.14) then
+                                        print(string.format(
+                                            "[Ranch UFO] pickup %s confirmed angle=%d click=%d viewport=(%.0f,%.0f)",
+                                            target.Name,index,attempts,pos.X,pos.Y))
+                                        return true,"click confirmed"
+                                    end
+                                end
+                            end
+                        end
+                    end
+                end
+                task.wait(0.04)
+            end
+            ranchUfoNotice(string.format(
+                "%s %s no state confirmation across %d angles (clicks=%d, occluded=%d)",
+                tostring(stage),target.Name,#angles,attempts,occluded),true)
+            return check(),"unconfirmed after angle sweep"
+        end
+        local function ranchUfoPickup(part,root,camera)
+            local name=part.Name
+            local function received()
+                return ranchUfoCarried()==name
+                    or part:GetAttribute("HeldBy")==LocalPlayer.UserId
+                    or part:GetAttribute("HeldBy")==tostring(LocalPlayer.UserId)
+            end
+            if received() then return true end
+            -- Chapter 2's reliable key pickup disables nearby hay queries
+            -- and collisions JUST during targeting. A revealed UFO piece
+            -- can overlap the same hay. Restore everything without exception
+            -- before returning so normal farming remains unaffected.
+            local filtered={}
+            local filteredCount=0
+            local function suppressHayBlockers()
+                for _,folderName in ipairs({"HaystackClient","HaystackCollision"}) do
+                    local folder=Workspace:FindFirstChild(folderName)
+                    if folder then
+                        for _,obj in ipairs(folder:GetDescendants()) do
+                            if filteredCount>=48 then break end
+                            if obj:IsA("BasePart") and obj~=part
+                                and obj:GetAttribute("IsNeedleObjective")~=true
+                                and (obj.CanQuery or obj.CanCollide)
+                                and (obj.Position-part.Position).Magnitude <=
+                                    7+math.min(obj.Size.Magnitude*0.5,4) then
+                                local wasQuery,wasCollide=obj.CanQuery,obj.CanCollide
+                                local ok=pcall(function()
+                                    obj.CanCollide=false
+                                    obj.CanQuery=false
+                                end)
+                                if ok then
+                                    filtered[obj]={query=wasQuery,collide=wasCollide}
+                                    filteredCount+=1
+                                else
+                                    pcall(function()
+                                        obj.CanQuery=wasQuery
+                                        obj.CanCollide=wasCollide
+                                    end)
+                                end
+                            end
+                        end
+                    end
+                end
+            end
+            local function restoreHayBlockers()
+                for obj,was in pairs(filtered) do
+                    if obj.Parent then
+                        pcall(function()
+                            obj.CanQuery=was.query
+                            obj.CanCollide=was.collide
+                        end)
+                    end
+                end
+                table.clear(filtered)
+            end
+            local clickDetector=part:FindFirstChildWhichIsA("ClickDetector",true)
+            ranchUfoNotice(string.format(
+                "Revealed part %s: query=%s detector=%s (using Chapter 2-style viewport aim)",
+                name,tostring(part.CanQuery),
+                tostring(clickDetector and clickDetector:GetFullName() or "none")))
+            local callOK,clicked,why=xpcall(function()
+                suppressHayBlockers()
+                if filteredCount>0 then
+                    print("[Ranch UFO] Filtered "..filteredCount..
+                        " nearby hay blockers for pickup of "..name)
+                end
+                return ranchUfoWorldClick(part,root,camera,received,"pickup")
+            end,function(err) return tostring(err) end)
+            restoreHayBlockers()
+            if not callOK then
+                ranchUfoNotice("Pickup camera failed: "..tostring(clicked),true)
+                return received()
+            end
+            if clicked or received() then return true end
+            if why=="interrupted" then return false end
+            -- Only one existing remote fallback; delivery is NOT treated as
+            -- successful unless the replicated carrying state confirms it.
+            if ranchUfoSafeToMove() then
+                local sent=ranchUfoRemote("PickUpPart",name)
+                if sent and ranchUfoWaitFor(received,0.65) then return true end
+            end
+            return received()
+        end
+        local function ranchUfoAttach(model,root,camera)
+            local carrying=ranchUfoCarried()
+            if not carrying then return false end
+            local before=ranchUfoReturned(model)
+            local piece=ranchUfoModelPiece(model,carrying)
+            local function attached()
+                return ranchUfoReturned(model)>before
+                    or (piece and piece:GetAttribute("Returned")==true)
+            end
+            local main=ranchUfoMainPart(model)
+            if not main then
+                ranchUfoNotice("UFO Main attach surface not found",true)
+                return false
+            end
+            ranchUfoNotice("Carrying "..carrying.."; attaching from alternate angles")
+            local clicked,why=ranchUfoWorldClick(main,root,camera,attached,"attach")
+            if clicked then return true end
+            if why=="interrupted" then return false end
+            -- No FireServer call is regarded as a confirmed attachment.
+            if ranchUfoSafeToMove() then
+                local sent=ranchUfoRemote("ReturnPart",carrying)
+                if sent and ranchUfoWaitFor(attached,0.75) then return true end
+            end
+            return attached()
+        end
+        task.spawn(function()
+            while not hubUnloaded do
+                task.wait(0.10)
+                if sharedFarmState.AutoGrabAttachUfoParts and not ranchUfoBusy
+                    and os.clock()>=ranchUfoNextActionAt and ranchUfoSafeToMove() then
+                    local model=ranchUfoModel()
+                    if model and model:GetAttribute("Repaired")~=true
+                        and ranchUfoReturned(model) <
+                            (tonumber(model:GetAttribute("PartsTotal")) or 7) then
+                        local carrying=ranchUfoCarried()
+                        local piece=not carrying and ranchUfoExposedPart(model) or nil
+                        if carrying or piece then
+                            ranchUfoBusy=true
+                            releaseSharedVacuum()
+                            local root=farmRoot()
+                            local camera=Workspace.CurrentCamera
+                            local originalRoot=root and root.CFrame
+                            local originalCamType=camera and camera.CameraType
+                            local originalCamSubject=camera and camera.CameraSubject
+                            local originalCamCF=camera and camera.CFrame
+                            local attached=false
+                            local pickedUp=false
+                            local label=carrying or (piece and piece.Name) or "unknown"
+                            local ok,err=xpcall(function()
+                                if not root or not camera then return end
+                                if carrying then
+                                    attached=ranchUfoAttach(model,root,camera)
+                                elseif piece then
+                                    pickedUp=ranchUfoPickup(piece,root,camera)
+                                    if pickedUp and ranchUfoSafeToMove() then
+                                        -- Keep camera/root in-place while
+                                        -- attaching so the server sees a
+                                        -- contiguous carried-part sequence.
+                                        attached=ranchUfoAttach(model,root,camera)
+                                    end
+                                end
+                            end,function(e) return tostring(e) end)
+                            if camera and camera.Parent then
+                                pcall(function()
+                                    camera.CameraSubject=originalCamSubject
+                                    camera.CameraType=originalCamType
+                                    camera.CFrame=originalCamCF
+                                end)
+                            end
+                            if root and root.Parent and originalRoot then
+                                pcall(function()
+                                    root.CFrame=originalRoot
+                                    root.AssemblyLinearVelocity=Vector3.zero
+                                    root.AssemblyAngularVelocity=Vector3.zero
+                                end)
+                            end
+                            ranchUfoBusy=false
+                            if not ok then
+                                ranchUfoNotice("Pickup/attach error: "..tostring(err),true)
+                            end
+                            local stillCarrying=ranchUfoCarried()
+                            if attached then
+                                ranchUfoFailureCount[label]=nil
+                                ranchUfoFailedUntil[label]=nil
+                                ranchUfoNotice(string.format(
+                                    "UFO piece %s ATTACHED (PartsReturned=%d)",
+                                    label,ranchUfoReturned(model)))
+                                ranchUfoNextActionAt=os.clock()+0.60
+                            elseif stillCarrying or pickedUp then
+                                -- Pickup succeeded: do NOT mark as a failure
+                                -- or apply the per-part pickup cooldown.
+                                ranchUfoFailureCount[label]=nil
+                                ranchUfoFailedUntil[label]=nil
+                                ranchUfoNextActionAt=os.clock()+0.35
+                                ranchUfoNotice(label..
+                                    " PICKED UP; attachment pending (held="..
+                                    tostring(stillCarrying)..")")
+                            elseif not ranchUfoSafeToMove() then
+                                -- Cutscene, puzzle opening, toggle OFF, or
+                                -- user opening the menu is not a pickup fail.
+                                ranchUfoNextActionAt=os.clock()+0.40
+                            else
+                                local failures=(ranchUfoFailureCount[label] or 0)+1
+                                ranchUfoFailureCount[label]=failures
+                                local cooldown=math.min(12,2*failures)
+                                ranchUfoFailedUntil[label]=os.clock()+cooldown
+                                ranchUfoNextActionAt=os.clock()+math.min(2,cooldown)
+                                ranchUfoNotice(string.format(
+                                    "%s pickup still unconfirmed (attempt=%d, retry=%ds, carried=%s, returned=%d)",
+                                    label,failures,cooldown,tostring(stillCarrying),
+                                    ranchUfoReturned(model)),true)
+                            end
+                        end
+                    end
+                end
+            end
+        end)
+
+        end
+        runRanchUfoAutomation()
+
+        local tab=hubWindow:Tab({Title="Chapter 3 / Ranch",Icon="construction"})
+        tab:Section({Title="UFO part collection"})
+        farmToggle(tab,"AutoGrabAttachUfoParts","Auto Grab & Attach UFO Parts",
+            "Automatically picks up revealed UFO pieces, approaches the UFO and attaches them. Confirms ownership and PartsReturned; starts OFF for testing.")
+        tab:Section({Title="UFO puzzle automation"})
+        farmToggle(tab,"AutoSolveRanchPuzzles","Auto Solve Ranch Puzzles",
+            "Auto-drag matching wires, remove vent hay, and align laser when puzzle opens. OFF lets you test whether the game completes idle puzzles on its own.")
+        tab:Button({
+            Title="Test Instant Puzzle Completion (once)",
+            Callback=ranchInstantCompletionProbe,
+        })
+        tab:Paragraph({
+            Title="Ranch Puzzle Status",
+            Desc="Use Auto Solve OFF and leave a puzzle untouched to measure built-in idle completion. Console logs time open, automated drags and instant probes. PuzzleDone() without arguments was not confirmed by tests.",
+        })
+        tab:Button({
+            Title="Inspect Ranch puzzle and boss objects",
+            Callback=function()
+                local names={}
+                for _, root in ipairs({Workspace,ReplicatedStorage}) do
+                    for _, obj in ipairs(root:GetChildren()) do
+                        if obj.Name:lower():find("puzzle",1,true)
+                            or obj.Name:lower():find("boss",1,true)
+                            or obj.Name:lower():find("ranch",1,true)
+                            or obj.Name:lower():find("combat",1,true) then
+                            names[#names+1]=root.Name.."."..obj.Name.." ("..obj.ClassName..")"
+                        end
+                    end
+                end
+                print("[BeyyHub Ranch] Discovery roots: "..(#names>0 and table.concat(names," | ") or "none found; run detailed Ranch dump"))
+            end,
+        })
+
+        local previousRanchCleanup=_G.__BEYY_HUB_CLEANUP
+        _G.__BEYY_HUB_CLEANUP=function()
+            if previousRanchCleanup then pcall(previousRanchCleanup) end
+            ranchReleaseMouse()
+        end
+    end
+    installRanchOptions()
+
 
     do
         local overview = overviewTab

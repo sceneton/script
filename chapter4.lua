@@ -460,6 +460,66 @@ local function createTntRetryGate(getRemote, getCooldown)
     return gate
 end
 
+local function createBossWeakpointPitchfork(options)
+    local player,world=options.Player,options.World
+    local active,nextSend,boss,root=true,0,nil,nil
+    local bones,lastStatus={},nil
+    local excluded={Sleeping=true,Intro=true,Rising=true,Falling=true,Returning=true,Unavailable=true,Defeated=true}
+    local controller={}
+    local function status(text)
+        if text~=lastStatus then lastStatus=text;options.Status(text)end
+    end
+    function controller.IsEngaged()
+        if not active or not options.Enabled()then return false end
+        local rig=world:FindFirstChild("PumpkinGolem_Rig")
+        local state=rig and rig:GetAttribute("BossState")
+        return rig~=nil and type(state)=="string" and state~="" and not excluded[state]
+            and rig:GetAttribute("BossHidden")~=true and (tonumber(rig:GetAttribute("BossHealth"))or 0)>0
+    end
+    function controller.Stop()active=false;table.clear(bones)end
+    function controller.Tick()
+        if not active then return end
+        if not options.Enabled()then status("Disabled");return end
+        if not controller.IsEngaged()then status("Waiting for active boss");return end
+        if options.Blocked()then status("Paused for menu, cutscene or candle action");return end
+        local rig=world:FindFirstChild("PumpkinGolem_Rig")
+        local body=rig:FindFirstChild("RootPart")
+        if rig~=boss or body~=root then boss,root=rig,body;table.clear(bones);nextSend=0 end
+        local now=world:GetServerTimeNow()
+        for _,flag in ipairs({"BossHeld","BossRagdolled","BossRagdollRecovering","BossKnockdownCamera"})do
+            if player:GetAttribute(flag)==true then status("Waiting: "..flag);return end
+        end
+        if now<(tonumber(player:GetAttribute("BossStunnedUntil"))or 0)then status("Waiting for stun to end");return end
+        if player:GetAttribute("PitchforkOwned")~=true then status("Waiting for pitchfork ownership");return end
+        local name=rig:GetAttribute("BossWeakPoint")
+        local ends=tonumber(rig:GetAttribute("BossWeakPointEndsAt"))
+        local dizzy=rig:GetAttribute("BossWeakPointDizzy")==true
+        if type(name)~="string" or name=="" or (ends and now>=ends and not dizzy)then status("Waiting for weak point");return end
+        if name=="Head" and rig:GetAttribute("BossHeadless")==true then status("Waiting for attached weak point");return end
+        local character=player.Character
+        local head=character and character:FindFirstChild("Head")
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        if not head or not humanoid or humanoid.Health<=0 or not body then status("Waiting for character or boss body");return end
+        local bone=bones[name]
+        if not bone or not bone:IsDescendantOf(body)then
+            bone=body:FindFirstChild(name,true)
+            if not bone or not bone:IsA("Bone")then status("Waiting for weak-point bone: "..name);return end
+            bones[name]=bone
+        end
+        local direction=bone.TransformedWorldCFrame.Position-head.Position
+        local range=math.clamp(tonumber(player:GetAttribute("PitchforkReach"))or 13,13,24)
+        if direction.Magnitude>range then status(string.format("Move closer to %s (%.1f / %.1f studs)",name,direction.Magnitude,range));return end
+        if direction.Magnitude<0.01 then return end
+        if now<nextSend then return end
+        local remote=options.Remote()
+        if not remote then status("Waiting for PitchforkDig remote");return end
+        local ok=pcall(remote.FireServer,remote,"Boss",head.Position,direction.Unit)
+        nextSend=now+math.max(0.1,tonumber(player:GetAttribute("PitchforkCooldown"))or 0.85)
+        status(ok and ("Targeting "..name.."; hit confirmation handled by server")or "Pitchfork request failed; retry pending")
+    end
+    return controller
+end
+
 local function createCandleAutomation(options)
     local player=options.Player
     local alive,busy,keyHeld=false,false,false
@@ -1119,7 +1179,7 @@ end
     local sharedFarmDefaults = {
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
         AutoSellHay=false, SellThreshold=25, SellOnlyIfFull=false,
-        AutoUseTNT=false, AutoUsePitchfork=false, AutoDeployDrone=false,
+        AutoUseTNT=false, AutoUsePitchfork=false, AutoDeployDrone=false, AutoBossWeakpointPitchfork=false,
         AutoUseVacuum=false, VacuumHotbarSlot=5, ToolInterval=0.5,
         AutoCandles=false,
         AutoBuyTools=false, BuyToolsList={"Pitchfork"}, BuyInterval=1,
@@ -1200,6 +1260,8 @@ end
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
+    farmToggle(toolsTab,"AutoBossWeakpointPitchfork","Auto Boss Weak-Point Pitchfork")
+    local bossPitchforkStatus=toolsTab:Paragraph({Title="Boss Pitchfork Status",Desc="Disabled"})
     farmToggle(toolsTab,"AutoDeployDrone","Auto Deploy Drone")
     farmToggle(toolsTab,"AutoUseVacuum","Auto Use Vacuum (live heat + cooldown)",
         "Releases suction during menus, cutscenes and candle interactions.")
@@ -1292,9 +1354,24 @@ end
     local function needlePriority()
         return candleController and candleController.IsBusy() or false
     end
+    local bossPitchfork=createBossWeakpointPitchfork({
+        Player=LocalPlayer,World=Workspace,
+        Enabled=function()return not hubUnloaded and sharedFarmState.AutoBossWeakpointPitchfork==true end,
+        Blocked=function()return not hubWindow.Closed or farmBlocked()or needlePriority()end,
+        Remote=function()return farmRemote("PitchforkDig")end,
+        Status=function(text)pcall(function()bossPitchforkStatus:SetDesc(text)end)end,
+    })
+    spawnChapterWorker(function()
+        while not hubUnloaded do
+            task.wait(0.1)
+            local ok,err=pcall(bossPitchfork.Tick)
+            if not ok then task.wait(1)end
+        end
+    end)
     local collectSelectors={}
     local previousCollectCleanup=_G.__BEYY_HUB_CLEANUP
     _G.__BEYY_HUB_CLEANUP=function()
+        bossPitchfork.Stop()
         for _,entry in pairs(collectSelectors) do entry.Stop() end
         if previousCollectCleanup then previousCollectCleanup() end
     end
@@ -1368,8 +1445,8 @@ end
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
             if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
                 and needleFolder and not farmBlocked() and not needlePriority() then
-                if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
-                    local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() end)
+                if sharedFarmState.AutoUsePitchfork and not bossPitchfork.IsEngaged() and LocalPlayer:GetAttribute("PitchforkOwned")==true then
+                    local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not bossPitchfork.IsEngaged() and not farmBlocked() and not needlePriority() end)
                     if id then sendFarmRemote("PitchforkDig",id) end
                 end
                 if sharedFarmState.AutoDeployDrone and LocalPlayer:GetAttribute("DroneOwned")==true

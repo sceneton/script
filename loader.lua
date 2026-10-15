@@ -24,9 +24,9 @@ end
 local validatedSource, validatedModule, validatedFunction
 local function valid(source, moduleName)
     if source == validatedSource and moduleName == validatedModule and validatedFunction then return validatedFunction end
-    if type(source) ~= "string" or #source < 1500 then return nil end
-    if not source:find('local __BEYY_SCRIPT_VERSION = "' .. VERSION .. '"', 1, true) then return nil end
-    if not source:find('local __BEYY_MODULE = "' .. moduleName .. '"', 1, true) then return nil end
+    if type(source) ~= "string" or #source < 1500 then return nil, "Response is missing or too short" end
+    if not source:find('local __BEYY_SCRIPT_VERSION = "' .. VERSION .. '"', 1, true) then return nil, "Script version marker mismatch" end
+    if not source:find('local __BEYY_MODULE = "' .. moduleName .. '"', 1, true) then return nil, "Module marker mismatch" end
     local fn, err = loadstring(source)
     if fn then validatedSource, validatedModule, validatedFunction = source, moduleName, fn end
     return fn, err
@@ -65,6 +65,7 @@ if not revision then
 end
 local moduleCache = CACHE_PREFIX .. target.file
 local source = nil
+local onlineError
 local url = downloadBase .. "/" .. target.file
 -- A confirmed SHA names immutable source; validate and reuse its local cache.
 if revision then
@@ -73,9 +74,14 @@ if revision then
 end
 if not source then
     local onlineOK, onlineSource = pcall(fetchFresh, url)
-    if onlineOK and valid(onlineSource, target.name) then
+    local compiled, validationError
+    if onlineOK then compiled, validationError = valid(onlineSource, target.name) end
+    if onlineOK and compiled then
         source = onlineSource
         if type(writefile) == "function" then pcall(writefile, moduleCache, source) end
+    else
+        onlineError = onlineOK and ("Validation/compile failed: " .. tostring(validationError))
+            or ("Download failed: " .. tostring(onlineSource))
     end
 end
 -- Without a confirmed revision, retain the online attempt before offline fallback.
@@ -86,6 +92,7 @@ end
 
 if not source then
     warn("[BeyyHub] Could not load " .. target.name .. " online or from a valid cache")
+    warn("[BeyyHub] " .. tostring(onlineError) .. " | URL: " .. url)
     return
 end
 

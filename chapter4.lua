@@ -460,6 +460,196 @@ local function createTntRetryGate(getRemote, getCooldown)
     return gate
 end
 
+local function createCandleAutomation(options)
+    local player=options.Player
+    local alive,busy,keyHeld=false,false,false
+    local altar,remotes,holder,character
+    local lastStatus,lastWarning=nil,-math.huge
+    local controller={}
+    alive=true
+    local function status(text)
+        if altar and altar.Parent then
+            text=text..string.format(" | Found %d/4 • Lit %d/4",tonumber(altar:GetAttribute("CandlesFound")) or 0,tonumber(altar:GetAttribute("CandlesLit")) or 0)
+        end
+        if text~=lastStatus then lastStatus=text;options.Status(text) end
+    end
+    local function releaseKey()
+        if keyHeld then
+            keyHeld=false
+            pcall(function()options.Input:SendKeyEvent(false,Enum.KeyCode.Space,false,game)end)
+        end
+    end
+    local function puzzle()
+        local pg=player:FindFirstChildOfClass("PlayerGui")
+        return pg and pg:FindFirstChild("CandleMatchMinigame")
+    end
+    local function closePuzzle()
+        local gui=puzzle()
+        if holder and remotes and gui and gui.Enabled and type(firesignal)=="function" then
+            pcall(firesignal,remotes.MatchPuzzle.OnClientEvent)
+        end
+    end
+    local function allowed()
+        return alive and options.Alive() and options.Enabled() and options.MenuClosed()
+            and not options.Blocked() and player.Character==character and character and character.Parent~=nil
+    end
+    local function check()
+        assert(allowed(),"Candle action paused or cancelled")
+    end
+    local function waitFor(predicate,seconds)
+        local deadline=os.clock()+seconds
+        repeat
+            check()
+            if predicate() then return true end
+            task.wait(0.05)
+        until os.clock()>=deadline
+        check()
+        return predicate()
+    end
+    local function pause(seconds)waitFor(function()return false end,seconds)end
+    local function positionOf(model)
+        local root=model:FindFirstChild("Root")
+        return root and root:IsA("BasePart") and root.Position or model:GetPivot().Position
+    end
+    local function approach(model)
+        check()
+        local root=assert(character:FindFirstChild("HumanoidRootPart"),"Waiting for character root")
+        local target=positionOf(model)
+        root.CFrame=CFrame.lookAt(target+Vector3.new(3,2,0),target)
+        root.AssemblyLinearVelocity=Vector3.zero
+        root.AssemblyAngularVelocity=Vector3.zero
+        pause(0.6)
+        assert(model.Parent and (root.Position-positionOf(model)).Magnitude<=10,"Interaction target moved out of reach")
+    end
+    local function loose(candle)
+        return candle:IsA("Model") and candle:GetAttribute("HayCandle")==true
+            and candle:GetAttribute("Revealed")==true and candle:GetAttribute("HeldBy")==nil
+            and candle:GetAttribute("Placed")==nil
+    end
+    local function findHolder(reserved)
+        for _,name in ipairs({"1","2","3","4"})do
+            local item=altar:FindFirstChild(name)
+            if item and item:IsA("Model") and item:GetAttribute("Lit")~=true then
+                local owner=item:GetAttribute("ReservedBy")
+                if (reserved and owner==player.UserId) or (not reserved and owner==nil) then return item end
+            end
+        end
+    end
+    local function collect(candle)
+        for attempt=1,2 do
+            check()
+            if player:GetAttribute("CarryingCandle")~=nil then return end
+            assert(candle.Parent and loose(candle),"Candle is no longer exposed and unclaimed")
+            status("Collecting "..candle.Name.." (attempt "..attempt..")")
+            approach(candle)
+            check()
+            remotes.PickUpCandle:FireServer(candle)
+            if waitFor(function()return player:GetAttribute("CarryingCandle")~=nil end,1.8)then return end
+        end
+        error("Pickup not confirmed; will retry")
+    end
+    local function place()
+        holder=assert(findHolder(false),"Waiting for a free candle holder")
+        for attempt=1,2 do
+            check()
+            assert(holder:GetAttribute("ReservedBy")==nil or holder:GetAttribute("ReservedBy")==player.UserId,"Holder reserved by another player")
+            status("Placing candle in holder "..holder.Name)
+            approach(holder)
+            check()
+            remotes.PlaceCandle:FireServer(holder)
+            if waitFor(function()
+                return holder:GetAttribute("Lit")==true or holder:GetAttribute("ReservedBy")==player.UserId
+            end,2)then return end
+            if player:GetAttribute("CarryingCandle")==nil then error("Placement unconfirmed; waiting for server state")end
+        end
+        error("Placement not confirmed; will retry")
+    end
+    local function normalMatch()
+        local gui=puzzle()
+        assert(gui and gui.Enabled,"Match minigame unavailable for fallback")
+        local counter=gui:FindFirstChild("Counter",true)
+        local focused=game:GetService("UserInputService"):GetFocusedTextBox()
+        if focused then focused:ReleaseFocus()end
+        for _=1,12 do
+            check()
+            if not gui.Enabled or (counter and counter.Text=="LIT!")then break end
+            keyHeld=true
+            options.Input:SendKeyEvent(true,Enum.KeyCode.Space,false,game)
+            pause(0.04)
+            releaseKey()
+            pause(0.46)
+        end
+        assert(waitFor(function()return holder:GetAttribute("Lit")==true end,5),"Lighting not confirmed; will retry")
+        waitFor(function()return not gui.Enabled end,2)
+    end
+    local function light()
+        check()
+        if holder:GetAttribute("Lit")==true then closePuzzle();return end
+        assert(holder:GetAttribute("ReservedBy")==player.UserId,"Holder reservation not confirmed")
+        -- The server sends a 0.55-second placement animation before opening this GUI.
+        waitFor(function()local gui=puzzle();return gui and gui.Enabled end,1)
+        check()
+        status("Lighting holder "..holder.Name)
+        remotes.MatchDone:FireServer(holder)
+        if waitFor(function()return holder:GetAttribute("Lit")==true end,0.5)then
+            closePuzzle()
+            local gui=puzzle()
+            if not gui or not gui.Enabled then return end
+            status("Lighting confirmed; finishing minigame cleanup")
+        else status("Using match-lighting fallback")end
+        normalMatch()
+        closePuzzle()
+    end
+    function controller.IsBusy()return busy end
+    function controller.Stop()
+        alive=false
+        releaseKey()
+        closePuzzle()
+        busy=false
+    end
+    function controller.Tick()
+        if not alive or not options.Alive()then return end
+        altar=workspace:FindFirstChild("WhereToPlaceCandles")
+        if not options.Enabled()then status("Disabled");return end
+        if not options.MenuClosed()then status("Paused while menu is open");return end
+        if options.Blocked()then status("Paused for cutscene or input lock");return end
+        if not altar then status("Waiting for candle objectives");return end
+        if altar:GetAttribute("AllLit")==true then status("All candles completed");return end
+        local ritual=game:GetService("ReplicatedStorage"):FindFirstChild("CandleRitual")
+        remotes=ritual and ritual:FindFirstChild("Remotes")
+        if not remotes or not remotes:FindFirstChild("PickUpCandle")or not remotes:FindFirstChild("PlaceCandle")
+            or not remotes:FindFirstChild("MatchDone")or not remotes:FindFirstChild("MatchPuzzle")then status("Waiting for candle remotes");return end
+        character=player.Character
+        if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart")then status("Waiting for character");return end
+        holder=findHolder(true)
+        local candle
+        if not holder and player:GetAttribute("CarryingCandle")==nil then
+            local folder=workspace:FindFirstChild("HayCandles")
+            if folder then for _,candidate in ipairs(folder:GetChildren())do if loose(candidate)then candle=candidate;break end end end
+            if not candle then status("Waiting for an exposed candle");return end
+        end
+        busy=true
+        local ok,err=xpcall(function()
+            options.PauseTools()
+            if not holder then
+                if candle then collect(candle)end
+                place()
+            end
+            light()
+            status(altar:GetAttribute("AllLit")==true and "All candles completed" or "Candle completed; waiting for next exposure")
+        end,function(e)return tostring(e)end)
+        releaseKey()
+        if not ok then
+            closePuzzle()
+            status(err)
+            if allowed()and os.clock()-lastWarning>=10 then lastWarning=os.clock();warn("[Candles] "..err)end
+        end
+        holder=nil
+        busy=false
+    end
+    return controller
+end
+
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
     local function nextVacuum()
@@ -903,13 +1093,14 @@ end
         Callback = function() pcall(_G.__BEYY_HUB_CLEANUP) end,
     })
 
-    local sharedFarmPuzzleBusy = function() return false end
+    local candleController
+    local sharedFarmPuzzleBusy = function() return candleController and candleController.IsBusy() or false end
     local sharedFarmDefaults = {
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
         AutoSellHay=false, SellThreshold=25, SellOnlyIfFull=false,
         AutoUseTNT=false, AutoUsePitchfork=false, AutoDeployDrone=false,
         AutoUseVacuum=false, VacuumHotbarSlot=5, ToolInterval=0.5,
-        AutoFindNeedle=false, AutoPickupNeedle=false, AutoHandInNeedle=false, NeedleInterval=1,
+        AutoCandles=false,
         AutoBuyTools=false, BuyToolsList={"Pitchfork"}, BuyInterval=1,
         UpgBagSize=false, UpgExtraTake=false, UpgGemValue=false, UpgHayValue=false, PermInterval=1,
         UpgCapacity=false, UpgHandSpeed=false, UpgHandGrab=false, UpgHandHold=false,
@@ -948,7 +1139,7 @@ end
     local collectingTab = farmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
     local sellingTab = farmingSection:Tab({ Title = "Selling", Icon = "coins" })
     local toolsTab = farmingSection:Tab({ Title = "Tools", Icon = "hammer" })
-    local needleTab = farmingSection:Tab({ Title = "Needle", Icon = "search" })
+    local candleTab = farmingSection:Tab({ Title = "Candles", Icon = "flame" })
     local inventorySection = hubWindow:Section({ Title = "Inventory", Icon = "backpack", Opened = true })
     local shopTab = inventorySection:Tab({ Title = "Shop Items", Icon = "shopping-cart" })
     local upgradesTab = inventorySection:Tab({ Title = "Upgrades", Icon = "trending-up" })
@@ -990,15 +1181,12 @@ end
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
     farmToggle(toolsTab,"AutoDeployDrone","Auto Deploy Drone")
     farmToggle(toolsTab,"AutoUseVacuum","Auto Use Vacuum (live heat + cooldown)",
-        "Releases suction during menus, cutscenes and needle interactions.")
+        "Releases suction during menus, cutscenes and candle interactions.")
     farmSlider(toolsTab,"VacuumHotbarSlot","Vacuum Hotbar Slot (fallback)",1,9,1)
     farmSlider(toolsTab,"ToolInterval","Tool Interval (s)",0.2,5,0.1)
-    needleTab:Section({ Title="Needle (TOP PRIORITY)" })
-    needleTab:Paragraph({ Title="When a needle is exposed, harvesting pauses automatically." })
-    farmToggle(needleTab,"AutoFindNeedle","Auto Find Needle")
-    farmToggle(needleTab,"AutoPickupNeedle","Auto Pick Up Needle")
-    farmToggle(needleTab,"AutoHandInNeedle","Auto Hand In Needle")
-    farmSlider(needleTab,"NeedleInterval","Needle Scan Interval (s)",0.2,3,0.1)
+    candleTab:Section({Title="Candles"})
+    farmToggle(candleTab,"AutoCandles","Auto Collect & Light Candles")
+    local candleStatus=candleTab:Paragraph({Title="Candle Status",Desc="Disabled"})
     shopTab:Section({ Title="Purchasing" })
     Registry.BuyToolsList = shopTab:Dropdown({
         Title="Buy Tools Selection",
@@ -1080,63 +1268,8 @@ end
             or LocalPlayer:GetAttribute("CutsceneActive")==true
             or LocalPlayer:GetAttribute("HintViewerOpen")==true
     end
-local function createObjectiveIndex()
-    local current, items, positions, connections = nil, {}, {}, {}
-    local function stop()
-        for _,connection in ipairs(connections) do connection:Disconnect() end
-        current, items, positions, connections = nil, {}, {}, {}
-    end
-    local function add(item)
-        if item:IsA("BasePart") and not positions[item] then
-            items[#items+1]=item; positions[item]=#items
-        end
-    end
-    local function remove(item)
-        local index=positions[item]
-        if not index then return end
-        local last=items[#items]
-        items[index]=last; positions[last]=index
-        items[#items]=nil; positions[item]=nil
-    end
-    local function get(folder)
-        if folder~=current then
-            stop(); current=folder
-            if folder then
-                connections[1]=folder.DescendantAdded:Connect(add)
-                connections[2]=folder.DescendantRemoving:Connect(remove)
-                for _,item in ipairs(folder:GetDescendants()) do add(item) end
-            end
-        end
-        return items
-    end
-    return get,stop
-end
-
-local indexedObjectives, stopObjectiveIndex = createObjectiveIndex()
-local previousObjectiveCleanup = _G.__BEYY_HUB_CLEANUP
-_G.__BEYY_HUB_CLEANUP = function()
-    stopObjectiveIndex()
-    if previousObjectiveCleanup then pcall(previousObjectiveCleanup) end
-end
-    local function exposedNeedle()
-        local folder=Workspace:FindFirstChild("NeedleObjectiveServer")
-        folder=folder and folder:FindFirstChild("Needle")
-        if not folder then indexedObjectives(nil); return nil end
-        for _,item in ipairs(indexedObjectives(folder)) do
-            if item:IsA("BasePart") and item:GetAttribute("IsNeedleObjective")==true
-                and item:GetAttribute("HIDDEN_WITHIN")==nil
-                and type(item:GetAttribute("HayId"))=="number" then
-                return item
-            end
-        end
-    end
-    local needleBusy=false
     local function needlePriority()
-        if needleBusy then return true end
-        if LocalPlayer:GetAttribute("NeedleOwned")==true then
-            return sharedFarmState.AutoHandInNeedle or sharedFarmState.AutoPickupNeedle
-        end
-        return sharedFarmState.AutoPickupNeedle and exposedNeedle()~=nil
+        return candleController and candleController.IsBusy() or false
     end
     local collectSelectors={}
     local previousCollectCleanup=_G.__BEYY_HUB_CLEANUP
@@ -1160,17 +1293,17 @@ end
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.1,tonumber(sharedFarmState.CollectInterval) or 0.5))
-            if (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle or sharedFarmState.AutoCollectDroppedHay or sharedFarmState.AutoCollectGems)
+            if (sharedFarmState.AutoPickHay or sharedFarmState.AutoCollectDroppedHay or sharedFarmState.AutoCollectGems)
                 and needleFolder and not farmBlocked() and not needlePriority() then
-                if (sharedFarmState.AutoPickHay or (sharedFarmState.AutoFindNeedle and not exposedNeedle())) and not bagFull() then
+                if sharedFarmState.AutoPickHay and not bagFull() then
                     local hay,id=closestInFolder("HaystackClient","HayId",30)
-                    if id and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) and not farmBlocked() and not needlePriority() then
+                    if id and sharedFarmState.AutoPickHay and not farmBlocked() and not needlePriority() then
                         local nearby={}
                         local radius=tonumber(LocalPlayer:GetAttribute("HayGrabRadius")) or 0
                         if radius>0 and hay then
                             local folder=Workspace:FindFirstChild("HaystackClient")
                             if folder then
-                                for _,other in budgetedFolderChildren(folder,function() return not hubUnloaded and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) end) do
+                                for _,other in budgetedFolderChildren(folder,function() return not hubUnloaded and sharedFarmState.AutoPickHay end) do
                                     if other~=hay and other:IsA("BasePart")
                                         and other:GetAttribute("HayId")
                                         and (other.Position-hay.Position).Magnitude<=radius+1 then
@@ -1180,7 +1313,7 @@ end
                                 end
                             end
                         end
-                        if hay and hay.Parent and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) and not farmBlocked() and not needlePriority() then sendFarmRemote("PickHay",id,nearby) end
+                        if hay and hay.Parent and sharedFarmState.AutoPickHay and not farmBlocked() and not needlePriority() then sendFarmRemote("PickHay",id,nearby) end
                     end
                 end
                 if sharedFarmState.AutoCollectDroppedHay and not bagFull() then
@@ -1365,135 +1498,27 @@ end
         end
         releaseSharedVacuum()
     end)
-    local handInBusy = false
-    local lastHandInWarning = -math.huge
-    local function handInWarning(message)
-        if os.clock() - lastHandInWarning >= 5 then
-            lastHandInWarning = os.clock()
-            warn("[BeyyHub] Needle turn-in: " .. tostring(message))
+    candleController=createCandleAutomation({
+        Player=LocalPlayer,Input=VirtualInputManager,
+        Alive=function()return not hubUnloaded end,
+        Enabled=function()return sharedFarmState.AutoCandles==true end,
+        MenuClosed=function()return hubWindow.Closed==true end,
+        Blocked=farmBlocked,
+        PauseTools=releaseSharedVacuum,
+        Status=function(text)candleStatus:SetDesc(text)end,
+    })
+    do
+        local previous=_G.__BEYY_HUB_CLEANUP
+        _G.__BEYY_HUB_CLEANUP=function()
+            candleController.Stop()
+            if previous then pcall(previous)end
         end
     end
     spawnChapterWorker(function()
         while not hubUnloaded do
-            task.wait(math.max(0.2,tonumber(sharedFarmState.NeedleInterval) or 1))
-            if needleFolder and not farmBlocked() and sharedFarmState.AutoHandInNeedle
-                and not needleBusy and not handInBusy
-                and LocalPlayer:GetAttribute("NeedleOwned")==true then
-                handInBusy = true
-                local ok, err = pcall(function()
-                    local root = farmRoot()
-                    if not root then return end
-                    if BEYY_CHAPTER == "Chapter2" then
-                        local laser = Workspace:FindFirstChild("Laser")
-                        if not (laser and laser:IsA("Model")) then
-                            handInWarning("Workspace.Laser missing; waiting for the Chapter 2 hand-in location")
-                            return
-                        end
-                        local destination = laser:GetPivot().Position - Vector3.new(0, 2.5, 0)
-                        root.CFrame = CFrame.new(destination) * root.CFrame.Rotation
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
-                        task.wait(0.2)
-                        if hubUnloaded or farmBlocked() or not sharedFarmState.AutoHandInNeedle
-                            or LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
-                        if not sendFarmRemote("NeedleHandIn") then
-                            handInWarning("NeedleHandIn remote unavailable or send failed")
-                            return
-                        end
-                        local deadline = os.clock() + 1.5
-                        while not hubUnloaded and LocalPlayer:GetAttribute("NeedleOwned")==true
-                            and os.clock() < deadline do
-                            task.wait(0.05)
-                        end
-                        if not hubUnloaded and LocalPlayer:GetAttribute("NeedleOwned")==true then
-                            handInWarning("no server confirmation; will retry from beneath Laser")
-                        end
-                    else
-                        local npc = Workspace:FindFirstChild("NPC")
-                        local farmer = npc and npc:FindFirstChild("Farmer_NPC")
-                        if farmer then
-                            local location = farmer:GetPivot()
-                            if (root.Position - location.Position).Magnitude > 15 then
-                                root.CFrame = location * CFrame.new(0, 0, 4)
-                            end
-                            sendFarmRemote("NeedleHandIn")
-                        end
-                    end
-                end)
-                if not ok then handInWarning(err) end
-                handInBusy = false
-            end
-        end
-    end)
-    spawnChapterWorker(function()
-        while not hubUnloaded do
-            task.wait(math.max(0.2,tonumber(sharedFarmState.NeedleInterval) or 1))
-            if needleFolder and not farmBlocked() and not needleBusy
-                and sharedFarmState.AutoPickupNeedle and LocalPlayer:GetAttribute("NeedleOwned")~=true then
-                local needle=exposedNeedle()
-                local root=farmRoot()
-                local camera=Workspace.CurrentCamera
-                if needle and root and camera and hubWindow.Closed==true then
-                    needleBusy=true
-                    releaseSharedVacuum()
-                    local previousRoot=root.CFrame
-                    local previousCameraType=camera.CameraType
-                    local previousCameraCF=camera.CFrame
-                    local renderName="BeyySharedNeedleAim_"..tostring(LocalPlayer.UserId)
-                    local bound=false
-                    local mouseDown=false
-                    local function clear()
-                        if mouseDown then
-                            mouseDown=false
-                            local center=camera.ViewportSize/2
-                            pcall(function()
-                                VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0)
-                            end)
-                        end
-                        if bound then pcall(function() RunService:UnbindFromRenderStep(renderName) end) end
-                        if camera then
-                            pcall(function()
-                                camera.CameraType=previousCameraType
-                                camera.CFrame=previousCameraCF
-                            end)
-                        end
-                        if root and root.Parent then pcall(function() root.CFrame=previousRoot end) end
-                        needleBusy=false
-                    end
-                    local ok,err=xpcall(function()
-                        local id=needle:GetAttribute("HayId")
-                        local spot=needle.Position+Vector3.new(2,2.5,0)
-                        root.CFrame=CFrame.lookAt(spot,needle.Position)
-                        camera.CameraType=Enum.CameraType.Scriptable
-                        local cameraSpot=spot+Vector3.new(0,0,0.5)
-                        camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
-                        RunService:BindToRenderStep(renderName,Enum.RenderPriority.Last.Value+30,function()
-                            if needle.Parent then
-                                camera.CFrame=CFrame.lookAt(cameraSpot,needle.Position)
-                                LocalPlayer:SetAttribute("HoveredHayId",id)
-                            end
-                        end)
-                        bound=true
-                        task.wait(0.1)
-                        for _=1,8 do
-                            if hubUnloaded or farmBlocked() or not sharedFarmState.AutoPickupNeedle
-                                or not needle.Parent or LocalPlayer:GetAttribute("NeedleOwned")==true then break end
-                            local center=camera.ViewportSize/2
-                            LocalPlayer:SetAttribute("HoveredHayId",id)
-                            VirtualInputManager:SendMouseMoveEvent(center.X,center.Y,game)
-                            task.wait(0.025)
-                            VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,true,game,0)
-                            mouseDown=true
-                            task.wait(0.1)
-                            VirtualInputManager:SendMouseButtonEvent(center.X,center.Y,0,false,game,0)
-                            mouseDown=false
-                            task.wait(0.1)
-                        end
-                    end,function(e) return tostring(e) end)
-                    clear()
-                    if not ok then warn("[BeyyHub] Other-chapter needle pickup: "..tostring(err)) end
-                end
-            end
+            local ok,err=pcall(candleController.Tick)
+            if not ok then candleStatus:SetDesc("Candle worker error; retrying: "..tostring(err))end
+            task.wait(0.5)
         end
     end)
     local function owned(attr) return LocalPlayer:GetAttribute(attr)==true end
@@ -1599,7 +1624,7 @@ local function cutsceneResultsVisible()
     return ending and ending:IsA("ScreenGui") and ending.Enabled == true
 end
 local function shouldYieldCutsceneBypass()
-    return hubUnloaded or not hubWindow.Closed or needleBusy or sharedFarmPuzzleBusy() or cutsceneResultsVisible()
+    return hubUnloaded or not hubWindow.Closed or sharedFarmPuzzleBusy() or cutsceneResultsVisible()
 end
 local function setCutsceneBypassActive(_) end
 local cutsceneBypassStop = nil
@@ -2477,5 +2502,6 @@ end
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end
+
 
 

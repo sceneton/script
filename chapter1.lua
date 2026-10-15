@@ -1661,6 +1661,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    local scanBusy = false
     local lastHayReadinessScan = -math.huge
     local scanSamples, scanTotalMs, scanMaxMs, scannedHayParts = 0, 0, 0, 0
     local lastPerfReport = os.clock()
@@ -1699,9 +1700,20 @@ task.spawn(function()
                 end
 
                 local now = os.clock()
-                if now - lastHayReadinessScan >= 0.45 then
+                if not scanBusy and now - lastHayReadinessScan >= 0.45 then
                     lastHayReadinessScan = now
+                    scanBusy = true
+                    local scanBand = afkCurrentBand()
+                    task.spawn(function()
                     local scanStart = os.clock()
+                    local cpuMs, sliceStart = 0, scanStart
+                    local function stillCurrent()
+                        return not Unloaded and IN_GAME and afkVacuumOrbitEnabled()
+                            and not needleHasPriority() and not roundEndingVisible()
+                            and LocalPlayer.Character == character and root.Parent ~= nil
+                            and afkCameraAnchor == anchor and afkCurrentBand() == scanBand
+                    end
+                    local scanOK, scanError = pcall(function()
                     local folder = HayFolder
                     if not folder or not folder.Parent then
                         folder = Workspace:FindFirstChild("HaystackClient")
@@ -1709,31 +1721,44 @@ task.spawn(function()
                     end
                     local nearby, checked = false, 0
                     if folder then
-                        local probe = anchor + radial * afkCurrentBand().radius
+                        local probe = anchor + radial * scanBand.radius
                         for _, hay in ipairs(folder:GetChildren()) do
                             checked += 1
-                            if isPileHay(hay) then
-                                local dx, dz = hay.Position.X - probe.X, hay.Position.Z - probe.Z
+                            -- Most pieces are far away; avoid attributes/ancestry until geometry matches.
+                            if hay.Parent == folder and hay:IsA("BasePart") then
+                                local position = hay.Position
+                                local dx, dz = position.X - probe.X, position.Z - probe.Z
                                 if dx * dx + dz * dz <= 12 * 12
-                                    and math.abs(hay.Position.Y - surface) <= 12 then
+                                    and math.abs(position.Y - surface) <= 12 and isPileHay(hay) then
                                     nearby = true
                                     break
                                 end
                             end
+                            if checked % 64 == 0 and os.clock() - sliceStart >= 0.001 then
+                                cpuMs += (os.clock() - sliceStart) * 1000
+                                task.wait()
+                                sliceStart = os.clock()
+                                if not stillCurrent() or folder.Parent == nil then return end
+                            end
                         end
                     end
+                    if not stillCurrent() then return end
                     afkVacuumTargetReady = nearby
-                    local spentMs = (os.clock() - scanStart) * 1000
+                    local spentMs = cpuMs + (os.clock() - sliceStart) * 1000
                     scanSamples += 1
                     scannedHayParts += checked
                     scanTotalMs += spentMs
                     scanMaxMs = math.max(scanMaxMs, spentMs)
                     if now - lastPerfReport >= 30 then
-                        print(string.format("[Perf] v103.00 hay scans=%d, parts examined=%d, average=%.2fms, max=%.2fms per scan",
+                        print(string.format("[Perf] v103.00 hay scans=%d, parts examined=%d, average=%.2fms CPU, max=%.2fms CPU per scan (1ms slices)",
                             scanSamples, scannedHayParts, scanTotalMs / math.max(1, scanSamples), scanMaxMs))
                         scanSamples, scannedHayParts, scanTotalMs, scanMaxMs = 0, 0, 0, 0
                         lastPerfReport = now
                     end
+                    end)
+                    scanBusy = false
+                    if not scanOK then warn("[Hay] Readiness scan failed: " .. tostring(scanError)) end
+                    end)
                 end
             else
                 afkVacuumTargetReady = false

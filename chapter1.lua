@@ -4586,7 +4586,7 @@ do
     task.spawn(function()
         while not Unloaded do
             if IN_GAME then upgrades.Tick() end
-            task.wait(0.75)
+            task.wait(0.25)
         end
     end)
 end

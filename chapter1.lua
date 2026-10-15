@@ -1519,7 +1519,19 @@ local function bindAfkCameraView()
     releaseAfkCamera()
     return false
 end
+function afkOrbitTelemetry.BeginTeleportRound()
+    if afkOrbitTelemetry.RoundJob == game.JobId then return end
+    releaseAfkCamera()
+    afkOrbitTelemetry.RoundJob = game.JobId
+    afkOrbitAngle = 0
+    afkOrbitLap = 0
+    afkVacuumTargetReady = false
+    afkOrbitTelemetry.LastText = nil
+    afkOrbitTelemetry.Paused = nil
+    print("[AFK Orbit] New teleport session: reset to base-lower | route 1/" .. tostring(#AFK_ORBIT_BANDS))
+end
 local function startAfkCamera()
+    afkOrbitTelemetry.BeginTeleportRound()
     if afkCameraBound or not IN_GAME or not afkFarmModeActive() then return end
     if afkCameraSuspended and afkCameraAnchor then
         bindAfkCameraView()

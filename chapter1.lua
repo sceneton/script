@@ -228,11 +228,13 @@ end
 
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(false, true)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
+local earlyIntroPending, stopEarlyIntro
+do
 local earlyIntroRunning = true
-local earlyIntroPending = false
+earlyIntroPending = false
 local earlyIntroGui, earlyIntroConnection
 local earlyIntroButtons = setmetatable({}, {__mode="k"})
-local function stopEarlyIntro()
+stopEarlyIntro = function()
     earlyIntroRunning = false; earlyIntroPending = false
     if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
     table.clear(earlyIntroButtons)
@@ -316,6 +318,8 @@ task.spawn(function()
     stopEarlyIntro()
 end)
 
+end -- intro private state remains captured by its callbacks
+
 local selectCollectHay,stopCollectHay=createPitchforkSelector(false,true)
 local selectDroppedHay,stopDroppedHay=createPitchforkSelector(true,false,{FolderName="DroppedHay",ObjectId=true,Range=28,ReturnObject=true,Recursive=false,AllowContainers=true})
 local selectCollectGem,stopCollectGem=createPitchforkSelector(true,false,{FolderName="GemsClient",IdName="GemId",Range=35,Recursive=false,PartIdOnly=true})
@@ -325,6 +329,85 @@ local function setReplayStatus(text)
     replayStatusText=text
     if replayStatus then replayStatus:SetDesc(text) end
 end
+local function createAutoUpgradeRuntime(options)
+    local config, configModule, pending
+    local tracks = {
+        {"UpgVacPower","VacuumPower"},{"UpgVacCooling","VacuumCooling"},
+        {"UpgVacRuntime","VacuumRuntime"},{"UpgTntCooldown","TntCooldown"},
+        {"UpgTntPower","TntPower"},{"UpgTntLuck","TntLuck"},
+        {"UpgCapacity","Capacity"},{"UpgHandSpeed","Speed"},{"UpgHandGrab","Grab"},{"UpgHandHold","HandHold"},
+        {"UpgPitchCooldown","PitchforkCooldown"},{"UpgPitchHold","PitchforkHold"},{"UpgPitchSweep","Pitchfork"},
+        {"UpgDroneSpeed","DroneSpeed"},{"UpgDroneGrab","DroneGrab"},{"UpgDroneCapacity","DroneCapacity"},
+    }
+    local function status(text) options.Status(text) end
+    local function level(name) return tonumber(options.Player:GetAttribute("HayUpgrade"..name)) or 1 end
+    local function cost(name, entry)
+        local price=tonumber(entry.Cost)
+        if not price or price<0 or price~=price or price==math.huge then return nil end
+        price*=tonumber(options.Player:GetAttribute("UpgradeCostMultiplier")) or 1
+        if name:sub(1,9)=="Pitchfork" then price*=tonumber(options.Player:GetAttribute("PitchforkUpgradeCostMultiplier")) or 1 end
+        return math.round(price*100)/100
+    end
+    local function tick()
+        local folder=options.Folder()
+        local module=folder and folder:FindFirstChild("Config")
+        local remote=folder and folder:FindFirstChild("BuyUpgrade")
+        if not module or not remote or not remote:IsA("RemoteEvent") then status("Waiting for upgrade config / remote"); return end
+        if configModule~=module or not config then
+            local loaded=require(module)
+            assert(type(loaded)=="table" and type(loaded.UPGRADE_TRACKS)=="table","Invalid upgrade config")
+            config,configModule=loaded,module
+            if options.OnConfig then options.OnConfig(loaded) end
+        end
+        if pending then
+            if level(pending.Name)~=pending.Level or not options.State[pending.Flag] then pending=nil
+            elseif os.clock()<pending.Until then status("Waiting for "..pending.Name.." purchase confirmation"); return
+            else
+                status("Server did not confirm "..pending.Name.."; retrying")
+                pending=nil
+                return
+            end
+        end
+        local cash=tonumber(options.Cash()) or 0
+        local selected, available, vacuum=0,{},nil
+        for _,entry in ipairs(tracks) do
+            if options.State[entry[1]] then
+                selected+=1
+                local track=config.UPGRADE_TRACKS[entry[2]]
+                local current=level(entry[2])
+                local nextLevel=track and track.Levels and track.Levels[current+1]
+                local price=nextLevel and cost(entry[2],nextLevel)
+                if price then
+                    local target={Flag=entry[1],Name=entry[2],Level=current,Cost=price}
+                    available[#available+1]=target
+                    if (entry[2]=="VacuumPower" or entry[2]=="VacuumCooling") and (not vacuum or price<vacuum.Cost) then vacuum=target end
+                end
+            end
+        end
+        if selected==0 then status("No cash upgrades enabled"); return end
+        if #available==0 then status("Selected cash upgrades are maxed or unavailable"); return end
+        local target
+        if vacuum and cash>=vacuum.Cost*0.75 then
+            if cash<vacuum.Cost then status(string.format("Saving for %s: $%.2f / $%.2f",vacuum.Name,cash,vacuum.Cost)); return end
+            target=vacuum
+        else
+            for _,entry in ipairs(available) do if cash>=entry.Cost then target=entry;break end end
+        end
+        if not target then
+            local cheapest=available[1]
+            for _,entry in ipairs(available) do if entry.Cost<cheapest.Cost then cheapest=entry end end
+            status(string.format("Waiting for cash: $%.2f / $%.2f (%s)",cash,cheapest.Cost,cheapest.Name)); return
+        end
+        remote:FireServer(target.Name)
+        pending={Name=target.Name,Flag=target.Flag,Level=target.Level,Until=os.clock()+3}
+        status(string.format("Requested %s L%d ($%.2f); awaiting confirmation",target.Name,target.Level+1,target.Cost))
+    end
+    return {Tick=function()
+        local ok,err=pcall(tick)
+        if not ok then config=nil; pending=nil; status("Upgrade error; retrying: "..tostring(err)) end
+    end}
+end
+
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
     local function nextVacuum()
@@ -338,6 +421,7 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
                 local level=getLevel(entry.Name)
                 local nextLevel=track and track.Levels and track.Levels[level+1]
                 local cost=nextLevel and tonumber(nextLevel.Cost or 0)
+                if cost then cost=math.round(cost*(tonumber(LocalPlayer:GetAttribute("UpgradeCostMultiplier")) or 1)*100)/100 end
                 if cost and cost>=0 and cost<math.huge and (not best or cost<best.Cost) then
                     best={Name=entry.Name,Level=level,Cost=cost}
                 end
@@ -1515,7 +1599,19 @@ local function bindAfkCameraView()
     releaseAfkCamera()
     return false
 end
+function afkOrbitTelemetry.BeginTeleportRound()
+    if afkOrbitTelemetry.RoundJob == game.JobId then return end
+    releaseAfkCamera()
+    afkOrbitTelemetry.RoundJob = game.JobId
+    afkOrbitAngle = 0
+    afkOrbitLap = 0
+    afkVacuumTargetReady = false
+    afkOrbitTelemetry.LastText = nil
+    afkOrbitTelemetry.Paused = nil
+    print("[AFK Orbit] New teleport session: reset to base-lower | route 1/" .. tostring(#AFK_ORBIT_BANDS))
+end
 local function startAfkCamera()
+    afkOrbitTelemetry.BeginTeleportRound()
     if afkCameraBound or not IN_GAME or not afkFarmModeActive() then return end
     if afkCameraSuspended and afkCameraAnchor then
         bindAfkCameraView()
@@ -1657,6 +1753,7 @@ task.spawn(function()
 end)
 
 task.spawn(function()
+    local scanBusy = false
     local lastHayReadinessScan = -math.huge
     local scanSamples, scanTotalMs, scanMaxMs, scannedHayParts = 0, 0, 0, 0
     local lastPerfReport = os.clock()
@@ -1695,9 +1792,20 @@ task.spawn(function()
                 end
 
                 local now = os.clock()
-                if now - lastHayReadinessScan >= 0.45 then
+                if not scanBusy and now - lastHayReadinessScan >= 0.45 then
                     lastHayReadinessScan = now
+                    scanBusy = true
+                    local scanBand = afkCurrentBand()
+                    task.spawn(function()
                     local scanStart = os.clock()
+                    local cpuMs, sliceStart = 0, scanStart
+                    local function stillCurrent()
+                        return not Unloaded and IN_GAME and afkVacuumOrbitEnabled()
+                            and not needleHasPriority() and not roundEndingVisible()
+                            and LocalPlayer.Character == character and root.Parent ~= nil
+                            and afkCameraAnchor == anchor and afkCurrentBand() == scanBand
+                    end
+                    local scanOK, scanError = pcall(function()
                     local folder = HayFolder
                     if not folder or not folder.Parent then
                         folder = Workspace:FindFirstChild("HaystackClient")
@@ -1705,31 +1813,44 @@ task.spawn(function()
                     end
                     local nearby, checked = false, 0
                     if folder then
-                        local probe = anchor + radial * afkCurrentBand().radius
+                        local probe = anchor + radial * scanBand.radius
                         for _, hay in ipairs(folder:GetChildren()) do
                             checked += 1
-                            if isPileHay(hay) then
-                                local dx, dz = hay.Position.X - probe.X, hay.Position.Z - probe.Z
+                            -- Most pieces are far away; avoid attributes/ancestry until geometry matches.
+                            if hay.Parent == folder and hay:IsA("BasePart") then
+                                local position = hay.Position
+                                local dx, dz = position.X - probe.X, position.Z - probe.Z
                                 if dx * dx + dz * dz <= 12 * 12
-                                    and math.abs(hay.Position.Y - surface) <= 12 then
+                                    and math.abs(position.Y - surface) <= 12 and isPileHay(hay) then
                                     nearby = true
                                     break
                                 end
                             end
+                            if checked % 64 == 0 and os.clock() - sliceStart >= 0.001 then
+                                cpuMs += (os.clock() - sliceStart) * 1000
+                                task.wait()
+                                sliceStart = os.clock()
+                                if not stillCurrent() or folder.Parent == nil then return end
+                            end
                         end
                     end
+                    if not stillCurrent() then return end
                     afkVacuumTargetReady = nearby
-                    local spentMs = (os.clock() - scanStart) * 1000
+                    local spentMs = cpuMs + (os.clock() - sliceStart) * 1000
                     scanSamples += 1
                     scannedHayParts += checked
                     scanTotalMs += spentMs
                     scanMaxMs = math.max(scanMaxMs, spentMs)
                     if now - lastPerfReport >= 30 then
-                        print(string.format("[Perf] v103.00 hay scans=%d, parts examined=%d, average=%.2fms, max=%.2fms per scan",
+                        print(string.format("[Perf] v103.00 hay scans=%d, parts examined=%d, average=%.2fms CPU, max=%.2fms CPU per scan (1ms slices)",
                             scanSamples, scannedHayParts, scanTotalMs / math.max(1, scanSamples), scanMaxMs))
                         scanSamples, scannedHayParts, scanTotalMs, scanMaxMs = 0, 0, 0, 0
                         lastPerfReport = now
                     end
+                    end)
+                    scanBusy = false
+                    if not scanOK then warn("[Hay] Readiness scan failed: " .. tostring(scanError)) end
+                    end)
                 end
             else
                 afkVacuumTargetReady = false
@@ -2201,9 +2322,11 @@ do
     end)
 end
 
+local CollectingTab
+do
 local MainTab = Window:Tab({ Title = "Overview & Settings", Icon = "house" })
 local FarmingSection = Window:Section({ Title = "Farming", Icon = "wheat", Opened = true })
-local CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
+CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
 local SellingTab = FarmingSection:Tab({ Title = "Selling", Icon = "coins" })
 local ToolsTab = FarmingSection:Tab({ Title = "Tools", Icon = "hammer" })
 local NeedleTab = FarmingSection:Tab({ Title = "Needle", Icon = "search" })
@@ -2312,6 +2435,7 @@ do
     AddToggle(UpgradesTab, "UpgGemValue", "Auto Upgrade Gem Value", false)
     AddToggle(UpgradesTab, "UpgHayValue", "Auto Upgrade Hay Value", false)
     AddSlider(UpgradesTab, "PermInterval", "Permanent Loop (s)", 0.5, 5, 1, 0.1)
+    afkOrbitTelemetry.UpgradeStatus=UpgradesTab:Paragraph({Title="Auto Upgrade Status",Desc="Waiting for upgrade check"})
     Header(UpgradesTab, "Hand (Cash)")
     AddToggle(UpgradesTab, "UpgHandSpeed", "Auto Hand Speed", false)
     AddToggle(UpgradesTab, "UpgHandGrab", "Auto Hand Grasp", false)
@@ -3289,6 +3413,8 @@ do
         end)
     end
 end
+
+end -- release menu construction locals before installing farming workers
 
 task.spawn(function()
     while not Unloaded do
@@ -4450,30 +4576,20 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while not Unloaded do
-        task.wait(3)
-        if not IN_GAME then break end
-        vacuumUpgradePriority.Purchase()
-        if State.UpgCapacity then tryBuyTrack("Capacity") end
-        if State.UpgHandSpeed then tryBuyTrack("Speed") end
-        if State.UpgHandGrab then tryBuyTrack("Grab") end
-        if State.UpgHandHold then tryBuyTrack("HandHold") end
-        if State.UpgTntLuck then tryBuyTrack("TntLuck") end
-        if State.UpgTntCooldown then tryBuyTrack("TntCooldown") end
-        if State.UpgTntPower then tryBuyTrack("TntPower") end
-        if State.UpgPitchCooldown then tryBuyTrack("PitchforkCooldown") end
-        if State.UpgPitchHold then tryBuyTrack("PitchforkHold") end
-        if State.UpgPitchSweep then tryBuyTrack("Pitchfork") end
-        if State.UpgDroneSpeed then tryBuyTrack("DroneSpeed") end
-        if State.UpgDroneGrab then tryBuyTrack("DroneGrab") end
-        if State.UpgDroneCapacity then tryBuyTrack("DroneCapacity") end
-        if State.UpgVacPower then tryBuyTrack("VacuumPower") end
-        if State.UpgVacCooling then tryBuyTrack("VacuumCooling") end
-        if State.UpgVacRuntime then tryBuyTrack("VacuumRuntime") end
-    end
-end)
-
+do
+    local upgrades=createAutoUpgradeRuntime({
+        State=State,Player=LocalPlayer,Cash=getCash,
+        Folder=function() NeedleHaystack=ReplicatedStorage:FindFirstChild("NeedleHaystack");return NeedleHaystack end,
+        OnConfig=function(config) GameConfig=config end,
+        Status=function(text) if afkOrbitTelemetry.UpgradeStatus then afkOrbitTelemetry.UpgradeStatus:SetDesc(text) end end,
+    })
+    task.spawn(function()
+        while not Unloaded do
+            if IN_GAME then upgrades.Tick() end
+            task.wait(0.75)
+        end
+    end)
+end
 task.spawn(function()
     while not Unloaded do
         task.wait(300)
@@ -4689,3 +4805,4 @@ task.spawn(function()
         end
     end
 end)
+

@@ -1698,7 +1698,7 @@ end
         spawnChapterWorker(function()
             while not hubUnloaded do
                 upgrades.Tick()
-                task.wait(0.75)
+                task.wait(0.25)
             end
         end)
     end

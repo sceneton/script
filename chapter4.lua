@@ -464,6 +464,7 @@ local function createCandleAutomation(options)
     local player=options.Player
     local alive,busy,keyHeld=false,false,false
     local altar,remotes,holder,character
+    local batchAltar,batchStarted,lastFound,lastLit=nil,false,0,0
     local lastStatus,lastWarning=nil,-math.huge
     local controller={}
     alive=true
@@ -610,6 +611,12 @@ local function createCandleAutomation(options)
     function controller.Tick()
         if not alive or not options.Alive()then return end
         altar=workspace:FindFirstChild("WhereToPlaceCandles")
+        local found=altar and tonumber(altar:GetAttribute("CandlesFound"))or 0
+        local lit=altar and tonumber(altar:GetAttribute("CandlesLit"))or 0
+        if altar~=batchAltar or found<lastFound or lit<lastLit then
+            batchAltar=altar;batchStarted=false
+        end
+        lastFound,lastLit=found,lit
         if not options.Enabled()then status("Disabled");return end
         if not options.MenuClosed()then status("Paused while menu is open");return end
         if options.Blocked()then status("Paused for cutscene or input lock");return end
@@ -623,8 +630,22 @@ local function createCandleAutomation(options)
         if not character or not character.Parent or not character:FindFirstChild("HumanoidRootPart")then status("Waiting for character");return end
         holder=findHolder(true)
         local candle
+        local carrying=player:GetAttribute("CarryingCandle")~=nil
+        if holder or carrying then batchStarted=true end
+        local folder=workspace:FindFirstChild("HayCandles")
+        if not batchStarted then
+            local exposed=0
+            if folder then
+                for _,candidate in ipairs(folder:GetChildren())do
+                    if loose(candidate)then exposed+=1 end
+                end
+            end
+            local total=math.max(1,tonumber(altar:GetAttribute("CandlesTotal"))or 4)
+            local ready=math.min(total,found+exposed)
+            if ready<total then status(string.format("Waiting for all candles to be exposed (%d/%d ready)",ready,total));return end
+            batchStarted=true
+        end
         if not holder and player:GetAttribute("CarryingCandle")==nil then
-            local folder=workspace:FindFirstChild("HayCandles")
             if folder then for _,candidate in ipairs(folder:GetChildren())do if loose(candidate)then candle=candidate;break end end end
             if not candle then status("Waiting for an exposed candle");return end
         end
@@ -636,7 +657,7 @@ local function createCandleAutomation(options)
                 place()
             end
             light()
-            status(altar:GetAttribute("AllLit")==true and "All candles completed" or "Candle completed; waiting for next exposure")
+            status(altar:GetAttribute("AllLit")==true and "All candles completed" or "Candle completed; continuing batch")
         end,function(e)return tostring(e)end)
         releaseKey()
         if not ok then

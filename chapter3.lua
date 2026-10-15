@@ -394,6 +394,72 @@ local function createAutoUpgradeRuntime(options)
     end}
 end
 
+local function createTntRetryGate(getRemote, getCooldown)
+    local remote, connection
+    local alive, nextLightAt, phase, expiresAt = true, 0, nil, 0
+    local function cooldown()
+        local value=tonumber(getCooldown())
+        return value and value==value and value>0 and value<math.huge and value or 20
+    end
+    local function bind()
+        if not alive then return false end
+        local current=getRemote()
+        if not current or not current:IsA("RemoteEvent") then return false end
+        if current~=remote then
+            if connection then connection:Disconnect() end
+            remote=current; phase=nil; nextLightAt=0
+            connection=remote.OnClientEvent:Connect(function(action,value)
+                local now=os.clock()
+                if action=="denied" then
+                    local remaining=tonumber(value)
+                    if not remaining or remaining~=remaining or remaining<0 or remaining==math.huge then remaining=1 end
+                    nextLightAt=now+remaining+0.05
+                    phase=nil
+                elseif action=="lit" then
+                    nextLightAt=now+cooldown()+0.05
+                    if phase=="waiting" then
+                        phase="lit"
+                        local fuse=tonumber(value)
+                        expiresAt=now+((fuse and fuse>0 and fuse<math.huge) and fuse or 2.9)
+                    end
+                end
+            end)
+        end
+        return true
+    end
+    local gate={}
+    function gate.Remaining() return math.max(0,nextLightAt-os.clock()) end
+    function gate.Ready() return bind() and os.clock()>=nextLightAt end
+    function gate.Light()
+        if not gate.Ready() then return false end
+        phase="waiting"
+        nextLightAt=os.clock()+cooldown()+0.05 -- Lost acknowledgements must not cause rapid retries.
+        local ok=pcall(remote.FireServer,remote,"light")
+        if not ok then phase=nil;nextLightAt=os.clock()+1;return false end
+        local deadline=os.clock()+2
+        while alive and phase=="waiting" and os.clock()<deadline do task.wait(0.03) end
+        if not alive or phase~="lit" then phase=nil;return false end
+        task.wait(0.4)
+        return alive and phase=="lit" and os.clock()<expiresAt
+    end
+    function gate.Throw(...)
+        if not alive or phase~="lit" or os.clock()>=expiresAt then return false end
+        phase=nil -- Exactly one throw for a confirmed lighting request.
+        return pcall(remote.FireServer,remote,"throw",...)
+    end
+    function gate.Stop()
+        alive=false;phase=nil
+        if connection then connection:Disconnect();connection=nil end
+    end
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        gate.Stop()
+        if previous then pcall(previous) end
+    end
+    bind()
+    return gate
+end
+
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
     local function nextVacuum()
@@ -1143,6 +1209,8 @@ end
             end
         end
     end)
+    do
+    local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end)
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
@@ -1156,13 +1224,11 @@ end
                     and LocalPlayer:GetAttribute("DroneDeployed")~=true then
                     sendFarmRemote("DeployDrone")
                 end
-                if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true then
-                    sendFarmRemote("TntAction","light")
-                    task.wait(0.4)
-                    if not farmBlocked() and not needlePriority() then
+                if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Light() then
+                    if sharedFarmState.AutoUseTNT and not farmBlocked() and not needlePriority() then
                         local camera=Workspace.CurrentCamera
                         if camera then
-                            sendFarmRemote("TntAction","throw",camera.CFrame,
+                            tntRetry.Throw(camera.CFrame,
                                 camera.CFrame.LookVector*40+Vector3.new(0,8,0))
                         end
                     end
@@ -1170,6 +1236,7 @@ end
             end
         end
     end)
+    end
     local vacuumWatchdog=createVacuumHeatWatchdog()
     local lastVacuumRecoveryWarning=-math.huge
     local forceVacuumReselect=false
@@ -4220,6 +4287,7 @@ end
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end
+
 
 
 

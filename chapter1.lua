@@ -228,11 +228,13 @@ end
 
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(false, true)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
+local earlyIntroPending, stopEarlyIntro
+do
 local earlyIntroRunning = true
-local earlyIntroPending = false
+earlyIntroPending = false
 local earlyIntroGui, earlyIntroConnection
 local earlyIntroButtons = setmetatable({}, {__mode="k"})
-local function stopEarlyIntro()
+stopEarlyIntro = function()
     earlyIntroRunning = false; earlyIntroPending = false
     if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
     table.clear(earlyIntroButtons)
@@ -315,6 +317,8 @@ task.spawn(function()
     end
     stopEarlyIntro()
 end)
+
+end -- intro private state remains captured by its callbacks
 
 local selectCollectHay,stopCollectHay=createPitchforkSelector(false,true)
 local selectDroppedHay,stopDroppedHay=createPitchforkSelector(true,false,{FolderName="DroppedHay",ObjectId=true,Range=28,ReturnObject=true,Recursive=false,AllowContainers=true})
@@ -2201,9 +2205,11 @@ do
     end)
 end
 
+local CollectingTab
+do
 local MainTab = Window:Tab({ Title = "Overview & Settings", Icon = "house" })
 local FarmingSection = Window:Section({ Title = "Farming", Icon = "wheat", Opened = true })
-local CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
+CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
 local SellingTab = FarmingSection:Tab({ Title = "Selling", Icon = "coins" })
 local ToolsTab = FarmingSection:Tab({ Title = "Tools", Icon = "hammer" })
 local NeedleTab = FarmingSection:Tab({ Title = "Needle", Icon = "search" })
@@ -3289,6 +3295,8 @@ do
         end)
     end
 end
+
+end -- release menu construction locals before installing farming workers
 
 task.spawn(function()
     while not Unloaded do
@@ -4689,3 +4697,4 @@ task.spawn(function()
         end
     end
 end)
+

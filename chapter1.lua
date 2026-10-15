@@ -610,10 +610,6 @@ local function defaultState()
         UpgPitchCooldown = false, UpgPitchHold = false, UpgPitchSweep = false,
         UpgDroneSpeed = false, UpgDroneGrab = false, UpgDroneCapacity = false,
         UpgVacPower = false, UpgVacCooling = false, UpgVacRuntime = false,
-        ArcadeFarm = false,
-        ClassRoller = false,
-        ClassTarget = "The Chosen One",
-        ClassRollInterval = 1.1,
         AutoFarmWins = false,
     }
 end
@@ -1006,7 +1002,7 @@ local SAVE_WHITELIST = {
     UpgPitchCooldown = true, UpgPitchHold = true, UpgPitchSweep = true,
     UpgDroneSpeed = true, UpgDroneGrab = true, UpgDroneCapacity = true,
     UpgVacPower = true, UpgVacCooling = true, UpgVacRuntime = true,
-    ClassRollInterval = true, AutoFarmWins = true,
+    AutoFarmWins = true,
 }
 
 local function AddToggle(tab, key, title, default, desc, callback)
@@ -1051,15 +1047,6 @@ if IN_GAME then
     TntAction = NeedleHaystack:WaitForChild("TntAction")
     NeedleHandIn = NeedleHaystack:WaitForChild("NeedleHandIn")
 end
-
-local ArcadeFolder = ReplicatedStorage:FindFirstChild("Arcade")
-local ArcadeReport = ArcadeFolder and ArcadeFolder:FindFirstChild("ArcadeReport")
-local ArcadeSession = ArcadeFolder and ArcadeFolder:FindFirstChild("ArcadeSession")
-local ArcadeMachine = Workspace:FindFirstChild("Arcade Machine")
-local ArcadePrompt = ArcadeMachine and ArcadeMachine:FindFirstChild("PlayPrompt", true)
-
-local ClassSystem = ReplicatedStorage:FindFirstChild("ClassSystem")
-local RollClass = ClassSystem and ClassSystem:FindFirstChild("RollClass")
 
 local HayFolder = Workspace:FindFirstChild("HaystackClient")
 local DroppedFolder = Workspace:FindFirstChild("DroppedHay")
@@ -2399,7 +2386,6 @@ local NeedleTab = FarmingSection:Tab({ Title = "Needle", Icon = "search" })
 local InventorySection = Window:Section({ Title = "Inventory", Icon = "backpack", Opened = true })
 local ShopTab = InventorySection:Tab({ Title = "Shop Items", Icon = "shopping-cart" })
 local UpgradesTab = InventorySection:Tab({ Title = "Upgrades", Icon = "trending-up" })
-local ExploitTab = Window:Tab({ Title = "Exploit", Icon = "zap" })
 local SettingsTab = MainTab
 
 do
@@ -2524,31 +2510,6 @@ do
     AddToggle(UpgradesTab, "UpgVacRuntime", "Auto Vacuum Runtime", false)
     Header(UpgradesTab, "Capacity (Cash)")
     AddToggle(UpgradesTab, "UpgCapacity", "Auto Upgrade Carry Capacity", false)
-end
-
-do
-    Header(ExploitTab, "Lobby Exploits")
-
-    Registry.ArcadeFarm = ExploitTab:Toggle({
-        Title = "Arcade Gem Farm",
-        Value = false,
-        Callback = function(v) State.ArcadeFarm = v end,
-    })
-
-    Registry.ClassRoller = ExploitTab:Toggle({
-        Title = "Auto Class Roller",
-        Value = false,
-        Callback = function(v) State.ClassRoller = v end,
-    })
-
-    local targetDropdown = ExploitTab:Dropdown({
-        Title = "Target Class",
-        Values = { "The Chosen One", "Ultimate Farmer", "Hoover", "Drone Specialist", "Prospector" },
-        Value = "The Chosen One",
-        Callback = function(v) State.ClassTarget = v end,
-    })
-    Registry.ClassTarget = targetDropdown
-    AddSlider(ExploitTab, "ClassRollInterval", "Roll Interval (s)", 0.5, 3, 1.1, 0.1)
 end
 
 do
@@ -4670,79 +4631,6 @@ task.spawn(function()
     end
 end)
 
-local KILLS_PER_CYCLE  = 6
-local CYCLES_PER_YIELD = 10
-local YIELD_DURATION   = 0.001
-
-local function fastLeave()
-    local sg = LocalPlayer.PlayerGui:FindFirstChild("ArcadeScreen")
-    if sg then sg.Enabled = false end
-
-    pcall(function()
-        LocalPlayer:SetAttribute("ArcadePlaying", nil)
-        LocalPlayer:SetAttribute("NeedleInputLocked", nil)
-    end)
-
-    local char = LocalPlayer.Character
-    if char then
-        local hum = char:FindFirstChildOfClass("Humanoid")
-        if hum then
-            hum.WalkSpeed = 16
-            hum.JumpPower = 50
-        end
-    end
-
-    local cam = workspace.CurrentCamera
-    if cam then cam.CameraType = Enum.CameraType.Custom end
-    pcall(function() ArcadeSession:FireServer("quit", 0, 0) end)
-end
-
-local function arcadeCycle()
-    pcall(function() fireproximityprompt(ArcadePrompt) end)
-    for i = 1, KILLS_PER_CYCLE do
-        pcall(function() ArcadeReport:FireServer("kills", 40, 0) end)
-    end
-    fastLeave()
-end
-
-task.spawn(function()
-    local cycles = 0
-    while not Unloaded do
-        if IN_GAME then
-
-            if State.ArcadeFarm then
-                State.ArcadeFarm = false
-                Notify("Arcade", "Lobby only.", 3, "x")
-            end
-            task.wait(0.1)
-        elseif State.ArcadeFarm and ArcadePrompt and ArcadeReport then
-            cycles = cycles + 1
-            arcadeCycle()
-            if cycles % CYCLES_PER_YIELD == 0 then
-                task.wait(YIELD_DURATION)
-            end
-        else
-            task.wait(0.1)
-        end
-    end
-end)
-
-task.spawn(function()
-    while not Unloaded do
-        task.wait(tonumber(State.ClassRollInterval) or 1.1)
-        if IN_GAME then
-            if State.ClassRoller then State.ClassRoller = false; Notify("Roller", "Lobby only.", 3, "x") end
-        else
-            if State.ClassRoller and RollClass then
-                local ok, result = pcall(function() return RollClass:InvokeServer() end)
-                if ok and type(result) == "table" and result.success and result.className == State.ClassTarget then
-                    Notify("Class Roller", "FOUND: "..result.className, 5, "check")
-                end
-            end
-        end
-    end
-end)
-
 pcall(function()
     task.defer(function()
         if not Unloaded then pcall(function() CollectingTab:Select() end) end
@@ -4874,5 +4762,6 @@ task.spawn(function()
         end
     end
 end)
+
 
 

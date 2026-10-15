@@ -1475,6 +1475,21 @@ local function releaseAfkCamera()
 end
 
 local function measureAfkBandSurfaces(center)
+    -- Rendered hay can initially contain only the upper pieces, and shrinks as it is cleared.
+    -- Use the chapter's configured pile bounds so fixed routes cannot float upward.
+    if GameConfig and typeof(GameConfig.PILE_CENTER)=="Vector3"
+        and tonumber(GameConfig.PILE_HEIGHT) and tonumber(GameConfig.PILE_HEIGHT)>0 then
+        local floorY=GameConfig.PILE_CENTER.Y+(tonumber(GameConfig.PILE_BASE_Y)or 0)
+        local height=tonumber(GameConfig.PILE_HEIGHT)
+        local fractions={0.12,0.12,0.12,0.12,0.12,0.12,0.12,0.12,0.24,0.36,0.495,0.63,0.755,0.88,0.97}
+        local surfaces,labels={},{}
+        for i,band in ipairs(AFK_ORBIT_BANDS)do
+            surfaces[i]=floorY+height*fractions[i]+(band.heightOffset or 0)
+            labels[i]=string.format("%s=%.1f",band.name,surfaces[i])
+        end
+        print("[AFK Orbit] Configured fixed level heights: "..table.concat(labels," "))
+        return surfaces,floorY+height
+    end
     local folder = HayFolder
     if not folder or not folder.Parent then
         folder = Workspace:FindFirstChild("HaystackClient")
@@ -1670,7 +1685,7 @@ local function startAfkCamera()
         bindAfkCameraView()
         return
     end
-    local center = getHaystackCenter()
+    local center = (GameConfig and typeof(GameConfig.PILE_CENTER)=="Vector3" and GameConfig.PILE_CENTER)or getHaystackCenter()
     local cam = Workspace.CurrentCamera
     if not center or not cam then return end
     afkCameraAnchor = center
@@ -4762,6 +4777,7 @@ task.spawn(function()
         end
     end
 end)
+
 
 
 

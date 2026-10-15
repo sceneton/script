@@ -1,8 +1,33 @@
+local function createPumpkinWeakpointResolver(spots)
+    local cachedRoot,bones=nil,{}
+    return function(root,name,origin)
+        if root~=cachedRoot then cachedRoot=root;table.clear(bones)end
+        local spec=spots[name]
+        if not spec or not root then return nil,"Unknown region: "..tostring(name)end
+        local pair={}
+        for i=1,2 do
+            local bone=bones[spec[i]]
+            if not bone or not bone:IsDescendantOf(root)then
+                bone=root:FindFirstChild(spec[i],true)
+                if not bone or not bone:IsA("Bone")then return nil,"Missing region bone: "..tostring(spec[i])end
+                bones[spec[i]]=bone
+            end
+            pair[i]=bone
+        end
+        local centre=pair[1].TransformedWorldCFrame.Position:Lerp(pair[2].TransformedWorldCFrame.Position,spec[3]or 0.5)
+        local delta=origin-centre
+        local radius=spec[4]or 1.6
+        local surface=centre
+        if delta.Magnitude>=0.05 then surface=centre+delta.Unit*math.min(radius+0.5,math.max(0,delta.Magnitude-1.2))end
+        return surface,{centre=centre,surface=surface,firstBone=pair[1]:GetFullName(),secondBone=pair[2]:GetFullName(),fraction=spec[3],bodyRadius=radius}
+    end
+end
+
 local function createBossWeakpointPitchfork(options)
     local player,world=options.Player,options.World
     local active,nextSend,boss,root=true,0,nil,nil
     local bones,lastStatus={},nil
-    local excluded={Sleeping=true,Intro=true,Rising=true,Falling=true,Returning=true,Unavailable=true,Defeated=true}
+    local excluded={Sleeping=true,Intro=true,Rising=true,Falling=true,Returning=true,Unavailable=true,Defeated=true,PhaseTransition=true}
     local controller={}
     local function status(text)
         if text~=lastStatus then lastStatus=text;options.Status(text)end
@@ -24,7 +49,7 @@ local function createBossWeakpointPitchfork(options)
         local body=rig:FindFirstChild("RootPart")
         if rig~=boss or body~=root then boss,root=rig,body;table.clear(bones);nextSend=0 end
         local now=world:GetServerTimeNow()
-        for _,flag in ipairs({"BossHeld","BossRagdolled","BossRagdollRecovering","BossKnockdownCamera"})do
+        for _,flag in ipairs({"PumpkinSnared","PumpkinGrabbed","PumpkinPulled","BossHeld","BossRagdolled","BossRagdollRecovering","BossKnockdownCamera"})do
             if player:GetAttribute(flag)==true then status("Waiting: "..flag);return end
         end
         if now<(tonumber(player:GetAttribute("BossStunnedUntil"))or 0)then status("Waiting for stun to end");return end
@@ -38,13 +63,9 @@ local function createBossWeakpointPitchfork(options)
         local head=character and character:FindFirstChild("Head")
         local humanoid=character and character:FindFirstChildOfClass("Humanoid")
         if not head or not humanoid or humanoid.Health<=0 or not body then status("Waiting for character or boss body");return end
-        local bone=bones[name]
-        if not bone or not bone:IsDescendantOf(body)then
-            bone=body:FindFirstChild(name,true)
-            if not bone or not bone:IsA("Bone")then status("Waiting for weak-point bone: "..name);return end
-            bones[name]=bone
-        end
-        local direction=bone.TransformedWorldCFrame.Position-head.Position
+        local target,details=options.ResolveTarget(body,name,head.Position)
+        if not target then status(tostring(details));return end
+        local direction=target-head.Position
         local range=math.clamp(tonumber(player:GetAttribute("PitchforkReach"))or 13,13,24)
         if direction.Magnitude>range then status(string.format("Move closer to %s (%.1f / %.1f studs)",name,direction.Magnitude,range));return end
         if direction.Magnitude<0.01 then return end
@@ -73,7 +94,12 @@ local active,enabled=true,true
 local started=os.clock()
 local connections={}
 local SAVE_PATH="BeyyHub/chapter4_weakpoint_pitchfork_test.json"
-local trace={version=1,placeId=game.PlaceId,jobId=game.JobId,startedUtc=os.time(),events={},samples={},
+local pumpkin=RS:FindFirstChild("PumpkinBoss")
+local configModule=pumpkin and pumpkin:FindFirstChild("Config")
+local configOK,config=pcall(function()return require(configModule)end)
+assert(configOK and type(config)=="table"and config.WeakPoint and config.WeakPoint.Spots,"PumpkinBoss weak-point config unavailable")
+local resolveTarget=createPumpkinWeakpointResolver(config.WeakPoint.Spots)
+local trace={version=2,placeId=game.PlaceId,jobId=game.JobId,startedUtc=os.time(),events={},samples={},
     attempts=0,requestsSent=0,confirmedPitchforkHits=0,reportedDamage=0,grades={},droppedEvents=0,droppedSamples=0}
 local lastStatus,lastPrinted="Starting",nil
 local controller,gui,label,counts,toggle
@@ -82,7 +108,7 @@ local lastAttempt,nextSample,nextSave= nil,0,0
 local flags={"PitchforkOwned","PitchforkReach","PitchforkCooldown","PitchforkPhase","PitchforkHoldEnabled",
     "BossEquippedSlot","NeedleEquippedSlot","BossHeld","BossRagdolled","BossRagdollRecovering",
     "BossKnockdownCamera","BossStunnedUntil","NeedleInputLocked","CutsceneActive","HintViewerOpen",
-    "CarryingCandle","VacuumActive","VacuumHeat"}
+    "CarryingCandle","VacuumActive","VacuumHeat","PumpkinSnared","PumpkinGrabbed","PumpkinPulled"}
 local function encode(value,depth,seen)
     depth=depth or 0;seen=seen or {}
     local kind=typeof(value)
@@ -122,17 +148,16 @@ local function snapshot()
     local boss=WS:FindFirstChild("PumpkinGolem_Rig")
     local root=boss and boss:FindFirstChild("RootPart")
     local name=boss and boss:GetAttribute("BossWeakPoint")
-    local bone=root and type(name)=="string"and root:FindFirstChild(name,true)
     local character=player.Character
     local head=character and character:FindFirstChild("Head")
     local humanoid=character and character:FindFirstChildOfClass("Humanoid")
     local attributes={}
     for _,key in ipairs(flags)do attributes[key]=player:GetAttribute(key)end
-    local target=bone and bone:IsA("Bone")and bone.TransformedWorldCFrame.Position
+    local target,region
+    if root and type(name)=="string"and head then target,region=resolveTarget(root,name,head.Position)end
     return {status=lastStatus,enabled=enabled,boss=boss and boss:GetAttributes(),bossPath=boss and boss:GetFullName(),
         player=attributes,health=humanoid and humanoid.Health,origin=head and head.Position,
-        target=target,bonePath=bone and bone:GetFullName(),boneClass=bone and bone.ClassName,
-        boneWorldPosition=bone and bone:IsA("Bone")and bone.WorldPosition,
+        target=target,region=region,
         distance=target and head and (target-head.Position).Magnitude,
         reach=math.clamp(tonumber(player:GetAttribute("PitchforkReach"))or 13,13,24),
         cooldown=math.max(0.1,tonumber(player:GetAttribute("PitchforkCooldown"))or 0.85)}
@@ -158,7 +183,7 @@ local function stop()
     print("[C4 Pitchfork Test] Stopped. "..(ok and "Saved "or "Save unavailable: ")..path)
 end
 local function watchFeedback()
-    local fight=RS:FindFirstChild("BossFight")
+    local fight=RS:FindFirstChild("PumpkinBoss")
     local remote=fight and fight:FindFirstChild("Feedback")
     if remote==watchedFeedback then return end
     if feedbackConnection then feedbackConnection:Disconnect();feedbackConnection=nil end
@@ -208,7 +233,7 @@ function proxy:FireServer(kind,origin,direction)
         if active then record("attempt_followup",{id=attempt.id,snapshot=snapshot(),totalServerHits=trace.confirmedPitchforkHits})end
     end)
 end
-controller=createBossWeakpointPitchfork({Player=player,World=WS,
+controller=createBossWeakpointPitchfork({Player=player,World=WS,ResolveTarget=resolveTarget,
     Enabled=function()return active and enabled end,
     Blocked=function()return player:GetAttribute("NeedleInputLocked")==true or player:GetAttribute("CutsceneActive")==true
         or player:GetAttribute("HintViewerOpen")==true or player:GetAttribute("CarryingCandle")~=nil

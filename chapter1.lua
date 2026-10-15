@@ -329,6 +329,85 @@ local function setReplayStatus(text)
     replayStatusText=text
     if replayStatus then replayStatus:SetDesc(text) end
 end
+local function createAutoUpgradeRuntime(options)
+    local config, configModule, pending
+    local tracks = {
+        {"UpgVacPower","VacuumPower"},{"UpgVacCooling","VacuumCooling"},
+        {"UpgVacRuntime","VacuumRuntime"},{"UpgTntCooldown","TntCooldown"},
+        {"UpgTntPower","TntPower"},{"UpgTntLuck","TntLuck"},
+        {"UpgCapacity","Capacity"},{"UpgHandSpeed","Speed"},{"UpgHandGrab","Grab"},{"UpgHandHold","HandHold"},
+        {"UpgPitchCooldown","PitchforkCooldown"},{"UpgPitchHold","PitchforkHold"},{"UpgPitchSweep","Pitchfork"},
+        {"UpgDroneSpeed","DroneSpeed"},{"UpgDroneGrab","DroneGrab"},{"UpgDroneCapacity","DroneCapacity"},
+    }
+    local function status(text) options.Status(text) end
+    local function level(name) return tonumber(options.Player:GetAttribute("HayUpgrade"..name)) or 1 end
+    local function cost(name, entry)
+        local price=tonumber(entry.Cost)
+        if not price or price<0 or price~=price or price==math.huge then return nil end
+        price*=tonumber(options.Player:GetAttribute("UpgradeCostMultiplier")) or 1
+        if name:sub(1,9)=="Pitchfork" then price*=tonumber(options.Player:GetAttribute("PitchforkUpgradeCostMultiplier")) or 1 end
+        return math.round(price*100)/100
+    end
+    local function tick()
+        local folder=options.Folder()
+        local module=folder and folder:FindFirstChild("Config")
+        local remote=folder and folder:FindFirstChild("BuyUpgrade")
+        if not module or not remote or not remote:IsA("RemoteEvent") then status("Waiting for upgrade config / remote"); return end
+        if configModule~=module or not config then
+            local loaded=require(module)
+            assert(type(loaded)=="table" and type(loaded.UPGRADE_TRACKS)=="table","Invalid upgrade config")
+            config,configModule=loaded,module
+            if options.OnConfig then options.OnConfig(loaded) end
+        end
+        if pending then
+            if level(pending.Name)~=pending.Level or not options.State[pending.Flag] then pending=nil
+            elseif os.clock()<pending.Until then status("Waiting for "..pending.Name.." purchase confirmation"); return
+            else
+                status("Server did not confirm "..pending.Name.."; retrying")
+                pending=nil
+                return
+            end
+        end
+        local cash=tonumber(options.Cash()) or 0
+        local selected, available, vacuum=0,{},nil
+        for _,entry in ipairs(tracks) do
+            if options.State[entry[1]] then
+                selected+=1
+                local track=config.UPGRADE_TRACKS[entry[2]]
+                local current=level(entry[2])
+                local nextLevel=track and track.Levels and track.Levels[current+1]
+                local price=nextLevel and cost(entry[2],nextLevel)
+                if price then
+                    local target={Flag=entry[1],Name=entry[2],Level=current,Cost=price}
+                    available[#available+1]=target
+                    if (entry[2]=="VacuumPower" or entry[2]=="VacuumCooling") and (not vacuum or price<vacuum.Cost) then vacuum=target end
+                end
+            end
+        end
+        if selected==0 then status("No cash upgrades enabled"); return end
+        if #available==0 then status("Selected cash upgrades are maxed or unavailable"); return end
+        local target
+        if vacuum and cash>=vacuum.Cost*0.75 then
+            if cash<vacuum.Cost then status(string.format("Saving for %s: $%.2f / $%.2f",vacuum.Name,cash,vacuum.Cost)); return end
+            target=vacuum
+        else
+            for _,entry in ipairs(available) do if cash>=entry.Cost then target=entry;break end end
+        end
+        if not target then
+            local cheapest=available[1]
+            for _,entry in ipairs(available) do if entry.Cost<cheapest.Cost then cheapest=entry end end
+            status(string.format("Waiting for cash: $%.2f / $%.2f (%s)",cash,cheapest.Cost,cheapest.Name)); return
+        end
+        remote:FireServer(target.Name)
+        pending={Name=target.Name,Flag=target.Flag,Level=target.Level,Until=os.clock()+3}
+        status(string.format("Requested %s L%d ($%.2f); awaiting confirmation",target.Name,target.Level+1,target.Cost))
+    end
+    return {Tick=function()
+        local ok,err=pcall(tick)
+        if not ok then config=nil; pending=nil; status("Upgrade error; retrying: "..tostring(err)) end
+    end}
+end
+
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
     local function nextVacuum()
@@ -342,6 +421,7 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
                 local level=getLevel(entry.Name)
                 local nextLevel=track and track.Levels and track.Levels[level+1]
                 local cost=nextLevel and tonumber(nextLevel.Cost or 0)
+                if cost then cost=math.round(cost*(tonumber(LocalPlayer:GetAttribute("UpgradeCostMultiplier")) or 1)*100)/100 end
                 if cost and cost>=0 and cost<math.huge and (not best or cost<best.Cost) then
                     best={Name=entry.Name,Level=level,Cost=cost}
                 end
@@ -2355,6 +2435,7 @@ do
     AddToggle(UpgradesTab, "UpgGemValue", "Auto Upgrade Gem Value", false)
     AddToggle(UpgradesTab, "UpgHayValue", "Auto Upgrade Hay Value", false)
     AddSlider(UpgradesTab, "PermInterval", "Permanent Loop (s)", 0.5, 5, 1, 0.1)
+    afkOrbitTelemetry.UpgradeStatus=UpgradesTab:Paragraph({Title="Auto Upgrade Status",Desc="Waiting for upgrade check"})
     Header(UpgradesTab, "Hand (Cash)")
     AddToggle(UpgradesTab, "UpgHandSpeed", "Auto Hand Speed", false)
     AddToggle(UpgradesTab, "UpgHandGrab", "Auto Hand Grasp", false)
@@ -4495,30 +4576,20 @@ task.spawn(function()
     end
 end)
 
-task.spawn(function()
-    while not Unloaded do
-        task.wait(3)
-        if not IN_GAME then break end
-        vacuumUpgradePriority.Purchase()
-        if State.UpgCapacity then tryBuyTrack("Capacity") end
-        if State.UpgHandSpeed then tryBuyTrack("Speed") end
-        if State.UpgHandGrab then tryBuyTrack("Grab") end
-        if State.UpgHandHold then tryBuyTrack("HandHold") end
-        if State.UpgTntLuck then tryBuyTrack("TntLuck") end
-        if State.UpgTntCooldown then tryBuyTrack("TntCooldown") end
-        if State.UpgTntPower then tryBuyTrack("TntPower") end
-        if State.UpgPitchCooldown then tryBuyTrack("PitchforkCooldown") end
-        if State.UpgPitchHold then tryBuyTrack("PitchforkHold") end
-        if State.UpgPitchSweep then tryBuyTrack("Pitchfork") end
-        if State.UpgDroneSpeed then tryBuyTrack("DroneSpeed") end
-        if State.UpgDroneGrab then tryBuyTrack("DroneGrab") end
-        if State.UpgDroneCapacity then tryBuyTrack("DroneCapacity") end
-        if State.UpgVacPower then tryBuyTrack("VacuumPower") end
-        if State.UpgVacCooling then tryBuyTrack("VacuumCooling") end
-        if State.UpgVacRuntime then tryBuyTrack("VacuumRuntime") end
-    end
-end)
-
+do
+    local upgrades=createAutoUpgradeRuntime({
+        State=State,Player=LocalPlayer,Cash=getCash,
+        Folder=function() NeedleHaystack=ReplicatedStorage:FindFirstChild("NeedleHaystack");return NeedleHaystack end,
+        OnConfig=function(config) GameConfig=config end,
+        Status=function(text) if afkOrbitTelemetry.UpgradeStatus then afkOrbitTelemetry.UpgradeStatus:SetDesc(text) end end,
+    })
+    task.spawn(function()
+        while not Unloaded do
+            if IN_GAME then upgrades.Tick() end
+            task.wait(0.75)
+        end
+    end)
+end
 task.spawn(function()
     while not Unloaded do
         task.wait(300)

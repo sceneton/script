@@ -77,3 +77,21 @@ Local executor files:
 Pending reports survive normal re-execution and teleports. Confirmed deliveries are removed from the queue; HTTP failures retry, respecting Discord's retry_after on HTTP 429. A lost HTTP response after Discord accepts a message can still cause a duplicate retry; the record ID in the footer identifies the observed increase. Disabling Discord Win Reports pauses sending while local tracking continues. Requires executor filesystem and HTTP request support.
 
 Uses [Discord Execute Webhook](https://docs.discord.com/developers/resources/webhook#execute-webhook) with wait=true for delivery confirmation, and [Discord rate-limit retry guidance](https://docs.discord.com/developers/topics/rate-limits). The webhook is never embedded in the public source.
+
+## Weekly lobby leaderboard tracking
+
+Overview & Settings in the lobby includes Weekly Leaderboard Tracking (enabled by default), Capture Leaderboards Now, and Leaderboard Tracker Status. On each lobby execution, the tracker selects WEEKLY on the existing wins-board UI and saves one stable snapshot of its loaded rows plus the current clan's displayed member wins. The prior clan tab is restored. Clan wins are explicitly labelled as an unspecified period, not weekly wins. The snapshot does not force a server refresh or include players absent from the loaded leaderboard.
+
+Auto Farm Wins waits for the first capture, up to 20 seconds, before creating a round. Collection retries for up to 60 seconds if the account stays in the lobby; it does not continually poll or repost after success. Disabling the tracker releases the lobby wait and pauses leaderboard deliveries. The manual capture button starts another snapshot attempt.
+
+Snapshots use the existing local BeyyHub/wins_webhook.json destination; no separate cloud service or Discord bot is required. Each successful delivery is one webhook message with a top-10 preview, player/clan counts, reset countdown, and complete weekly-leaderboard.txt and weekly-leaderboard.json attachments. The existing Discord Win Reports toggle also controls whether this shared destination can send. Ordinary win reports remain separate.
+
+Local files:
+
+- needle-weekly-live.json: latest valid snapshot.
+- needle-weekly-history.jsonl: successful snapshot history.
+- needle-weekly-diagnostics.json: rejected/incomplete row diagnostics.
+- BeyyHub/weekly_leaderboard_settings.json: tracking preference.
+- BeyyHub/weekly_leaderboard_delivery.json: pending captures and recent delivered capture IDs.
+
+Incomplete/conflicting reads preserve the last valid snapshot. Pending uploads persist across lobby visits and retry HTTP failures, including Discord rate limits. Capture IDs prevent ordinary duplicate submissions; an accepted HTTP request whose response is lost can still produce a duplicate retry. Uploads include the displayed leaderboard and clan membership data. No webhook credential is embedded in source or attachments.

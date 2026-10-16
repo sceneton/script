@@ -1350,6 +1350,14 @@ end
                 end
             end,
         })
+        Registry.AutoFarmDirection = lobbyTab:Dropdown({
+            Title = "Auto Farm Rotation Direction", Values = {"Left", "Right"},
+            Value = safeRead(CACHE_FOLDER .. "/autofarm_direction_shared.txt") == "Right" and "Right" or "Left",
+            AllowNone = false,
+            Callback = function(value)
+                safeWrite(CACHE_FOLDER .. "/autofarm_direction_shared.txt", value == "Right" and "Right" or "Left")
+            end,
+        })
         lobbyToolsTab:Section({ Title = "Lobby utilities" })
         Registry.ArcadeFarm = lobbyToolsTab:Toggle({ Title = "Arcade Gem Farm", Value = false,
             Callback = function(enabled) lobbyState.ArcadeFarm = enabled end })

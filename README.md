@@ -61,3 +61,19 @@ Validation includes official Luau compilation and mocked lighting acknowledgemen
 ## Validation
 
 All seven Lua files compile with the official Luau compiler. Mocked regressions cover routing/caching, UI/config behavior, target indexes, orbit order/progression, TNT, pickup input and timeout recovery. Live Roblox execution, permissions, network failures and game changes can affect behavior; measured FPS or farming gains are not claimed.
+
+## Universal Discord wins recorder
+
+Overview & Settings includes Discord Win Reports, Wins Webhook URL, and Wins Recorder Status in the lobby and Chapters 1–4. Reports are enabled by default once a webhook has been configured. Paste a webhook URL into the input to replace the locally saved endpoint; the credential is deliberately excluded from hub configs and public Lua files.
+
+The recorder observes the game's saved Data.client.Wins value, establishes a baseline on its first installation, and reports positive changes. Repeated completion events alone do not create reports. A +N change is preserved as +N, rather than assumed to be one win. Each message includes account name/ID, chapter, saved-win change, tracked wins, average wins per hour since tracking started, and round time when available. It does not include remote captures or inventory dumps.
+
+Local executor files:
+
+- BeyyHub/wins_webhook.json: shared webhook URL and report toggle.
+- BeyyHub/wins_recorder_<userId>.json: per-account baseline, tracking totals and pending deliveries.
+- BeyyHub/wins_history_<userId>.jsonl: observed win increases.
+
+Pending reports survive normal re-execution and teleports. Confirmed deliveries are removed from the queue; HTTP failures retry, respecting Discord's retry_after on HTTP 429. A lost HTTP response after Discord accepts a message can still cause a duplicate retry; the record ID in the footer identifies the observed increase. Disabling Discord Win Reports pauses sending while local tracking continues. Requires executor filesystem and HTTP request support.
+
+Uses [Discord Execute Webhook](https://docs.discord.com/developers/resources/webhook#execute-webhook) with wait=true for delivery confirmation, and [Discord rate-limit retry guidance](https://docs.discord.com/developers/topics/rate-limits). The webhook is never embedded in the public source.

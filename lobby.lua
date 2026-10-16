@@ -190,6 +190,10 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
         if type(appendfile)=='function'then pcall(function()appendfile(storage..'/wins_history_'..tostring(player.UserId)..'.jsonl',httpService:JSONEncode(entry)..'\n')end)end
         setStatus('Recorded +'..tostring(gain)..' win(s); total '..tostring(total))
     end
+    local function formatRoundTime(seconds)
+        local whole=math.floor(seconds+0.5)
+        return string.format('%d:%02d',whole//60,whole%60)
+    end
     local function payload(entry)
         -- Completion can arrive just after the saved-win update. Fill in its
         -- timing before delivery, and keep averages fixed for later retries.
@@ -206,9 +210,9 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
             {name='Tracked wins',value=tostring(entry.SessionWins),inline=true},
             {name='Wins / hour',value=string.format('%.1f',entry.SessionWins*3600/elapsed),inline=true},
         }
-        if entry.RoundSeconds and entry.RoundSeconds>=0 then fields[#fields+1]={name='Round time',value=string.format('%.2fs',entry.RoundSeconds),inline=true}end
+        if entry.RoundSeconds and entry.RoundSeconds>=0 then fields[#fields+1]={name='Round time',value=formatRoundTime(entry.RoundSeconds),inline=true}end
         fields[#fields+1]={name='Average round time (last 100)',inline=true,
-            value=validSeconds(entry.RoundAverageSeconds)and string.format('%.2fs (%d/100 rounds)',entry.RoundAverageSeconds,entry.RoundSampleCount or 0)
+            value=validSeconds(entry.RoundAverageSeconds)and string.format('%s (%d/100 rounds)',formatRoundTime(entry.RoundAverageSeconds),entry.RoundSampleCount or 0)
                 or 'No timed rounds recorded yet (0/100)'}
         return {username='BeyyHub Wins',allowed_mentions={parse={}},embeds={{title='Win recorded',color=5763719,
             fields=fields,footer={text='Record '..entry.Id..' | Place '..tostring(entry.PlaceId)},

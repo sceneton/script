@@ -614,6 +614,7 @@ local function defaultState()
         UpgDroneSpeed = false, UpgDroneGrab = false, UpgDroneCapacity = false,
         UpgVacPower = false, UpgVacCooling = false, UpgVacRuntime = false,
         AutoFarmWins = false,
+        AutoFarmDirection = safeRead(CACHE_FOLDER .. "/autofarm_direction_shared.txt") == "Right" and "Right" or "Left",
     }
 end
 
@@ -1609,13 +1610,16 @@ local function bindAfkCameraView()
             local delta = math.max(0, math.min(dt, 0.25))
             local advance,reason=afkOrbitTelemetry.CanAdvance()
             afkOrbitTelemetry.Update(advance,reason)
-            local nextAngle = afkOrbitAngle + math.rad(AFK_ORBIT_SPEED_DEG) * (advance and delta or 0)
-            if nextAngle >= 2 * math.pi then
+            local travel = math.rad(AFK_ORBIT_SPEED_DEG) * (advance and delta or 0)
+            local progress = (afkOrbitTelemetry.LapProgress or 0) + travel
+            local nextAngle = afkOrbitAngle + (State.AutoFarmDirection == "Right" and -travel or travel)
+            if progress >= 2 * math.pi then
                 afkOrbitLap += 1
                 local nextBand = afkCurrentBand()
                 print(string.format("[AFK Orbit] Lap %d complete; next fixed band %s (%.1f studs)",
                     afkOrbitLap, nextBand.name, nextBand.radius))
             end
+            afkOrbitTelemetry.LapProgress = progress % (2 * math.pi)
             afkOrbitAngle = nextAngle % (2 * math.pi)
             local bandIndex = (afkOrbitLap % #AFK_ORBIT_BANDS) + 1
             local band = AFK_ORBIT_BANDS[bandIndex]
@@ -1670,6 +1674,7 @@ function afkOrbitTelemetry.BeginTeleportRound()
     afkOrbitTelemetry.RoundJob = game.JobId
     afkOrbitAngle = 0
     afkOrbitLap = 0
+    afkOrbitTelemetry.LapProgress = 0
     afkVacuumTargetReady = false
     afkOrbitTelemetry.LastText = nil
     afkOrbitTelemetry.Paused = nil
@@ -2417,6 +2422,14 @@ do
             safeWrite(CACHE_FOLDER .. "/autofarmwins_shared.txt", tostring(v))
             print("[Mode] AFK Farm Mode = ".. tostring(State.AutoFarmWins))
         end)
+    Registry.AutoFarmDirection = MainTab:Dropdown({
+        Title = "Auto Farm Rotation Direction", Values = {"Left", "Right"},
+        Value = State.AutoFarmDirection, AllowNone = false,
+        Callback = function(value)
+            State.AutoFarmDirection = value == "Right" and "Right" or "Left"
+            safeWrite(CACHE_FOLDER .. "/autofarm_direction_shared.txt", State.AutoFarmDirection)
+        end,
+    })
     AddToggle(MainTab, "AutoFarmVacuum", "Vacuum During Auto Farm Wins", true,
         "Use heat-bar-controlled suction while the character follows the eight circular sweep routes.")
 
@@ -4774,8 +4787,3 @@ task.spawn(function()
         end
     end
 end)
-
-
-
-
-

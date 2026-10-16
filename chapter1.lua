@@ -1399,13 +1399,7 @@ local AFK_CAMERA_BIND = "BeyyV103_00AFKCamera_" .. tostring(LocalPlayer.UserId)
 local AFK_ORBIT_SPEED_DEG = 48.0
 local AFK_ORBIT_BANDS = {
     { name = "base-lower", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
-    { name = "base-lower-second-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
-    { name = "base-lower-third-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
-    { name = "base-lower-fourth-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5, heightOffset = -2.0 },
     { name = "base", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-second-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-third-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
-    { name = "base-fourth-lap", radius = 22.0, standoff = 2.2, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 1.5 },
     { name = "base-transition", radius = 20.0, standoff = 2.1, characterInset = 1.5, cameraLift = 5.0, focusYOffset = 0.7 },
     { name = "lower-middle", radius = 18.0, standoff = 2.0, characterInset = 1.5, cameraLift = 5.0, focusYOffset = -0.1 },
     { name = "middle-transition", radius = 16.0, standoff = 1.95, characterInset = 1.5, cameraLift = 5.1, focusYOffset = -0.8 },
@@ -1481,7 +1475,7 @@ local function measureAfkBandSurfaces(center)
         and tonumber(GameConfig.PILE_HEIGHT) and tonumber(GameConfig.PILE_HEIGHT)>0 then
         local floorY=GameConfig.PILE_CENTER.Y+(tonumber(GameConfig.PILE_BASE_Y)or 0)
         local height=tonumber(GameConfig.PILE_HEIGHT)
-        local fractions={0.12,0.12,0.12,0.12,0.12,0.12,0.12,0.12,0.24,0.36,0.495,0.63,0.755,0.88,0.97}
+        local fractions = {0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
         local surfaces,labels={},{}
         for i,band in ipairs(AFK_ORBIT_BANDS)do
             surfaces[i]=floorY+height*fractions[i]+(band.heightOffset or 0)
@@ -1518,7 +1512,7 @@ local function measureAfkBandSurfaces(center)
     end
     if floorY == math.huge then floorY = center.Y - 4 end
     if highestY == -math.huge then highestY = center.Y + 8 end
-    local fractions = {0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
+    local fractions = {0.12, 0.12, 0.24, 0.36, 0.495, 0.63, 0.755, 0.88, 0.97}
     local surfaces = {}
     for i, samples in ipairs(radialTops) do
         local baseline = floorY + (highestY - floorY) * fractions[i]
@@ -1700,7 +1694,7 @@ local function startAfkCamera()
     afkPreviousCFrame = cam.CFrame
     pcall(function() RunService:UnbindFromRenderStep(AFK_CAMERA_BIND) end)
     if bindAfkCameraView() then
-        print(string.format("[Camera] FIXED 8-band sweep started: %.1f deg/s, %ds full sweep, bands = 22/20/18/16/14/11/8/5 studs",
+        print(string.format("[Camera] FIXED 9-route sweep started: %.1f deg/s, %ds full sweep, bands = 22/20/18/16/14/11/8/5 studs",
             AFK_ORBIT_SPEED_DEG, math.floor(360 / AFK_ORBIT_SPEED_DEG * #AFK_ORBIT_BANDS + 0.5)))
     end
 end
@@ -4777,6 +4771,7 @@ task.spawn(function()
         end
     end
 end)
+
 
 
 

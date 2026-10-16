@@ -91,6 +91,36 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     state.Pending=type(state.Pending)=='table'and state.Pending or {}
     state.SessionWins=tonumber(state.SessionWins)or 0
     state.Started=tonumber(state.Started)or os.time()
+    local function validSeconds(value)
+        return type(value)=='number'and value>0 and value<math.huge
+    end
+    local roundTimes={}
+    local function rememberRound(id,seconds)
+        if not validSeconds(seconds)or type(id)~='string'or id==''then return end
+        for _,round in ipairs(roundTimes)do if round.Id==id then return end end
+        roundTimes[#roundTimes+1]={Id=id,Seconds=seconds}
+        if #roundTimes>100 then table.remove(roundTimes,1)end
+    end
+    if type(state.RoundTimes)=='table'then
+        for _,round in ipairs(state.RoundTimes)do
+            if type(round)=='table'then rememberRound(round.Id,round.Seconds)end
+        end
+    elseif type(readfile)=='function'then
+        -- Reuse previously recorded round times when upgrading an existing recorder.
+        pcall(function()
+            local history=readfile(storage..'/wins_history_'..tostring(player.UserId)..'.jsonl')
+            for line in history:gmatch('[^\r\n]+')do
+                local ok,entry=pcall(httpService.JSONDecode,httpService,line)
+                if ok and type(entry)=='table'then rememberRound(entry.JobId,entry.RoundSeconds)end
+            end
+        end)
+    end
+    state.RoundTimes=roundTimes
+    local function roundAverage()
+        local total=0
+        for _,round in ipairs(roundTimes)do total+=round.Seconds end
+        return #roundTimes>0 and total/#roundTimes or nil,#roundTimes
+    end
     local status=tab:Paragraph({Title='Wins Recorder Status',Desc='Waiting for saved wins'})
     local function setStatus(text)if alive then status:SetDesc(text)end end
     local function save()return writeJson(statePath,state)end
@@ -121,6 +151,8 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
             if remote and remote:IsA('RemoteEvent')then
                 completionConnection=remote.OnClientEvent:Connect(function(_,_,_,seconds)
                     completion={At=os.clock(),Seconds=tonumber(seconds)}
+                    rememberRound(game.JobId,completion.Seconds)
+                    save()
                     task.defer(sample)
                 end)
             end
@@ -146,15 +178,25 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
         state.LastWins=total;state.SessionWins+=gain
         local seconds=folder and tonumber(folder:GetAttribute('RoundFinishedElapsed'))
         if not seconds and completion and os.clock()-completion.At<10 then seconds=completion.Seconds end
+        -- A multi-win increase is still only one observed round, never N copies.
+        rememberRound(game.JobId,seconds)
+        local average,count=roundAverage()
         local entry={Id=tostring(player.UserId)..':'..tostring(total),Username=player.Name,UserId=player.UserId,
             Chapter=chapter,PlaceId=game.PlaceId,JobId=game.JobId,Before=before,Total=total,Gain=gain,
-            SessionWins=state.SessionWins,SessionStarted=state.Started,Observed=os.time(),RoundSeconds=seconds}
+            SessionWins=state.SessionWins,SessionStarted=state.Started,Observed=os.time(),RoundSeconds=seconds,
+            RoundAverageSeconds=average,RoundSampleCount=count}
         state.Pending[#state.Pending+1]=entry
         save()
         if type(appendfile)=='function'then pcall(function()appendfile(storage..'/wins_history_'..tostring(player.UserId)..'.jsonl',httpService:JSONEncode(entry)..'\n')end)end
         setStatus('Recorded +'..tostring(gain)..' win(s); total '..tostring(total))
     end
     local function payload(entry)
+        -- Completion can arrive just after the saved-win update. Fill in its
+        -- timing before delivery, and keep averages fixed for later retries.
+        if entry.JobId==game.JobId and completion and os.clock()-completion.At<10 then
+            if validSeconds(completion.Seconds)then entry.RoundSeconds=completion.Seconds end
+            entry.RoundAverageSeconds,entry.RoundSampleCount=roundAverage()
+        end
         local elapsed=math.max(1,entry.Observed-entry.SessionStarted)
         local fields={
             {name='Account',value=entry.Username..' ('..tostring(entry.UserId)..')',inline=true},
@@ -165,6 +207,9 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
             {name='Wins / hour',value=string.format('%.1f',entry.SessionWins*3600/elapsed),inline=true},
         }
         if entry.RoundSeconds and entry.RoundSeconds>=0 then fields[#fields+1]={name='Round time',value=string.format('%.2fs',entry.RoundSeconds),inline=true}end
+        fields[#fields+1]={name='Average round time (last 100)',inline=true,
+            value=validSeconds(entry.RoundAverageSeconds)and string.format('%.2fs (%d/100 rounds)',entry.RoundAverageSeconds,entry.RoundSampleCount or 0)
+                or 'No timed rounds recorded yet (0/100)'}
         return {username='BeyyHub Wins',allowed_mentions={parse={}},embeds={{title='Win recorded',color=5763719,
             fields=fields,footer={text='Record '..entry.Id..' | Place '..tostring(entry.PlaceId)},
             timestamp=os.date('!%Y-%m-%dT%H:%M:%SZ',entry.Observed)}}}

@@ -60,6 +60,170 @@ end
 
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
+local function installUniversalWinsRecorder(tab, registry, isRunning)
+    local env=type(getgenv)=='function' and getgenv()or _G
+    if env.BeyyWinsRecorder then env.BeyyWinsRecorder.Stop()end
+    local httpService=game:GetService('HttpService')
+    local player=game:GetService('Players').LocalPlayer
+    local storage='BeyyHub'
+    local settingsPath=storage..'/wins_webhook.json'
+    local statePath=storage..'/wins_recorder_'..tostring(player.UserId)..'.json'
+    local alive=true
+    local dataClient,dataModule,nextResolve=nil,nil,0
+    local connections={}
+    local function readJson(path)
+        if type(readfile)~='function'then return nil end
+        local ok,value=pcall(function()return httpService:JSONDecode(readfile(path))end)
+        return ok and type(value)=='table'and value or nil
+    end
+    local function writeJson(path,value)
+        if type(writefile)~='function'then return false end
+        if type(makefolder)=='function'then pcall(makefolder,storage)end
+        return pcall(function()writefile(path,httpService:JSONEncode(value))end)
+    end
+    local settings=readJson(settingsPath)or {Enabled=true,Url=''}
+    settings.Enabled=settings.Enabled~=false
+    local function validUrl(url)
+        return type(url)=='string'and url:match('^https://discord%.com/api/webhooks/%d+/[%w_%-]+$')~=nil
+    end
+    if not validUrl(settings.Url)then settings.Url=''end
+    local state=readJson(statePath)or {}
+    state.Pending=type(state.Pending)=='table'and state.Pending or {}
+    state.SessionWins=tonumber(state.SessionWins)or 0
+    state.Started=tonumber(state.Started)or os.time()
+    local status=tab:Paragraph({Title='Wins Recorder Status',Desc='Waiting for saved wins'})
+    local function setStatus(text)if alive then status:SetDesc(text)end end
+    local function save()return writeJson(statePath,state)end
+    registry.WinsRecorderEnabled=tab:Toggle({Title='Discord Win Reports',Value=settings.Enabled,
+        Callback=function(value)
+            settings.Enabled=value==true;writeJson(settingsPath,settings)
+            setStatus(settings.Enabled and 'Enabled; waiting for wins / pending reports'or 'Discord reporting paused')
+        end})
+    tab:Input({Title='Wins Webhook URL',Value='',Placeholder='Paste webhook URL to replace the saved one',Callback=function(value)
+        if type(value)~='string'or value==''then return end
+        value=value:match('^%s*(.-)%s*$')
+        if not validUrl(value)then setStatus('Invalid Discord webhook URL');return end
+        settings.Url=value;writeJson(settingsPath,settings);setStatus('Webhook configured locally')
+    end})
+    local chapters={[77108422251420]='Lobby',[108628039999641]='Chapter 1',[83445806734780]='Chapter 2',
+        [82626725163709]='Chapter 3',[102537610748607]='Chapter 4'}
+    local chapter=chapters[game.PlaceId]or __BEYY_MODULE or ('Place '..tostring(game.PlaceId))
+    local completion
+    local completionConnection,completionRemote
+    local function sample()
+        if not alive or not isRunning()then return end
+        local rs=game:GetService('ReplicatedStorage')
+        local folder=rs:FindFirstChild('NeedleHaystack')
+        local remote=folder and folder:FindFirstChild('NeedleRoundCompleted')
+        if remote~=completionRemote then
+            if completionConnection then completionConnection:Disconnect();completionConnection=nil end
+            completionRemote=remote
+            if remote and remote:IsA('RemoteEvent')then
+                completionConnection=remote.OnClientEvent:Connect(function(_,_,_,seconds)
+                    completion={At=os.clock(),Seconds=tonumber(seconds)}
+                    task.defer(sample)
+                end)
+            end
+        end
+        if not dataClient and os.clock()>=nextResolve then
+            nextResolve=os.clock()+5
+            local shared=rs:FindFirstChild('Shared');local services=shared and shared:FindFirstChild('Services')
+            dataModule=services and services:FindFirstChild('Data')
+            if dataModule then local ok,value=pcall(require,dataModule);if ok and type(value)=='table'then dataClient=value.client end end
+        end
+        if not dataClient or dataClient.Wins==nil then setStatus('Waiting for saved-win data');return end
+        local ok,total=pcall(function()return dataClient.Wins()end)
+        if not ok or type(total)~='number'or total<0 or total~=total or total==math.huge or total%1~=0 then return end
+        if type(state.LastWins)~='number'then
+            state.LastWins=total;save()
+            setStatus('Tracking '..tostring(total)..' saved wins'..(settings.Url==''and '; configure webhook'or ''))
+            return
+        end
+        if total==state.LastWins then return end
+        if total<state.LastWins then state.LastWins=total;save();setStatus('Saved wins decreased; baseline updated');return end
+        local before=state.LastWins
+        local gain=total-before
+        state.LastWins=total;state.SessionWins+=gain
+        local seconds=folder and tonumber(folder:GetAttribute('RoundFinishedElapsed'))
+        if not seconds and completion and os.clock()-completion.At<10 then seconds=completion.Seconds end
+        local entry={Id=tostring(player.UserId)..':'..tostring(total),Username=player.Name,UserId=player.UserId,
+            Chapter=chapter,PlaceId=game.PlaceId,JobId=game.JobId,Before=before,Total=total,Gain=gain,
+            SessionWins=state.SessionWins,SessionStarted=state.Started,Observed=os.time(),RoundSeconds=seconds}
+        state.Pending[#state.Pending+1]=entry
+        save()
+        if type(appendfile)=='function'then pcall(function()appendfile(storage..'/wins_history_'..tostring(player.UserId)..'.jsonl',httpService:JSONEncode(entry)..'\n')end)end
+        setStatus('Recorded +'..tostring(gain)..' win(s); total '..tostring(total))
+    end
+    local function payload(entry)
+        local elapsed=math.max(1,entry.Observed-entry.SessionStarted)
+        local fields={
+            {name='Account',value=entry.Username..' ('..tostring(entry.UserId)..')',inline=true},
+            {name='Chapter',value=entry.Chapter,inline=true},
+            {name='Wins gained',value='+'..tostring(entry.Gain),inline=true},
+            {name='Saved wins',value=tostring(entry.Before)..' → '..tostring(entry.Total),inline=true},
+            {name='Tracked wins',value=tostring(entry.SessionWins),inline=true},
+            {name='Wins / hour',value=string.format('%.1f',entry.SessionWins*3600/elapsed),inline=true},
+        }
+        if entry.RoundSeconds and entry.RoundSeconds>=0 then fields[#fields+1]={name='Round time',value=string.format('%.2fs',entry.RoundSeconds),inline=true}end
+        return {username='BeyyHub Wins',allowed_mentions={parse={}},embeds={{title='Win recorded',color=5763719,
+            fields=fields,footer={text='Record '..entry.Id..' | Place '..tostring(entry.PlaceId)},
+            timestamp=os.date('!%Y-%m-%dT%H:%M:%SZ',entry.Observed)}}}
+    end
+    local sending=false
+    local retryAt=0
+    local function deliver()
+        if not alive or sending or not settings.Enabled or not validUrl(settings.Url)or #state.Pending==0 or os.clock()<retryAt then return end
+        local send=type(request)=='function'and request or type(http_request)=='function'and http_request
+            or type(syn)=='table'and syn.request or type(http)=='table'and http.request
+        if type(send)~='function'then setStatus('HTTP request API unavailable; reports saved locally');return end
+        sending=true
+        local entry=state.Pending[1]
+        local url=settings.Url
+        task.spawn(function()
+            local ok,response=pcall(function()return send({Url=url..'?wait=true',Method='POST',Headers={['Content-Type']='application/json'},Body=httpService:JSONEncode(payload(entry))})end)
+            local code=ok and type(response)=='table'and tonumber(response.StatusCode or response.Status)or nil
+            if code and code>=200 and code<300 then
+                if state.Pending[1]==entry then table.remove(state.Pending,1)end
+                state.LastSent=entry.Id;save();setStatus('Sent +'..tostring(entry.Gain)..' win(s); total '..tostring(entry.Total))
+                retryAt=os.clock()+1
+            else
+                local delay=30
+                if code==429 then
+                    local decodedOk,body=pcall(function()return httpService:JSONDecode(response.Body or '{}')end)
+                    delay=decodedOk and type(body)=='table'and tonumber(body.retry_after)or 5
+                    delay=math.max(1,math.min(delay or 5,3600))
+                elseif code==401 or code==403 or code==404 then delay=300 end
+                retryAt=os.clock()+delay
+                -- Never print response bodies/errors: they can contain the secret URL.
+                setStatus('Webhook '..(code and ('HTTP '..tostring(code))or 'request failed')..'; queued for retry')
+            end
+            sending=false
+        end)
+    end
+    local function stop()
+        if not alive then return end
+        pcall(sample);alive=false
+        if completionConnection then completionConnection:Disconnect()end
+        for _,connection in ipairs(connections)do connection:Disconnect()end
+        save()
+    end
+    env.BeyyWinsRecorder={Stop=stop,Sample=sample,State=state,Configured=settings.Url~=''}
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()stop();if previous then previous()end end
+    connections[#connections+1]=player.OnTeleport:Connect(function(teleportState)
+        if teleportState==Enum.TeleportState.Started then stop()end
+    end)
+    task.spawn(function()
+        while alive and isRunning()do
+            local ok=pcall(sample)
+            if not ok then setStatus('Saved-win read failed; retrying')end
+            deliver();task.wait(.5)
+        end
+        stop()
+    end)
+    return env.BeyyWinsRecorder
+end
+
 local function installAntiIdle(tab, registry, isRunning)
     local enabled, alive, warned = true, true, false
     local virtualUser
@@ -887,6 +1051,7 @@ end
     local Registry = {}
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
+    installUniversalWinsRecorder(overviewTab, Registry, function() return not hubUnloaded end)
     overviewTab:Section({ Title = "Detected chapter" })
     overviewTab:Paragraph({
         Title = BEYY_CHAPTER .. " (Place ID " .. tostring(game.PlaceId) .. ")",
@@ -4290,7 +4455,3 @@ end
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end
-
-
-
-

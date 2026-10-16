@@ -273,6 +273,393 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     return env.BeyyWinsRecorder
 end
 
+local function createWeeklyLeaderboardDelivery(H, onStatus)
+    local path='BeyyHub/weekly_leaderboard_delivery.json'
+    local function read(path)
+        if type(readfile)~='function'then return nil end
+        local ok,value=pcall(function()return H:JSONDecode(readfile(path))end)
+        return ok and type(value)=='table'and value or nil
+    end
+    local state=read(path)or {}
+    state.Pending=type(state.Pending)=='table'and state.Pending or {}
+    state.Sent=type(state.Sent)=='table'and state.Sent or {}
+    local alive,sending,retryAt=true,false,0
+    local function save()
+        if type(writefile)=='function'then pcall(function()writefile(path,H:JSONEncode(state))end)end
+    end
+    local function fullText(snapshot)
+        local lines={'Weekly wins leaderboard — '..snapshot.observedAt,'Rank | Username | Weekly wins'}
+        for _,row in ipairs(snapshot.rows)do lines[#lines+1]=string.format('%d | @%s | %d',row.rank,row.username,row.wins)end
+        local clan=snapshot.clans or {}
+        lines[#lines+1]='';lines[#lines+1]='Clan members — '..(clan.clanName or clan.status or 'unavailable')
+        lines[#lines+1]='Displayed member wins; weekly period is not established.'
+        for _,row in ipairs(clan.rows or {})do
+            lines[#lines+1]=string.format('%s | %s | %s | %d',row.userId,row.displayName,row.role,row.wins)
+        end
+        return table.concat(lines,'\n')
+    end
+    local function requestBody(snapshot)
+        local boundary='BeyyWeekly'..H:GenerateGUID(false):gsub('%-','')
+        local clan=snapshot.clans or {}
+        local fields={
+            {name='Weekly players captured',value=tostring(#snapshot.rows),inline=true},
+            {name='Clan members captured',value=tostring(#(clan.rows or {})),inline=true},
+            {name='Weekly reset countdown',value=tostring(snapshot.resetCountdown or 'unknown'),inline=true},
+        }
+        local top={}
+        for i=1,math.min(10,#snapshot.rows)do local row=snapshot.rows[i];top[#top+1]=string.format('#%d @%s — %d',row.rank,row.username,row.wins)end
+        fields[#fields+1]={name='Weekly top 10',value=table.concat(top,'\n'),inline=false}
+        if clan.clanName then fields[#fields+1]={name='Clan',value=clan.clanName,inline=false}end
+        local payload={username='BeyyHub Leaderboards',allowed_mentions={parse={}},embeds={{title='Weekly leaderboard snapshot',color=3447003,
+            description='Full captured standings and clan member wins are attached. Clan wins have an unspecified period.',
+            fields=fields,footer={text='Capture '..snapshot.captureId},timestamp=snapshot.observedAt}}}
+        local parts={}
+        local function part(name,body,filename,kind)
+            parts[#parts+1]='--'..boundary..'\r\nContent-Disposition: form-data; name="'..name..'"'
+                ..(filename and '; filename="'..filename..'"'or '')..'\r\n'
+                ..(kind and 'Content-Type: '..kind..'\r\n'or '')..'\r\n'..body..'\r\n'
+        end
+        part('payload_json',H:JSONEncode(payload),nil,'application/json')
+        part('files[0]',H:JSONEncode(snapshot),'weekly-leaderboard.json','application/json')
+        part('files[1]',fullText(snapshot),'weekly-leaderboard.txt','text/plain; charset=utf-8')
+        parts[#parts+1]='--'..boundary..'--\r\n'
+        return table.concat(parts),'multipart/form-data; boundary='..boundary
+    end
+    local function enqueue(snapshot)
+        for _,id in ipairs(state.Sent)do if id==snapshot.captureId then return end end
+        for _,pending in ipairs(state.Pending)do if pending.captureId==snapshot.captureId then return end end
+        state.Pending[#state.Pending+1]=snapshot;save()
+    end
+    local function pump()
+        if not alive or sending or #state.Pending==0 or os.clock()<retryAt then return end
+        local settings=read('BeyyHub/wins_webhook.json')
+        if not settings or settings.Enabled==false or type(settings.Url)~='string'
+            or not settings.Url:match('^https://discord%.com/api/webhooks/%d+/[%w_%-]+$')then return end
+        local send=type(request)=='function'and request or type(http_request)=='function'and http_request
+            or type(syn)=='table'and syn.request or type(http)=='table'and http.request
+        if type(send)~='function'then return end
+        sending=true
+        local snapshot=state.Pending[1]
+        task.spawn(function()
+            local ok,response=pcall(function()
+                local body,kind=requestBody(snapshot)
+                return send({Url=settings.Url..'?wait=true',Method='POST',Headers={['Content-Type']=kind},Body=body})
+            end)
+            local code=ok and type(response)=='table'and tonumber(response.StatusCode or response.Status)or nil
+            if code and code>=200 and code<300 then
+                if state.Pending[1]==snapshot then table.remove(state.Pending,1)end
+                state.Sent[#state.Sent+1]=snapshot.captureId
+                if #state.Sent>200 then table.remove(state.Sent,1)end
+                save();onStatus('Weekly leaderboard sent to Discord');retryAt=os.clock()+2
+            else
+                local delay=30
+                if code==429 then
+                    local decoded,value=pcall(function()return H:JSONDecode(response.Body or '{}')end)
+                    delay=decoded and type(value)=='table'and tonumber(value.retry_after)or 5
+                    delay=math.max(1,math.min(delay or 5,3600))
+                elseif code==401 or code==403 or code==404 then delay=300 end
+                retryAt=os.clock()+delay
+                onStatus('Leaderboard saved locally; Discord '..(code and ('HTTP '..code)or 'request failed')..'; retry queued')
+            end
+            sending=false
+        end)
+    end
+    return {Enqueue=enqueue,Pump=pump,State=state,Stop=function()alive=false;save()end}
+end
+
+local function installWeeklyLeaderboardTracker(tab, registry, isRunning)
+    local env=type(getgenv)=='function'and getgenv()or _G
+    if env.BeyyWeeklyTracker then env.BeyyWeeklyTracker.Stop()end
+    local H=game:GetService('HttpService')
+    local player=game:GetService('Players').LocalPlayer
+    local configPath='BeyyHub/weekly_leaderboard_settings.json'
+    local alive=true
+    local enabled=true
+    pcall(function()enabled=H:JSONDecode(readfile(configPath)).Enabled~=false end)
+    local status=tab:Paragraph({Title='Leaderboard Tracker Status',Desc='Waiting for lobby boards'})
+    local function setStatus(text)if alive then status:SetDesc(text)end end
+    local delivery=createWeeklyLeaderboardDelivery(H,setStatus)
+    local current
+    local start
+    local function cancel()
+        if current then
+            current.alive=false;current.ready=true
+            if current.restore then pcall(current.restore)end
+        end
+    end
+    local function save(name,data)
+        local ok=pcall(function()writefile(name,H:JSONEncode(data))end)
+        if not ok then setStatus('Snapshot file could not be saved')end
+        return ok
+    end
+    local function text(parent,name)
+        local obj=parent:FindFirstChild(name,true)
+        return obj and obj:IsA('TextLabel')and obj.Text or nil
+    end
+    registry.WeeklyLeaderboardTracking=tab:Toggle({Title='Weekly Leaderboard Tracking',Value=enabled,Callback=function(value)
+        enabled=value==true
+        pcall(function()writefile(configPath,H:JSONEncode({Enabled=enabled}))end)
+        if enabled then start()else cancel();setStatus('Leaderboard tracking disabled')end
+    end})
+    tab:Button({Title='Capture Leaderboards Now',Callback=function()if enabled then start()else setStatus('Enable Weekly Leaderboard Tracking first')end end})
+    start=function()
+        cancel()
+        local run={startedAt=os.clock(),ready=not enabled,alive=true}
+        current=run;env.NeedleWeeklyCollector=run;env.NeedleWeeklyFirstCapture=run
+        if not enabled or not alive then return end
+        if type(writefile)~='function'then run.ready=true;setStatus('Leaderboard snapshots require filesystem support');return end
+        setStatus('Waiting for a stable weekly board and clan list')
+        task.spawn(function()
+        local function running()return alive and run.alive and current==run and isRunning()and game.PlaceId==77108422251420 end
+        local function winsGui()
+            local boards = workspace:FindFirstChild("Leaderboards")
+            local board = boards and boards:FindFirstChild("TotalWinsLeaderboard")
+            local display = board and board:FindFirstChild("DisplayPart")
+            local gui
+            for _, obj in ipairs((assert(player:FindFirstChild("PlayerGui"), "PlayerGui not ready")):GetDescendants()) do
+                if display and obj:IsA("SurfaceGui") and obj.Adornee == display then
+                    assert(not gui, "Multiple wins displays; waiting")
+                    gui = obj
+                end
+            end
+            assert(gui and gui.Enabled, "Wins display is not loaded/enabled")
+            return gui, boards
+        end
+        local function ensureWeekly()
+            for _ = 1, 4 do
+                assert(running(), "Collector replaced")
+                local gui = winsGui()
+                local period = text(gui, "PeriodLabel")
+                if period and period:upper():match("^%s*WEEKLY%s*$") then return end
+                local frame = gui:FindFirstChild("PeriodFrame")
+                local button = frame and frame:FindFirstChild("RightArrow")
+                assert(button and button:IsA("GuiButton"), "Waiting for wins period selector")
+                assert(type(firesignal) == "function", "Select WEEKLY manually; firesignal unavailable")
+                -- This is the actual period button's event, observed in the lobby UI.
+                firesignal(button.Activated)
+                task.wait(1)
+                local changed = text(gui, "PeriodLabel")
+                if changed and changed:upper():match("^%s*WEEKLY%s*$") then
+                    -- Let the game replace cached ALL TIME rows before the stable-read check.
+                    task.wait(5)
+                    return
+                end
+            end
+            error("Could not select WEEKLY; waiting")
+        end
+        local function read()
+            assert(running(), "Collector stopped")
+            local gui, boards = winsGui()
+            local period = text(gui, "PeriodLabel")
+            assert(period and period:upper():match("^%s*WEEKLY%s*$"), "Select WEEKLY on the wins board")
+            local scroll = gui:FindFirstChild("ScrollingFrame")
+            local list = scroll and scroll:FindFirstChild("Players")
+            assert(list, "Wins rows are not loaded")
+            local rawRows = {}
+            for _, row in ipairs(list:GetChildren()) do
+                if row.Name:match("^Row%d+$") and row:IsA("GuiObject") and row.Visible then
+                    local rankText = text(row, "Place") or ""
+                    local usernameText = text(row, "PName") or ""
+                    local winsText = text(row, "ValLabel") or ""
+                    local image = row:FindFirstChild("Image")
+                    table.insert(rawRows, {
+                        frame = row.Name, path = row:GetFullName(), layoutOrder = row.LayoutOrder,
+                        rankText = rankText, usernameText = usernameText, winsText = winsText,
+                        avatar = image and image:IsA("ImageLabel") and image.Image or "",
+                    })
+                end
+            end
+            local rows, users, duplicates = {}, {}, 0
+            local function fail(reason)
+                save("needle-weekly-diagnostics.json", {
+                    collectorVersion = 6, observedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"),
+                    period = period, reason = reason, rawRows = rawRows,
+                })
+                error(reason .. "; details saved in needle-weekly-diagnostics.json", 0)
+            end
+            for _, raw in ipairs(rawRows) do
+                local rank = tonumber(raw.rankText:match("^%s*#(%d+)%s*$"))
+                local username = raw.usernameText:match("^%s*@([%w_]+)%s*$")
+                local numeric = raw.winsText:gsub("%s", "")
+                local wins = numeric:match("^[%d,]+$") and tonumber((numeric:gsub(",", "")))
+                if not rank or not username or not wins then fail("Incomplete row: " .. raw.frame) end
+                local userKey = username:lower()
+                local oldUser = users[userKey]
+                if oldUser then
+                    if oldUser.rank == rank and oldUser.wins == wins then
+                        duplicates = duplicates + 1
+                    else
+                        fail("Conflicting duplicate: " .. raw.frame .. " " .. raw.rankText
+                            .. " " .. raw.usernameText .. " wins=" .. raw.winsText)
+                    end
+                else
+                    local row = {rank = rank, username = username, wins = wins}
+                    users[userKey] = row
+                    table.insert(rows, row)
+                end
+            end
+            table.sort(rows, function(a,b)
+                if a.rank ~= b.rank then return a.rank < b.rank end
+                return a.username:lower() < b.username:lower()
+            end)
+            if #rows == 0 then fail("No loaded rankings") end
+            local expectedRank, previousWins = 0, nil
+            for i, row in ipairs(rows) do
+                if i > 1 and rows[i-1].wins < row.wins then fail("Wins are not sorted") end
+                if previousWins == nil or row.wins ~= previousWins then
+                    expectedRank = expectedRank + 1
+                end
+                if row.rank ~= expectedRank then fail("Rank does not match tied wins at " .. row.username) end
+                previousWins = row.wins
+            end
+            local timerRoot = boards and boards:FindFirstChild("WeeklyTimer")
+            return {version = 1, collectorVersion = 7, status = "ok", period = "WEEKLY",
+                captureId = H:GenerateGUID(false), collectionMode = "once-per-execution",
+                observedUnix = os.time(), placeId = game.PlaceId, observedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"), rows = rows,
+                identicalDuplicatesSkipped = duplicates,
+                resetCountdown = timerRoot and text(timerRoot, "Timer") or "unknown"}
+        end
+        local clanContext
+        local function requestClanMembers()
+            if clanContext then return end
+            local pg = player:FindFirstChild("PlayerGui")
+            local gui = pg and pg:FindFirstChild("ClanUI")
+            local main = gui and gui:FindFirstChild("Main")
+            local root = main and main:FindFirstChild("Root")
+            local panel = root and root:FindFirstChild("Panel")
+            local pages = panel and panel:FindFirstChild("Pages")
+            local tabs = root and root:FindFirstChild("Tabs")
+            local clan = tabs and tabs:FindFirstChild("Clan")
+            if not (pages and clan and clan:IsA("GuiButton")) then return end
+            local previous
+            for _, page in ipairs(pages:GetChildren()) do
+                if page:IsA("GuiObject") and page.Visible then
+                    local tabName = (page.Name == "InClan" or page.Name == "NoClan") and "Clan" or page.Name
+                    if tabs:FindFirstChild(tabName) then previous = tabName; break end
+                end
+            end
+            clanContext = {root = root, pages = pages, tabs = tabs, previous = previous}
+            -- Only the existing Clan tab is activated. Never touch Join, Kick, Admin, or settings.
+            if type(firesignal) == "function" then firesignal(clan.Activated) end
+        end
+        local function restoreClanTab()
+            if not clanContext or not clanContext.previous or clanContext.previous == "Clan" then return end
+            local current = clanContext.pages:FindFirstChild("InClan")
+            local noClan = clanContext.pages:FindFirstChild("NoClan")
+            local previous = clanContext.tabs:FindFirstChild(clanContext.previous)
+            if previous and type(firesignal) == "function" and ((current and current.Visible) or (noClan and noClan.Visible)) then
+                pcall(firesignal, previous.Activated)
+            end
+        end
+        local function readClanMembers()
+            assert(running(), "Collector stopped")
+            requestClanMembers()
+            assert(clanContext, "Clan member UI is not loaded")
+            local page = clanContext.pages:FindFirstChild("InClan")
+            local noClan = clanContext.pages:FindFirstChild("NoClan")
+            if noClan and noClan.Visible and not (page and page.Visible) then
+                return {status = "not_in_clan", scope = "CLAN_MEMBERS", rows = {}, observedAt = os.date("!%Y-%m-%dT%H:%M:%SZ")}
+            end
+            assert(page and page.Visible, "Clan member page is not ready")
+            local info = page:FindFirstChild("Info")
+            local clanName = info and text(info, "ClanName")
+            local members = page:FindFirstChild("Members")
+            local list = members and members:FindFirstChild("List")
+            local expected = tonumber((members and text(members, "Title") or ""):match("MEMBERS%s*%((%d+)"))
+            assert(list and clanName and clanName ~= "" and expected and expected > 0, "Clan members are still loading")
+            local rows, identities = {}, {}
+            for _, row in ipairs(list:GetChildren()) do
+                if row:IsA("GuiObject") and row.Name ~= "Template" and row.Visible then
+                    local name = text(row, "PlayerName")
+                    local raw = (text(row, "Wins") or ""):gsub("%s", "")
+                    local wins = raw:match("^[%d,]+$") and tonumber((raw:gsub(",", "")))
+                    local avatar = row:FindFirstChild("Avatar", true)
+                    local userId = avatar and avatar:IsA("ImageLabel") and avatar.Image:match("[?&]id=(%d+)")
+                    assert(name and name ~= "" and wins and userId, "A clan member row is incomplete")
+                    assert(not identities[userId], "Duplicate clan member identity")
+                    identities[userId] = true
+                    table.insert(rows, {userId = userId, displayName = name, role = text(row, "Role") or "MEMBER", wins = wins})
+                end
+            end
+            assert(#rows == expected, "Clan member list is incomplete")
+            table.sort(rows, function(a,b)
+                if a.wins ~= b.wins then return a.wins > b.wins end
+                return a.userId < b.userId
+            end)
+            return {status = "ok", scope = "CLAN_MEMBERS", period = "UNSPECIFIED", clanName = clanName,
+                observedAt = os.date("!%Y-%m-%dT%H:%M:%SZ"), rows = rows}
+        end
+        local function captureClanMembers()
+            local deadline = os.clock() + 8
+            local lastError = "Clan members not ready"
+            while running() and os.clock() < deadline do
+                local ok, value = pcall(function()
+                    local first = readClanMembers()
+                    task.wait(1.5)
+                    local second = readClanMembers()
+                    assert(first.status == second.status and first.clanName == second.clanName and #first.rows == #second.rows,
+                        "Clan member list is changing")
+                    for i, a in ipairs(first.rows) do
+                        local b = second.rows[i]
+                        assert(a.userId == b.userId and a.wins == b.wins and a.displayName == b.displayName and a.role == b.role,
+                            "Clan member list is changing")
+                    end
+                    return second
+                end)
+                if ok then return value end
+                lastError = tostring(value)
+                task.wait(0.5)
+            end
+            warn("[Weekly Leaderboard] Clan members unavailable: " .. lastError)
+            return {status = "unavailable", scope = "CLAN_MEMBERS", rows = {}}
+        end
+
+        run.restore=restoreClanTab
+        local deadline=os.clock()+60
+        while running()and os.clock()<deadline do
+            local ok,snapshot=pcall(function()
+                requestClanMembers()
+                ensureWeekly()
+                assert(running(),'Collector stopped')
+                local first=read()
+                task.wait(3)
+                assert(running(),'Collector stopped')
+                local second=read()
+                assert(#first.rows==#second.rows,'Rows are changing')
+                for i,a in ipairs(first.rows)do
+                    local b=second.rows[i]
+                    assert(a.rank==b.rank and a.username:lower()==b.username:lower()and a.wins==b.wins,'Rows are changing')
+                end
+                second.clans=captureClanMembers()
+                return second
+            end)
+            if not running()then return end
+            if ok and save('needle-weekly-live.json',snapshot)then
+                if type(appendfile)=='function'then pcall(function()appendfile('needle-weekly-history.jsonl',H:JSONEncode(snapshot)..'\n')end)end
+                delivery.Enqueue(snapshot);delivery.Pump()
+                run.ready=true;restoreClanTab()
+                setStatus('Saved '..#snapshot.rows..' weekly players and '..#(snapshot.clans.rows or {})..' clan members')
+                print('[Weekly Leaderboard] Snapshot saved; capture='..snapshot.captureId)
+                return
+            end
+            run.lastError=not ok and tostring(snapshot)or 'Snapshot could not be saved'
+            setStatus('Waiting: '..run.lastError:sub(1,180))
+            task.wait(2)
+        end
+        if running()then run.ready=true;restoreClanTab();setStatus('No stable snapshot within 60 seconds; retry next lobby visit')end
+        end)
+    end
+    local function stop()if not alive then return end;cancel();alive=false;delivery.Stop()end
+    env.BeyyWeeklyTracker={Stop=stop,Start=start,Delivery=delivery}
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()stop();if previous then previous()end end
+    task.defer(start)
+    task.spawn(function()
+        while alive and isRunning()do if enabled then delivery.Pump()end;task.wait(1)end
+        stop()
+    end)
+end
+
 local function installAntiIdle(tab, registry, isRunning)
     local enabled, alive, warned = true, true, false
     local virtualUser
@@ -862,6 +1249,7 @@ end
     local lobbyToolsTab = hubWindow:Tab({ Title = "Lobby Tools", Icon = "zap" })
     installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
     installUniversalWinsRecorder(overviewTab, Registry, function() return not hubUnloaded end)
+    installWeeklyLeaderboardTracker(overviewTab, Registry, function() return not hubUnloaded end)
     overviewTab:Section({ Title = "Detected chapter" })
     overviewTab:Paragraph({
         Title = BEYY_CHAPTER .. " (Place ID " .. tostring(game.PlaceId) .. ")",
@@ -1777,7 +2165,11 @@ do
         while not hubUnloaded do
             task.wait(0.5)
             if afkFarmModeActive() and game.PlaceId == BEYY_PLACE_IDS.Lobby then
-                pcall(attemptAutoCreate)
+                local env=type(getgenv)=='function'and getgenv()or _G
+                local capture=env.NeedleWeeklyFirstCapture
+                if not capture or capture.ready or os.clock()-capture.startedAt>=20 then
+                    pcall(attemptAutoCreate)
+                end
             end
         end
     end)

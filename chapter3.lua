@@ -355,7 +355,7 @@ local function createAutoUpgradeRuntime(options)
             end
         end
         local cash=tonumber(options.Cash()) or 0
-        local selected, available, vacuum=0,{},nil
+        local selected, available, vacuum, power=0,{},nil,nil
         for _,entry in ipairs(tracks) do
             if options.State[entry[1]] then
                 selected+=1
@@ -366,6 +366,7 @@ local function createAutoUpgradeRuntime(options)
                 if price then
                     local target={Flag=entry[1],Name=entry[2],Level=current,Cost=price}
                     available[#available+1]=target
+                    if entry[2]=="VacuumPower" then power=target end
                     if (entry[2]=="VacuumPower" or entry[2]=="VacuumCooling") and (not vacuum or price<vacuum.Cost) then vacuum=target end
                 end
             end
@@ -373,7 +374,10 @@ local function createAutoUpgradeRuntime(options)
         if selected==0 then status("No cash upgrades enabled"); return end
         if #available==0 then status("Selected cash upgrades are maxed or unavailable"); return end
         local target
-        if vacuum and cash>=vacuum.Cost*0.75 then
+        if power then
+            if cash<power.Cost then status(string.format("Saving for VacuumPower: $%.2f / $%.2f",cash,power.Cost)); return end
+            target=power
+        elseif vacuum and cash>=vacuum.Cost*0.75 then
             if cash<vacuum.Cost then status(string.format("Saving for %s: $%.2f / $%.2f",vacuum.Name,cash,vacuum.Cost)); return end
             target=vacuum
         else
@@ -466,7 +470,6 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
         local config=getConfig()
         local tracks=config and config.UPGRADE_TRACKS
         if not tracks then return nil end
-        local best
         for _,entry in ipairs({{Flag="UpgVacPower",Name="VacuumPower"},{Flag="UpgVacCooling",Name="VacuumCooling"}}) do
             if state[entry.Flag] then
                 local track=tracks[entry.Name]
@@ -474,12 +477,12 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
                 local nextLevel=track and track.Levels and track.Levels[level+1]
                 local cost=nextLevel and tonumber(nextLevel.Cost or 0)
                 if cost then cost=math.round(cost*(tonumber(LocalPlayer:GetAttribute("UpgradeCostMultiplier")) or 1)*100)/100 end
-                if cost and cost>=0 and cost<math.huge and (not best or cost<best.Cost) then
-                    best={Name=entry.Name,Level=level,Cost=cost}
+                if cost and cost>=0 and cost<math.huge then
+                    return {Name=entry.Name,Level=level,Cost=cost}
                 end
             end
         end
-        return best
+        return nil
     end
     local function awaiting()
         if pending and (getLevel(pending.Name)~=pending.Level or os.clock()>=pending.Until) then pending=nil end
@@ -489,7 +492,7 @@ local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, 
     function priority.Reserve()
         if awaiting() then return true end
         local target=nextVacuum()
-        return target~=nil and (tonumber(getCash()) or 0)>=target.Cost*0.75
+        return target~=nil and (target.Name=="VacuumPower" or (tonumber(getCash()) or 0)>=target.Cost*0.75)
     end
     function priority.Purchase()
         if awaiting() then return false end

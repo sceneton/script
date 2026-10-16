@@ -24,6 +24,8 @@ The loader selects only the current place's module, checks the main-branch revis
 
 Existing WindUI/BeyyHub/config/*.json configs remain compatible. Config controls and farm settings are under Overview & Settings. Lobby Tools follows that tab. Anti-AFK defaults on.
 
+Across the chapters, enabled Auto Vacuum Power upgrades take priority until the power track is maxed. The automation saves cash for the next power level before other cash upgrades or automatic tool purchases. Once power is maxed or disabled, other enabled upgrades resume; cooling retains its existing 75% savings threshold.
+
 Chapter 1's sequence makes one full lap at each of nine heights: base-lower, base, base-transition, lower-middle, middle-transition, upper-middle, upper-transition, peak and inner-peak, then repeats from base-lower. The added lower route is two studs below the original base. Character inset and camera adjustments are preserved. Orbit progression waits for the character to follow its scheduled path. Route heights and the pile center use the chapter's configured geometry, so partially loaded or depleted rendered hay cannot raise the bottom routes.
 
 The five-minute round failsafe is exclusive to Chapter 1 and defaults on, independently of Auto Farm Wins. It uses a verified upward HH:MM:SS timer, or elapsed time since intro completion if unavailable. Above five minutes it returns to lobby 77108422251420, reloads the script and resumes automatic Chapter 1 creation. Chapters 2–4 and the lobby do not run this failsafe. Automatic recovery requires executor teleport-queue support; failed requests retry with a cooldown.

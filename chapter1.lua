@@ -795,8 +795,14 @@ print(string.format("[BeyyHub] Place %s -> %s", tostring(game.PlaceId), BEYY_CHA
 
 
 local sharedAFKAtChapterEntry = safeRead(CACHE_FOLDER .. "/autofarmwins_shared.txt")
+local IN_GAME = (game.PlaceId == BEYY_PLACE_IDS.Chapter1)
 local NeedleHaystack = ReplicatedStorage:FindFirstChild("NeedleHaystack")
-local IN_GAME = (NeedleHaystack ~= nil)
+if IN_GAME and not NeedleHaystack then
+    -- Place routing is known before streamed/replicated gameplay assets arrive.
+    -- Wait only during initialization; never cache a false lobby classification.
+    print("[BeyyHub] Waiting for Chapter 1 gameplay assets")
+    NeedleHaystack = ReplicatedStorage:WaitForChild("NeedleHaystack")
+end
 print("[BeyyHub] IN_GAME = ".. tostring(IN_GAME))
 
 local State = {}

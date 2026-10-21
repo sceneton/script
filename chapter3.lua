@@ -585,7 +585,6 @@ local function createAutoUpgradeRuntime(options)
             else
                 status("Server did not confirm "..pending.Name.."; retrying")
                 pending=nil
-                return
             end
         end
         local cash=tonumber(options.Cash()) or 0
@@ -633,7 +632,7 @@ local function createAutoUpgradeRuntime(options)
             status(string.format("Waiting for cash: $%.2f / $%.2f (%s)",cash,cheapest.Cost,cheapest.Name)); return
         end
         remote:FireServer(target.Name)
-        pending={Name=target.Name,Flag=target.Flag,Level=target.Level,Until=os.clock()+3}
+        pending={Name=target.Name,Flag=target.Flag,Level=target.Level,Until=os.clock()+0.25}
         status(string.format("Requested %s L%d ($%.2f); awaiting confirmation",target.Name,target.Level+1,target.Cost))
     end
     return {Tick=function()

@@ -691,10 +691,10 @@ local function createAutoUpgradeRuntime(options)
 end
 
 
-local function createTntRetryGate(getRemote, getCooldown)
+local function createTntRetryGate(getRemote, getCooldown, getLightTime)
     local startupReadyAt=os.clock()+1.5 -- One-time startup delay; never wait on a lit fuse.
     local remote, connection
-    local alive, nextLightAt, phase, expiresAt = true, 0, nil, 0
+    local alive, nextLightAt, phase, expiresAt, throwReadyAt = true, 0, nil, 0, 0
     local function cooldown()
         local value=tonumber(getCooldown())
         return value and value==value and value>0 and value<math.huge and value or 20
@@ -719,6 +719,9 @@ local function createTntRetryGate(getRemote, getCooldown)
                         phase="lit"
                         local fuse=tonumber(value)
                         expiresAt=now+((fuse and fuse>0 and fuse<math.huge) and fuse or 2.9)
+                        local duration=tonumber(getLightTime and getLightTime())
+                        if not duration or duration~=duration or duration<0 or duration==math.huge then duration=0.48 end
+                        throwReadyAt=now+duration
                     end
                 end
             end)
@@ -737,11 +740,13 @@ local function createTntRetryGate(getRemote, getCooldown)
         local deadline=os.clock()+2
         while alive and phase=="waiting" and os.clock()<deadline do task.wait(0.03) end
         if not alive or phase~="lit" then phase=nil;return false end
-        -- Throw immediately after the server confirms lighting.
+        -- A lighting acknowledgement starts the fuse; it is not permission to throw yet.
+        local remaining=throwReadyAt-os.clock()
+        if remaining>0 then task.wait(remaining) end
         return alive and phase=="lit" and os.clock()<expiresAt
     end
     function gate.Throw(...)
-        if not alive or phase~="lit" or os.clock()>=expiresAt then return false end
+        if not alive or phase~="lit" or os.clock()<throwReadyAt or os.clock()>=expiresAt then return false end
         phase=nil -- Exactly one throw for a confirmed lighting request.
         return pcall(remote.FireServer,remote,"throw",...)
     end
@@ -1778,7 +1783,7 @@ end
         end
     end)
     do
-    local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end)
+    local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end,function() return sharedGameConfig and sharedGameConfig.TNT_LIGHT_TIME end)
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))

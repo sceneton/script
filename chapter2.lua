@@ -458,6 +458,55 @@ local function budgetedFolderChildren(folder,isAllowed,descendants)
     end
 end
 
+local function aimHayTnt(world,config,root,isAllowed,preferred)
+    if not root or not root.Parent or not isAllowed() then return nil end
+    local folder=world:FindFirstChild("HaystackClient")
+    if not folder then return nil end
+    local function valid(part)
+        if not part or part.Parent~=folder or not part:IsA("BasePart") or part:GetAttribute("HayId")==nil then return false end
+        local delta=part.Position-root.Position
+        return delta.X*delta.X+delta.Z*delta.Z>9
+    end
+    local hay=valid(preferred) and preferred or nil
+    if not hay then
+        local best=math.huge
+        local position=root.Position
+        for _,part in budgetedFolderChildren(folder,isAllowed) do
+            if valid(part) then
+                local delta=part.Position-position
+                local score=delta:Dot(delta)
+                if score<best then best=score;hay=part end
+            end
+        end
+    end
+    -- The scan may yield. Use the current character and target positions afterward.
+    if not root.Parent or not isAllowed() or not valid(hay) then return nil end
+    local target=hay.Position
+    local origin=root.Position+Vector3.new(0,1.5,0)
+    local toward=target-origin
+    local planar=Vector3.new(toward.X,0,toward.Z)
+    if planar.Magnitude<=3 then return nil end
+    -- Put the projectile outside the avatar, on the side facing the hay.
+    origin+=planar.Unit*2.5
+    local displacement=target-origin
+    if displacement.Magnitude<0.1 then return nil end
+    local minSpeed=tonumber(config and config.TNT_MIN_THROW_SPEED)
+    local maxSpeed=tonumber(config and config.TNT_MAX_THROW_SPEED)
+    local fuse=tonumber(config and config.TNT_FUSE_TIME) or 2.9
+    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil end
+    local up=math.abs(displacement.Unit:Dot(Vector3.yAxis))>0.97 and Vector3.zAxis or Vector3.yAxis
+    local from=CFrame.lookAt(origin,target,up)
+    -- Earliest feasible trajectory within the game's configured throw-speed limits.
+    for index=4,60 do
+        local flight=index*0.025
+        if flight>=fuse-0.15 then break end
+        local velocity=displacement/flight+Vector3.new(0,world.Gravity*flight*0.5,0)
+        local speed=velocity.Magnitude
+        if speed>=minSpeed and speed<=maxSpeed then return from,velocity,hay,flight end
+    end
+    return nil
+end
+
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
 local earlyIntroRunning = true
@@ -1550,17 +1599,19 @@ end
             end
             if sharedFarmState.AutoUseTNT and needleFolder and not tntBlocked() and not needlePriority()
                 and os.clock()>=tntStartupReadyAt
-                and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Light() then
+                and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Ready() then
                 -- Light waits for acknowledgement: recheck before sending the throw.
                 if sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority() then
-                    local camera=Workspace.CurrentCamera
-                    local from=camera and camera.CFrame
-                    if LocalPlayer:GetAttribute("CutsceneActive")==true or sharedFarmPuzzleBusy() then
-                        local root=farmRoot()
-                        from=root and (root.CFrame+Vector3.new(0,1.5,0))
+                    local root=farmRoot()
+                    local function allowed()
+                        return not hubUnloaded and sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority()
                     end
-                    if from then
-                        tntRetry.Throw(from,from.LookVector*40+Vector3.new(0,8,0))
+                    local from,velocity,hay=aimHayTnt(Workspace,sharedGameConfig,root,allowed)
+                    if from and root and root.Parent and root==farmRoot() and allowed() and tntRetry.Light() then
+                        from,velocity=aimHayTnt(Workspace,sharedGameConfig,root,allowed,hay)
+                        if from and root.Parent and root==farmRoot() and allowed() then
+                            tntRetry.Throw(from,velocity)
+                        end
                     end
                 end
             end

@@ -552,11 +552,12 @@ local function createAutoUpgradeRuntime(options)
     local config, configModule, pending
     local tracks = {
         {"UpgVacPower","VacuumPower"},{"UpgVacCooling","VacuumCooling"},
-        {"UpgVacRuntime","VacuumRuntime"},{"UpgTntCooldown","TntCooldown"},
+        {"UpgVacRuntime","VacuumRuntime"},
         {"UpgTntPower","TntPower"},{"UpgTntLuck","TntLuck"},
         {"UpgCapacity","Capacity"},{"UpgHandSpeed","Speed"},{"UpgHandGrab","Grab"},{"UpgHandHold","HandHold"},
         {"UpgPitchCooldown","PitchforkCooldown"},{"UpgPitchHold","PitchforkHold"},{"UpgPitchSweep","Pitchfork"},
         {"UpgDroneSpeed","DroneSpeed"},{"UpgDroneGrab","DroneGrab"},{"UpgDroneCapacity","DroneCapacity"},
+        {"UpgTntCooldown","TntCooldown"},
     }
     local function status(text) options.Status(text) end
     local function level(name) return tonumber(options.Player:GetAttribute("HayUpgrade"..name)) or 1 end
@@ -588,7 +589,7 @@ local function createAutoUpgradeRuntime(options)
             end
         end
         local cash=tonumber(options.Cash()) or 0
-        local selected, available, vacuum, power=0,{},nil,nil
+        local selected, available, vacuum, power, earlyTnt, lateTnt=0,{},nil,nil,nil,nil
         for _,entry in ipairs(tracks) do
             if options.State[entry[1]] then
                 selected+=1
@@ -598,16 +599,24 @@ local function createAutoUpgradeRuntime(options)
                 local price=nextLevel and cost(entry[2],nextLevel)
                 if price then
                     local target={Flag=entry[1],Name=entry[2],Level=current,Cost=price}
-                    available[#available+1]=target
+                    if entry[2]=="TntCooldown" then
+                        -- Tracks start at L1: two purchases reach L3.
+                        if current<3 then earlyTnt=target else lateTnt=target end
+                    else
+                        available[#available+1]=target
+                    end
                     if entry[2]=="VacuumPower" then power=target end
                     if (entry[2]=="VacuumPower" or entry[2]=="VacuumCooling") and (not vacuum or price<vacuum.Cost) then vacuum=target end
                 end
             end
         end
         if selected==0 then status("No cash upgrades enabled"); return end
-        if #available==0 then status("Selected cash upgrades are maxed or unavailable"); return end
+        if #available==0 and not earlyTnt and not lateTnt then status("Selected cash upgrades are maxed or unavailable"); return end
         local target
-        if power then
+        if earlyTnt then
+            if cash<earlyTnt.Cost then status(string.format("Saving for TntCooldown: $%.2f / $%.2f",cash,earlyTnt.Cost)); return end
+            target=earlyTnt
+        elseif power then
             if cash<power.Cost then status(string.format("Saving for VacuumPower: $%.2f / $%.2f",cash,power.Cost)); return end
             target=power
         elseif vacuum and cash>=vacuum.Cost*0.75 then
@@ -615,9 +624,11 @@ local function createAutoUpgradeRuntime(options)
             target=vacuum
         else
             for _,entry in ipairs(available) do if cash>=entry.Cost then target=entry;break end end
+            -- Remaining TNT speed levels wait until all other enabled tracks finish.
+            if #available==0 and lateTnt and cash>=lateTnt.Cost then target=lateTnt end
         end
         if not target then
-            local cheapest=available[1]
+            local cheapest=available[1] or lateTnt
             for _,entry in ipairs(available) do if entry.Cost<cheapest.Cost then cheapest=entry end end
             status(string.format("Waiting for cash: $%.2f / $%.2f (%s)",cash,cheapest.Cost,cheapest.Name)); return
         end
@@ -630,6 +641,7 @@ local function createAutoUpgradeRuntime(options)
         if not ok then config=nil; pending=nil; status("Upgrade error; retrying: "..tostring(err)) end
     end}
 end
+
 
 local function createTntRetryGate(getRemote, getCooldown)
     local remote, connection

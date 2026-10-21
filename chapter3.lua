@@ -693,6 +693,7 @@ end
 
 local function createTntRetryGate(getRemote, getCooldown, getLightTime)
     local startupReadyAt=os.clock()+1.5 -- One-time startup delay; never wait on a lit fuse.
+    local lastLitAt
     local remote, connection
     local alive, nextLightAt, phase, expiresAt, throwReadyAt = true, 0, nil, 0, 0
     local function cooldown()
@@ -705,15 +706,17 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
         if not current or not current:IsA("RemoteEvent") then return false end
         if current~=remote then
             if connection then connection:Disconnect() end
-            remote=current; phase=nil; nextLightAt=0
+            remote=current; phase=nil; nextLightAt=0; lastLitAt=nil
             connection=remote.OnClientEvent:Connect(function(action,value)
                 local now=os.clock()
                 if action=="denied" then
                     local remaining=tonumber(value)
                     if not remaining or remaining~=remaining or remaining<0 or remaining==math.huge then remaining=1 end
+                    lastLitAt=nil -- A server denial overrides predicted upgrade savings.
                     nextLightAt=now+remaining+0.05
                     phase=nil
                 elseif action=="lit" then
+                    lastLitAt=now
                     nextLightAt=now+cooldown()+0.05
                     if phase=="waiting" then
                         phase="lit"
@@ -729,10 +732,20 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
         return true
     end
     local gate={}
-    function gate.Remaining() return math.max(0,math.max(startupReadyAt,nextLightAt)-os.clock()) end
-    function gate.Ready() return bind() and os.clock()>=math.max(startupReadyAt,nextLightAt) end
+    local function deadline()
+        -- An upgrade can shorten the cooldown after a light request was acknowledged.
+        if lastLitAt then nextLightAt=math.min(nextLightAt,lastLitAt+cooldown()+0.05) end
+        return math.max(startupReadyAt,nextLightAt)
+    end
+    function gate.Remaining() return math.max(0,deadline()-os.clock()) end
+    function gate.Ready() return bind() and os.clock()>=deadline() end
+    function gate.WaitInterval()
+        local remaining=gate.Remaining()
+        return remaining>0 and math.clamp(remaining,0.03,0.25) or 0.1
+    end
     function gate.Light()
         if not gate.Ready() then return false end
+        lastLitAt=nil -- Lost acknowledgements retain their reserved retry deadline.
         phase="waiting"
         nextLightAt=os.clock()+cooldown()+0.05 -- Lost acknowledgements must not cause rapid retries.
         local ok=pcall(remote.FireServer,remote,"light")
@@ -1520,7 +1533,7 @@ end
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
-            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
+            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone)
                 and needleFolder and not farmBlocked() and not needlePriority() and not bossToolsBusy() then
                 if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
                     local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() and not bossToolsBusy() end)
@@ -1530,6 +1543,14 @@ end
                     and LocalPlayer:GetAttribute("DroneDeployed")~=true then
                     sendFarmRemote("DeployDrone")
                 end
+
+            end
+        end
+    end)
+    spawnChapterWorker(function()
+        while not hubUnloaded do
+            task.wait(tntRetry.WaitInterval())
+            if needleFolder and not farmBlocked() and not needlePriority() and not bossToolsBusy() then
                 if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Ready() then
                     if sharedFarmState.AutoUseTNT and not farmBlocked() and not needlePriority() then
                         local root=farmRoot()

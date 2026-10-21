@@ -459,6 +459,55 @@ local function budgetedFolderChildren(folder,isAllowed,descendants)
     end
 end
 
+local function aimHayTnt(world,config,root,isAllowed,preferred)
+    if not root or not root.Parent or not isAllowed() then return nil end
+    local folder=world:FindFirstChild("HaystackClient")
+    if not folder then return nil end
+    local function valid(part)
+        if not part or part.Parent~=folder or not part:IsA("BasePart") or part:GetAttribute("HayId")==nil then return false end
+        local delta=part.Position-root.Position
+        return delta.X*delta.X+delta.Z*delta.Z>9
+    end
+    local hay=valid(preferred) and preferred or nil
+    if not hay then
+        local best=math.huge
+        local position=root.Position
+        for _,part in budgetedFolderChildren(folder,isAllowed) do
+            if valid(part) then
+                local delta=part.Position-position
+                local score=delta:Dot(delta)
+                if score<best then best=score;hay=part end
+            end
+        end
+    end
+    -- The scan may yield. Use the current character and target positions afterward.
+    if not root.Parent or not isAllowed() or not valid(hay) then return nil end
+    local target=hay.Position
+    local origin=root.Position+Vector3.new(0,1.5,0)
+    local toward=target-origin
+    local planar=Vector3.new(toward.X,0,toward.Z)
+    if planar.Magnitude<=3 then return nil end
+    -- Put the projectile outside the avatar, on the side facing the hay.
+    origin+=planar.Unit*2.5
+    local displacement=target-origin
+    if displacement.Magnitude<0.1 then return nil end
+    local minSpeed=tonumber(config and config.TNT_MIN_THROW_SPEED)
+    local maxSpeed=tonumber(config and config.TNT_MAX_THROW_SPEED)
+    local fuse=tonumber(config and config.TNT_FUSE_TIME) or 2.9
+    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil end
+    local up=math.abs(displacement.Unit:Dot(Vector3.yAxis))>0.97 and Vector3.zAxis or Vector3.yAxis
+    local from=CFrame.lookAt(origin,target,up)
+    -- Earliest feasible trajectory within the game's configured throw-speed limits.
+    for index=4,60 do
+        local flight=index*0.025
+        if flight>=fuse-0.15 then break end
+        local velocity=displacement/flight+Vector3.new(0,world.Gravity*flight*0.5,0)
+        local speed=velocity.Magnitude
+        if speed>=minSpeed and speed<=maxSpeed then return from,velocity,hay,flight end
+    end
+    return nil
+end
+
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(false, true)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
 local earlyIntroPending, stopEarlyIntro
@@ -3863,26 +3912,12 @@ local function afkTntDistanceLimit()
     return math.max(afkOrbitRadius,planned,afkSweepRadius or 0)+9
 end
 local function afkTntThrow(root, anchor)
-    local origin = root.Position + Vector3.new(0, 1.5, 0)
-    local hay = findOrbitHayTarget(anchor)
-    local target = anchor + Vector3.new(math.cos(afkOrbitAngle) * afkOrbitRadius * 0.82, 1, math.sin(afkOrbitAngle) * afkOrbitRadius * 0.82)
-    if hay and hay.Parent then
-        target = hay.Position + Vector3.new(0, math.max(0.5, hay.Size.Y * 0.5), 0)
-    end
-    local displacement = target - origin
-    if displacement.Magnitude < 1.5 then
-        local look = root.CFrame.LookVector
-        local planar = Vector3.new(look.X, 0, look.Z)
-        if planar.Magnitude < 0.1 then planar = Vector3.new(0, 0, -1) end
-        target = origin + planar.Unit * 4 + Vector3.new(0, -2, 0)
-        displacement = target - origin
-    end
-    local up = math.abs(displacement.Unit:Dot(Vector3.yAxis)) > 0.97 and Vector3.zAxis or Vector3.yAxis
-    local fromCharacter = CFrame.lookAt(origin, target, up)
-    local travelSeconds = 0.45
-    local throwVelocity = displacement / travelSeconds + Vector3.new(0, 0.5 * Workspace.Gravity * travelSeconds, 0)
-    return fromCharacter, throwVelocity
+    local hay=findOrbitHayTarget(anchor)
+    return aimHayTnt(Workspace,GameConfig,root,function()
+        return not Unloaded and State.AutoUseTNT and farmLoopEnabled() and not LocalPlayer:GetAttribute("NeedleInputLocked")
+    end,hay)
 end
+
 task.spawn(function()
     while not Unloaded do
         task.wait(tonumber(State.ToolInterval) or 0.5)
@@ -3911,25 +3946,24 @@ task.spawn(function()
             if not tntRetry.Ready() then
                 tntTelemetry.SetStatus(string.format("Cooldown: %.1fs",tntRetry.Remaining()));return
             end
-            tntTelemetry.SetStatus("Waiting for server lighting confirmation")
-            if not tntRetry.Light() then tntTelemetry.SetStatus("Lighting denied or unconfirmed; waiting before retry");return end
-            if not State.AutoUseTNT or not farmLoopEnabled() or LocalPlayer:GetAttribute("NeedleInputLocked") then
-                tntTelemetry.SetStatus("Cancelled before throw: priority or setting changed");return
+            local function allowed()
+                return not Unloaded and State.AutoUseTNT and farmLoopEnabled() and not LocalPlayer:GetAttribute("NeedleInputLocked")
             end
-            local camera=Workspace.CurrentCamera
             root=getHRP();target=afkPlayerAnchor or afkCameraAnchor
             if not positionAllowed() then return end
-            if afk then
-                local from,velocity=afkTntThrow(root,target)
-                -- Target selection can yield; respect priority again before sending.
-                if not State.AutoUseTNT or not farmLoopEnabled() or LocalPlayer:GetAttribute("NeedleInputLocked") then
-                    tntTelemetry.SetStatus("Cancelled during target selection");return
-                end
-                if not root.Parent or root~=getHRP() or not positionAllowed() then return end
-                tntRetry.Throw(from,velocity)
-            elseif camera then
-                tntRetry.Throw(camera.CFrame,camera.CFrame.LookVector*40+Vector3.new(0,8,0))
-            else tntTelemetry.SetStatus("Waiting for camera");return end
+            local from,velocity,hay
+            if afk then from,velocity,hay=afkTntThrow(root,target)
+            else from,velocity,hay=aimHayTnt(Workspace,GameConfig,root,allowed) end
+            if not from or not root or not root.Parent or root~=getHRP() or not allowed() then
+                tntTelemetry.SetStatus("Waiting for reachable hay / valid throw trajectory");return
+            end
+            tntTelemetry.SetStatus("Waiting for server lighting confirmation")
+            if not tntRetry.Light() then tntTelemetry.SetStatus("Lighting denied or unconfirmed; waiting before retry");return end
+            -- Lighting can yield: refresh geometry and verify input/character priority again.
+            if not root.Parent or root~=getHRP() or not allowed() or not positionAllowed() then return end
+            from,velocity=aimHayTnt(Workspace,GameConfig,root,allowed,hay)
+            if not from or not root.Parent or root~=getHRP() or not allowed() or not positionAllowed() then return end
+            tntRetry.Throw(from,velocity)
             tntTelemetry.SetStatus("Throw request sent")
         end,function(errorText) return tostring(errorText) end)
         if not ok then tntTelemetry.SetStatus("Worker error (will retry): "..err) end

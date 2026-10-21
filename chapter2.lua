@@ -676,7 +676,7 @@ local function createTntRetryGate(getRemote, getCooldown)
         local deadline=os.clock()+2
         while alive and phase=="waiting" and os.clock()<deadline do task.wait(0.03) end
         if not alive or phase~="lit" then phase=nil;return false end
-        task.wait(0.4)
+        -- Throw immediately after the server confirms lighting.
         return alive and phase=="lit" and os.clock()<expiresAt
     end
     function gate.Throw(...)

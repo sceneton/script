@@ -64,6 +64,7 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     local env=type(getgenv)=='function' and getgenv()or _G
     if env.BeyyWinsRecorder then env.BeyyWinsRecorder.Stop()end
     local httpService=game:GetService('HttpService')
+    local winsStorage=game:GetService('ReplicatedStorage')
     local player=game:GetService('Players').LocalPlayer
     local storage='BeyyHub'
     local settingsPath=storage..'/wins_webhook.json'
@@ -142,7 +143,7 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     local completionConnection,completionRemote
     local function sample()
         if not alive or not isRunning()then return end
-        local rs=game:GetService('ReplicatedStorage')
+        local rs=winsStorage
         local folder=rs:FindFirstChild('NeedleHaystack')
         local remote=folder and folder:FindFirstChild('NeedleRoundCompleted')
         if remote~=completionRemote then
@@ -331,7 +332,7 @@ local function createPitchforkSelector(allowModels, preferHovered, options)
         return part:GetAttribute(idName) or (allowModels and not options.PartIdOnly and obj:GetAttribute(idName))
     end
     local alive, folder = true, nil
-    local slots, positions, freeSlots, connections = {}, {}, {}, {}
+    local slots, positions, freeSlots, connections = {}, {}, {}, table.create(2)
     local slotCount = 0
     local lastTarget, lastTargetTime
     local function clearFolder()
@@ -1086,14 +1087,17 @@ do
     end
 -- Beyy native UI. Embedded into each module; no remote UI dependency.
 local function createNativeUI()
+    -- Runtime efficiency pass: private caches only.
     local UI = {}
+    local players = game:GetService("Players")
+    local newInstance = Instance.new
     local input = game:GetService("UserInputService")
     local run = game:GetService("RunService")
     local http = game:GetService("HttpService")
     local colors = {bg=Color3.fromRGB(20,22,27), row=Color3.fromRGB(32,35,42), text=Color3.fromRGB(231,234,240), accent=Color3.fromRGB(58,104,153)}
     local function node(class, parent, props)
-        local obj = Instance.new(class)
-        for k,v in pairs(props or {}) do obj[k]=v end
+        local obj = newInstance(class)
+        if props then for k,v in pairs(props) do obj[k]=v end end
         obj.Parent=parent
         return obj
     end
@@ -1163,7 +1167,7 @@ local function createNativeUI()
     function UI:CreateWindow(options)
         local w={Closed=false,Destroyed=false,Connections={},Tabs={},ToggleKey=Enum.KeyCode.RightControl}
         self.Window=w
-        local parent=game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+        local parent=players.LocalPlayer:WaitForChild("PlayerGui")
         if type(gethui)=="function" then local ok,value=pcall(gethui); if ok and value then parent=value end end
         local gui=node("ScreenGui",parent,{Name="BeyyNativeHub",ResetOnSpawn=false,IgnoreGuiInset=false,DisplayOrder=10000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
         w.Gui=gui
@@ -1989,6 +1993,10 @@ local function launchCutsceneBypass()
         local Players = game:GetService("Players")
         local RunService = game:GetService("RunService")
         local UserInputService = game:GetService("UserInputService")
+        local workspace = Workspace
+        local sin, cos, abs = math.sin, math.cos, math.abs
+        local upAxis = Vector3.yAxis
+        local cameraRaycastParams, cameraRaycastCharacter
         local player = Players.LocalPlayer or Players.PlayerAdded:Wait()
 
         local env = _G
@@ -2114,8 +2122,8 @@ local function launchCutsceneBypass()
             if originalMouseBehavior == nil then originalMouseBehavior = UserInputService.MouseBehavior end
         end
         local function lookVector()
-            local cp = math.cos(pitch)
-            return Vector3.new(math.sin(yaw)*cp, math.sin(pitch), math.cos(yaw)*cp)
+            local cp = cos(pitch)
+            return Vector3.new(sin(yaw)*cp, sin(pitch), cos(yaw)*cp)
         end
         local function hideHeadForFirstPerson()
             if not cameraFirstPerson then return end
@@ -2155,22 +2163,29 @@ local function launchCutsceneBypass()
                 local eye = head and head.Position or (rt.Position + Vector3.new(0, 1.6, 0))
                 local result, focus
                 if cameraFirstPerson then
-                    result = CFrame.lookAt(eye, eye + vec * 8, Vector3.yAxis)
+                    result = CFrame.lookAt(eye, eye + vec * 8, upAxis)
                     focus = eye + vec * 8
                     hideHeadForFirstPerson()
                 else
                     local target = rt.Position + Vector3.new(0, 1.6, 0)
                     local desired = target - vec * distance
-                    local params = RaycastParams.new()
-                    params.FilterType = Enum.RaycastFilterType.Exclude
-                    params.FilterDescendantsInstances = char and {char} or {}
-                    params.RespectCanCollide = true
+                    local params = cameraRaycastParams
+                    if not params then
+                        params = RaycastParams.new()
+                        params.FilterType = Enum.RaycastFilterType.Exclude
+                        params.RespectCanCollide = true
+                        cameraRaycastParams = params
+                    end
+                    if cameraRaycastCharacter ~= char then
+                        params.FilterDescendantsInstances = char and {char} or {}
+                        cameraRaycastCharacter = char
+                    end
                     local hit = workspace:Raycast(target, desired - target, params)
                     if hit then
                         local hitDistance = (hit.Position - target).Magnitude
                         desired = target - vec * math.max(0.35, math.min(distance, hitDistance - 0.40))
                     end
-                    result = CFrame.lookAt(desired, target, Vector3.yAxis)
+                    result = CFrame.lookAt(desired, target, upAxis)
                     focus = target
                 end
                 cam.CameraType = Enum.CameraType.Scriptable
@@ -2215,7 +2230,12 @@ local function launchCutsceneBypass()
             if not pg then return end
             for _, gui in ipairs(pg:GetChildren()) do
                 if gui:IsA("ScreenGui") and SAFE_HUD_NAMES[gui.Name:lower()] then
-                    hudNormal[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder }
+                    local saved = hudNormal[gui]
+                    if saved then
+                        saved.enabled, saved.order = gui.Enabled, gui.DisplayOrder
+                    else
+                        hudNormal[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder }
+                    end
                 end
             end
         end
@@ -2400,27 +2420,27 @@ local function launchCutsceneBypass()
             if not alive or not enabled or not active or not faceCameraEnabled then return end
             local hum, rt = humanoid(), root()
             if not hum or not rt or rt.Anchored or not yaw then return end
-            local forward = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
+            local forward = Vector3.new(sin(yaw), 0, cos(yaw))
             local oldLook = rt.CFrame.LookVector
             local flatOld = Vector3.new(oldLook.X, 0, oldLook.Z)
             local dot = flatOld.Magnitude > 0.01 and flatOld.Unit:Dot(forward) or 0
             if hum.AutoRotate then hum.AutoRotate = false end
             if dot < 0.9995 then
-                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, Vector3.yAxis)
+                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, upAxis)
                 pcall(function() rt.CFrame = rt.CFrame:Lerp(desired, 0.35) end)
             end
+        end
+        local function down(key)
+            return UserInputService:IsKeyDown(key)
         end
         local function directMovement()
             local hum = humanoid()
             if not hum or UserInputService:GetFocusedTextBox() then return end
-            local function down(key)
-                return UserInputService:IsKeyDown(key)
-            end
             local x = (down(Enum.KeyCode.D) and 1 or 0) - (down(Enum.KeyCode.A) and 1 or 0)
             local z = (down(Enum.KeyCode.W) and 1 or 0) - (down(Enum.KeyCode.S) and 1 or 0)
             if x ~= 0 or z ~= 0 then
                 if not yaw then return end
-                local front = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
+                local front = Vector3.new(sin(yaw), 0, cos(yaw))
                 local right = Vector3.new(-front.Z, 0, front.X)
                 local motion = front*z + right*x
                 if motion.Magnitude > 1 then motion = motion.Unit end
@@ -2429,6 +2449,7 @@ local function launchCutsceneBypass()
             if down(Enum.KeyCode.Space) then pcall(function() hum.Jump = true end) end
         end
         local function restoreCamera()
+            cameraRaycastParams, cameraRaycastCharacter = nil, nil
             restoreHeadTransparency()
             local cam = camera()
             if cam then
@@ -2569,6 +2590,7 @@ local function launchCutsceneBypass()
             end
         end))
         hook(player.CharacterAdded:Connect(function()
+            cameraRaycastParams, cameraRaycastCharacter = nil, nil
             controls, lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil, nil
             task.delay(0.4, function() if alive and not active then rememberGameplay() end end)
         end))
@@ -2585,7 +2607,7 @@ local function launchCutsceneBypass()
             end)
             local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
             if ok and md and (cameraFirstPerson or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)) then
-                if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
+                if abs(md.X) > 0 or abs(md.Y) > 0 then
                     yaw = yaw - md.X * 0.004
                     pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)
                 end
@@ -2593,7 +2615,6 @@ local function launchCutsceneBypass()
             local now = os.clock()
             local dt = clamp(now - lastRenderTime, 0, 0.08)
             lastRenderTime = now
-            local function down(key) return UserInputService:IsKeyDown(key) end
             if not UserInputService:GetFocusedTextBox() then
                 local h = (down(Enum.KeyCode.Right) and 1 or 0) - (down(Enum.KeyCode.Left) and 1 or 0)
                 local v = (down(Enum.KeyCode.Up) and 1 or 0) - (down(Enum.KeyCode.Down) and 1 or 0)
@@ -2628,6 +2649,7 @@ local function launchCutsceneBypass()
             if not alive then return end
             local wasActive = active
             alive, enabled, active = false, false, false
+            cameraRaycastParams, cameraRaycastCharacter = nil, nil
             pcall(function() RunService:UnbindFromRenderStep(renderId) end)
             unwatchLeverCamera()
             if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end

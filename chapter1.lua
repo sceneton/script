@@ -707,6 +707,7 @@ end
 
 local function createTntRetryGate(getRemote, getCooldown, getLightTime)
     local startupReadyAt=os.clock()+1.5 -- One-time startup delay; never wait on a lit fuse.
+    local lastLitAt
     local remote, connection
     local alive, nextLightAt, phase, expiresAt, throwReadyAt = true, 0, nil, 0, 0
     local function cooldown()
@@ -719,15 +720,17 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
         if not current or not current:IsA("RemoteEvent") then return false end
         if current~=remote then
             if connection then connection:Disconnect() end
-            remote=current; phase=nil; nextLightAt=0
+            remote=current; phase=nil; nextLightAt=0; lastLitAt=nil
             connection=remote.OnClientEvent:Connect(function(action,value)
                 local now=os.clock()
                 if action=="denied" then
                     local remaining=tonumber(value)
                     if not remaining or remaining~=remaining or remaining<0 or remaining==math.huge then remaining=1 end
+                    lastLitAt=nil -- A server denial overrides predicted upgrade savings.
                     nextLightAt=now+remaining+0.05
                     phase=nil
                 elseif action=="lit" then
+                    lastLitAt=now
                     nextLightAt=now+cooldown()+0.05
                     if phase=="waiting" then
                         phase="lit"
@@ -743,10 +746,20 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
         return true
     end
     local gate={}
-    function gate.Remaining() return math.max(0,math.max(startupReadyAt,nextLightAt)-os.clock()) end
-    function gate.Ready() return bind() and os.clock()>=math.max(startupReadyAt,nextLightAt) end
+    local function deadline()
+        -- An upgrade can shorten the cooldown after a light request was acknowledged.
+        if lastLitAt then nextLightAt=math.min(nextLightAt,lastLitAt+cooldown()+0.05) end
+        return math.max(startupReadyAt,nextLightAt)
+    end
+    function gate.Remaining() return math.max(0,deadline()-os.clock()) end
+    function gate.Ready() return bind() and os.clock()>=deadline() end
+    function gate.WaitInterval()
+        local remaining=gate.Remaining()
+        return remaining>0 and math.clamp(remaining,0.03,0.25) or 0.1
+    end
     function gate.Light()
         if not gate.Ready() then return false end
+        lastLitAt=nil -- Lost acknowledgements retain their reserved retry deadline.
         phase="waiting"
         nextLightAt=os.clock()+cooldown()+0.05 -- Lost acknowledgements must not cause rapid retries.
         local ok=pcall(remote.FireServer,remote,"light")
@@ -3925,7 +3938,7 @@ end
 
 task.spawn(function()
     while not Unloaded do
-        task.wait(tonumber(State.ToolInterval) or 0.5)
+        task.wait(tntRetry.WaitInterval())
         if not IN_GAME then break end
         local ok,err=xpcall(function()
             if not State.AutoUseTNT then tntTelemetry.SetStatus("Disabled");return end

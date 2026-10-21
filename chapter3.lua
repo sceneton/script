@@ -92,12 +92,14 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     state.Pending=type(state.Pending)=='table'and state.Pending or {}
     state.SessionWins=tonumber(state.SessionWins)or 0
     state.Started=tonumber(state.Started)or os.time()
+    state.StatsGeneration=tonumber(state.StatsGeneration)or 0
     local function validSeconds(value)
         return type(value)=='number'and value>0 and value<math.huge
     end
     local roundTimes={}
     local function rememberRound(id,seconds)
         if not validSeconds(seconds)or type(id)~='string'or id==''then return end
+        if id==state.RoundIgnoreJob then return end
         for _,round in ipairs(roundTimes)do if round.Id==id then return end end
         roundTimes[#roundTimes+1]={Id=id,Seconds=seconds}
         if #roundTimes>100 then table.remove(roundTimes,1)end
@@ -185,12 +187,28 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
         local entry={Id=tostring(player.UserId)..':'..tostring(total),Username=player.Name,UserId=player.UserId,
             Chapter=chapter,PlaceId=game.PlaceId,JobId=game.JobId,Before=before,Total=total,Gain=gain,
             SessionWins=state.SessionWins,SessionStarted=state.Started,Observed=os.time(),RoundSeconds=seconds,
-            RoundAverageSeconds=average,RoundSampleCount=count}
+            RoundAverageSeconds=average,RoundSampleCount=count,StatsGeneration=state.StatsGeneration}
         state.Pending[#state.Pending+1]=entry
         save()
         if type(appendfile)=='function'then pcall(function()appendfile(storage..'/wins_history_'..tostring(player.UserId)..'.jsonl',httpService:JSONEncode(entry)..'\n')end)end
         setStatus('Recorded +'..tostring(gain)..' win(s); total '..tostring(total))
     end
+    tab:Button({Title='Reset Webhook Wins/hr & Average',Callback=function()
+        if not alive or not isRunning()then return end
+        -- Stage any saved-win increase first; pending reports retain their old stats.
+        pcall(sample)
+        local completed=completion~=nil
+        for _,round in ipairs(roundTimes)do if round.Id==game.JobId then completed=true;break end end
+        local ok,ownedCompletion=pcall(function()return player:GetAttribute('NeedleRoundComplete')end)
+        if completed or (ok and ownedCompletion==true)then state.RoundIgnoreJob=game.JobId end
+        state.SessionWins=0
+        state.Started=os.time()
+        state.StatsGeneration+=1
+        table.clear(roundTimes)
+        completion=nil
+        if save()then setStatus('Webhook stats reset: 0 tracked wins; 0/100 timed rounds')
+        else setStatus('Webhook stats reset for this run; could not save the reset')end
+    end})
     local function formatRoundTime(seconds)
         local whole=math.floor(seconds+0.5)
         return string.format('%d:%02d',whole//60,whole%60)
@@ -198,7 +216,8 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     local function payload(entry)
         -- Completion can arrive just after the saved-win update. Fill in its
         -- timing before delivery, and keep averages fixed for later retries.
-        if entry.JobId==game.JobId and completion and os.clock()-completion.At<10 then
+        if (entry.StatsGeneration or 0)==state.StatsGeneration and entry.JobId==game.JobId
+            and completion and os.clock()-completion.At<10 then
             if validSeconds(completion.Seconds)then entry.RoundSeconds=completion.Seconds end
             entry.RoundAverageSeconds,entry.RoundSampleCount=roundAverage()
         end

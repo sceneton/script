@@ -646,6 +646,7 @@ local function createAutoUpgradeRuntime(options)
 end
 
 local function createTntRetryGate(getRemote, getCooldown)
+    local startupReadyAt=os.clock()+1.5 -- One-time startup delay; never wait on a lit fuse.
     local remote, connection
     local alive, nextLightAt, phase, expiresAt = true, 0, nil, 0
     local function cooldown()
@@ -679,8 +680,8 @@ local function createTntRetryGate(getRemote, getCooldown)
         return true
     end
     local gate={}
-    function gate.Remaining() return math.max(0,nextLightAt-os.clock()) end
-    function gate.Ready() return bind() and os.clock()>=nextLightAt end
+    function gate.Remaining() return math.max(0,math.max(startupReadyAt,nextLightAt)-os.clock()) end
+    function gate.Ready() return bind() and os.clock()>=math.max(startupReadyAt,nextLightAt) end
     function gate.Light()
         if not gate.Ready() then return false end
         phase="waiting"
@@ -690,7 +691,7 @@ local function createTntRetryGate(getRemote, getCooldown)
         local deadline=os.clock()+2
         while alive and phase=="waiting" and os.clock()<deadline do task.wait(0.03) end
         if not alive or phase~="lit" then phase=nil;return false end
-        task.wait(0.4)
+        -- Throw immediately after the server confirms lighting.
         return alive and phase=="lit" and os.clock()<expiresAt
     end
     function gate.Throw(...)

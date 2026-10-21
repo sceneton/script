@@ -95,3 +95,13 @@ Local files:
 - BeyyHub/weekly_leaderboard_delivery.json: pending captures and recent delivered capture IDs.
 
 Incomplete/conflicting reads preserve the last valid snapshot. Pending uploads persist across lobby visits and retry HTTP failures, including Discord rate limits. Capture IDs prevent ordinary duplicate submissions; an accepted HTTP request whose response is lost can still produce a duplicate retry. Uploads include the displayed leaderboard and clan membership data. No webhook credential is embedded in source or attachments.
+
+## Runtime efficiency pass
+
+The lobby, Chapters 1–4, and the embedded/standalone native UI use private caches for stable services, constructors and camera math helpers. Roblox instance methods retain their colon/namecall form, consistent with [Luau's method-call guidance](https://luau.org/performance/#fast-method-calls).
+
+The third-person cutscene camera reuses RaycastParams and only replaces its character exclusion list when the character changes. Camera restoration, controller stop and respawn release these cached references. HUD state records are updated in place. Chapter 1's orbit status is formatted only when its displayed inputs change, and immutable hay-probe coordinates are captured before scanning. Known-size private orbit buffers and selector connection arrays use table.create; sparse/public tables keep their original handling.
+
+Polling intervals, startup waits, remote-call statements, render/simulation bindings, selection order and return values remain unchanged in the changed paths. The loader was reviewed and left unchanged. No spatial query, UI traversal or wait was moved across a yield boundary merely to cache its result.
+
+Validation: all six changed Lua files and the unchanged loader compile with the official Luau compiler. Before/after mocked tests cover camera output and filtering, collisions/errors/character changes, orbit labels and heights, hay scan order/slicing/cancellation, native UI/config behavior, saved-win reporting and selector cleanup. In the isolated camera test, 1,000 continuous third-person updates allocated 1,000 RaycastParams objects before and one after; the orbit test reduced 6,005 formatting calls to six with identical displayed output. These are test workload results, not a measured Studio frame-rate improvement. Live Studio CPU/heap measurements remain to be taken with the [MicroProfiler and Developer Console](https://create.roblox.com/docs/performance-optimization/improve).

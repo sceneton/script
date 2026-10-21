@@ -1510,10 +1510,22 @@ end
     end)
     do
     local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end)
+    local function tntBlocked()
+        if hubUnloaded or BEYY_CHAPTER=="Lobby"
+            or LocalPlayer:GetAttribute("IntroCutsceneFinished")~=true
+            or LocalPlayer:GetAttribute("NeedleRoundComplete")==true
+            or LocalPlayer:GetAttribute("HintViewerOpen")==true then return true end
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local ending=pg and pg:FindFirstChild("NeedleEndingUI")
+        if ending and ending:IsA("ScreenGui") and ending.Enabled then return true end
+        -- Cinematics can lock input; TNT uses its remote without taking Mouse1.
+        return LocalPlayer:GetAttribute("NeedleInputLocked")==true
+            and LocalPlayer:GetAttribute("CutsceneActive")~=true
+    end
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
-            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
+            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone)
                 and needleFolder and not farmBlocked() and not needlePriority() then
                 if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
                     local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() end)
@@ -1523,13 +1535,19 @@ end
                     and LocalPlayer:GetAttribute("DroneDeployed")~=true then
                     sendFarmRemote("DeployDrone")
                 end
-                if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Light() then
-                    if sharedFarmState.AutoUseTNT and not farmBlocked() and not needlePriority() then
-                        local camera=Workspace.CurrentCamera
-                        if camera then
-                            tntRetry.Throw(camera.CFrame,
-                                camera.CFrame.LookVector*40+Vector3.new(0,8,0))
-                        end
+            end
+            if sharedFarmState.AutoUseTNT and needleFolder and not tntBlocked() and not needlePriority()
+                and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Light() then
+                -- Light waits for acknowledgement: recheck before sending the throw.
+                if sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority() then
+                    local camera=Workspace.CurrentCamera
+                    local from=camera and camera.CFrame
+                    if LocalPlayer:GetAttribute("CutsceneActive")==true or sharedFarmPuzzleBusy() then
+                        local root=farmRoot()
+                        from=root and (root.CFrame+Vector3.new(0,1.5,0))
+                    end
+                    if from then
+                        tntRetry.Throw(from,from.LookVector*40+Vector3.new(0,8,0))
                     end
                 end
             end

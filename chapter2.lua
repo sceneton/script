@@ -1510,6 +1510,7 @@ end
     end)
     do
     local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end)
+    local tntStartupReadyAt=os.clock()+1.5 -- Delay once per execution, before lighting the fuse.
     local function tntBlocked()
         if hubUnloaded or BEYY_CHAPTER=="Lobby"
             or LocalPlayer:GetAttribute("IntroCutsceneFinished")~=true
@@ -1537,6 +1538,7 @@ end
                 end
             end
             if sharedFarmState.AutoUseTNT and needleFolder and not tntBlocked() and not needlePriority()
+                and os.clock()>=tntStartupReadyAt
                 and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Light() then
                 -- Light waits for acknowledgement: recheck before sending the throw.
                 if sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority() then

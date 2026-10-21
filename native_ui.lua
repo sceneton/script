@@ -1,13 +1,16 @@
 -- Beyy native UI. Embedded into each module; no remote UI dependency.
 local function createNativeUI()
+    -- Runtime efficiency pass: private caches only.
     local UI = {}
+    local players = game:GetService("Players")
+    local newInstance = Instance.new
     local input = game:GetService("UserInputService")
     local run = game:GetService("RunService")
     local http = game:GetService("HttpService")
     local colors = {bg=Color3.fromRGB(20,22,27), row=Color3.fromRGB(32,35,42), text=Color3.fromRGB(231,234,240), accent=Color3.fromRGB(58,104,153)}
     local function node(class, parent, props)
-        local obj = Instance.new(class)
-        for k,v in pairs(props or {}) do obj[k]=v end
+        local obj = newInstance(class)
+        if props then for k,v in pairs(props) do obj[k]=v end end
         obj.Parent=parent
         return obj
     end
@@ -77,7 +80,7 @@ local function createNativeUI()
     function UI:CreateWindow(options)
         local w={Closed=false,Destroyed=false,Connections={},Tabs={},ToggleKey=Enum.KeyCode.RightControl}
         self.Window=w
-        local parent=game:GetService("Players").LocalPlayer:WaitForChild("PlayerGui")
+        local parent=players.LocalPlayer:WaitForChild("PlayerGui")
         if type(gethui)=="function" then local ok,value=pcall(gethui); if ok and value then parent=value end end
         local gui=node("ScreenGui",parent,{Name="BeyyNativeHub",ResetOnSpawn=false,IgnoreGuiInset=false,DisplayOrder=10000,ZIndexBehavior=Enum.ZIndexBehavior.Sibling})
         w.Gui=gui

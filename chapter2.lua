@@ -388,6 +388,16 @@ local function createPitchforkSelector(allowModels, preferHovered, options)
     local function stop()
         alive=false; clearFolder(); folder=nil
     end
+    local function compactSlots()
+        local live = slotCount - #freeSlots
+        if #freeSlots < 64 or #freeSlots <= live / 2 then return end
+        local dense, newPositions = table.create(live), {}
+        for index = 1, slotCount do
+            local object = slots[index]
+            if object then dense[#dense+1] = object; newPositions[object] = #dense end
+        end
+        slots, positions, freeSlots, slotCount = dense, newPositions, {}, #dense
+    end
     local function selectTarget(isAllowed, cacheSeconds)
         if not alive or not isAllowed() then return nil end
         local current=Workspace:FindFirstChild(folderName)
@@ -406,10 +416,12 @@ local function createPitchforkSelector(allowModels, preferHovered, options)
         local sliceStarted=os.clock()
         local origin=root.Position
         local scanFolder=folder
+        compactSlots()
+        local scanSlots, scanSlotCount = slots, slotCount
         local index=1
-        while index<=slotCount do
+        while index<=scanSlotCount do
             if not alive or folder~=scanFolder or not scanFolder.Parent then return nil end
-            local obj=slots[index]
+            local obj=scanSlots[index]
             if obj and obj.Parent==scanFolder then
                 local part=obj:IsA("BasePart") and obj or ((obj:IsA("Model") and obj.PrimaryPart) or obj:FindFirstChildWhichIsA("BasePart",options.Recursive~=false))
                 if part then
@@ -444,8 +456,181 @@ local function createPitchforkSelector(allowModels, preferHovered, options)
     end
     return selectTarget,stop
 end
-local function budgetedFolderChildren(folder,isAllowed,descendants)
-    local children=descendants and folder:GetDescendants() or folder:GetChildren()
+-- Shared hay membership and spatial candidates; snapshots stay immutable across yields.
+local haySearch = (function()
+    local current, ready, alive = nil, false, true
+    local records, cells, moving, connections = {}, {}, {}, {}
+    local serial, revision, snapshotRevision, snapshot = 0, 0, -1, nil
+    local orderSlots = {}
+    local holes = 0
+    local CELL = 16
+    local function cellKey(position)
+        return math.floor(position.X / CELL)..":"..math.floor(position.Z / CELL)
+    end
+    local function detach(record)
+        local bucket = record.Cell and cells[record.Cell]
+        if bucket then
+            bucket[record] = nil
+            if next(bucket) == nil then cells[record.Cell] = nil end
+        end
+        record.Cell = nil
+    end
+    local function move(record)
+        -- Physics movement need not emit Position signals. Scan unanchored parts live.
+        if record.Object.Anchored == false then
+            detach(record); moving[record] = true; return
+        end
+        moving[record] = nil
+        local key = cellKey(record.Object.Position)
+        if key == record.Cell then return end
+        detach(record)
+        local bucket = cells[key]
+        if not bucket then bucket = {}; cells[key] = bucket end
+        bucket[record] = true; record.Cell = key
+    end
+    local function compactOrder()
+        local dense = {}
+        for _, record in ipairs(orderSlots) do
+            if record then
+                dense[#dense + 1] = record; record.Slot = #dense
+            end
+        end
+        orderSlots, holes = dense, 0
+    end
+    local function remove(object)
+        local record = records[object]
+        if not record then return end
+        records[object] = nil; detach(record); moving[record] = nil
+        if record.Connection then record.Connection:Disconnect() end
+        if record.AnchoredConnection then record.AnchoredConnection:Disconnect() end
+        orderSlots[record.Slot] = false; holes += 1
+        record.Object, record.Connection, record.AnchoredConnection = nil, nil, nil
+        while #orderSlots > 0 and orderSlots[#orderSlots] == false do
+            orderSlots[#orderSlots] = nil; holes -= 1
+        end
+        if holes >= 64 and holes > (#orderSlots - holes) / 2 then compactOrder() end
+        revision += 1; snapshot = nil
+    end
+    local function clear()
+        ready = false
+        for _, connection in ipairs(connections) do connection:Disconnect() end
+        table.clear(connections)
+        for _, record in pairs(records) do
+            if record.Connection then record.Connection:Disconnect() end
+            if record.AnchoredConnection then record.AnchoredConnection:Disconnect() end
+        end
+        records, cells, moving = {}, {}, {}
+        orderSlots, holes = {}, 0
+        snapshot, snapshotRevision, serial = nil, -1, 0
+        revision += 1
+    end
+    local function add(object)
+        if records[object] or object.Parent ~= current then return end
+        serial += 1
+        local record = {Object = object, Order = serial, Slot = #orderSlots + 1}
+        records[object] = record
+        orderSlots[#orderSlots + 1] = record
+        if object:IsA("BasePart") then
+            move(record)
+            record.Connection = object:GetPropertyChangedSignal("Position"):Connect(function()
+                if records[object] == record and object.Parent == current then move(record) end
+            end)
+            record.AnchoredConnection = object:GetPropertyChangedSignal("Anchored"):Connect(function()
+                if records[object] == record and object.Parent == current then move(record) end
+            end)
+        end
+        revision += 1; snapshot = nil
+    end
+    local function watch(folder)
+        if not alive then return false end
+        if not folder or not folder.Parent then
+            if current then clear(); current = nil end
+            return false
+        end
+        if current == folder then return ready end
+        clear(); current = folder
+        if not folder then return false end
+        local watched = folder
+        connections[1] = folder.ChildAdded:Connect(add)
+        connections[2] = folder.ChildRemoved:Connect(remove)
+        connections[3] = folder.AncestryChanged:Connect(function()
+            if current == watched and not watched.Parent then clear(); current = nil end
+        end)
+        local started = os.clock()
+        for index, object in ipairs(folder:GetChildren()) do
+            if not alive or current ~= watched then return false end
+            add(object)
+            if index % 64 == 0 and os.clock() - started >= 0.001 then
+                task.wait(); started = os.clock()
+            end
+        end
+        if not alive or current ~= watched or not watched.Parent then return false end
+        ready = true
+        return true
+    end
+    local api = {}
+    function api.Snapshot(folder)
+        if not watch(folder) then return nil end
+        if snapshot and snapshotRevision == revision then return snapshot end
+        if holes > 0 then compactOrder() end
+        local result = table.create(#orderSlots)
+        for index, record in ipairs(orderSlots) do result[index] = record.Object end
+        snapshot, snapshotRevision = result, revision
+        return result
+    end
+    function api.Nearby(folder, center, radius, height)
+        if not watch(folder) then return nil end
+        -- Large or unusual upgrade values fall back to the original exact caller filter.
+        if type(radius) ~= "number" or radius ~= radius or radius < 0 or radius == math.huge then
+            return api.Snapshot(folder)
+        end
+        local minX, maxX = math.floor((center.X-radius)/CELL), math.floor((center.X+radius)/CELL)
+        local minZ, maxZ = math.floor((center.Z-radius)/CELL), math.floor((center.Z+radius)/CELL)
+        if (maxX-minX+1)*(maxZ-minZ+1) > 256 then return api.Snapshot(folder) end
+        local ordered = {}
+        local function include(record)
+            local object = record.Object
+            if object.Parent ~= folder then return end
+            local p = object.Position
+            local dx, dz = p.X - center.X, p.Z - center.Z
+            if dx * dx + dz * dz <= radius * radius and math.abs(p.Y - center.Y) <= height then
+                ordered[#ordered + 1] = record
+            end
+        end
+        for x = minX, maxX do
+            for z = minZ, maxZ do
+                local bucket = cells[x..":"..z]
+                if bucket then
+                    for record in pairs(bucket) do
+                        include(record)
+                    end
+                end
+            end
+        end
+        for record in pairs(moving) do include(record) end
+        table.sort(ordered, function(a, b) return a.Order < b.Order end)
+        local result = table.create(#ordered)
+        for index, record in ipairs(ordered) do result[index] = record.Object end
+        return result
+    end
+    function api.Stop()
+        alive = false; clear(); current = nil
+    end
+    local previous = _G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP = function()
+        api.Stop()
+        if previous then pcall(previous) end
+    end
+    return api
+end)()
+
+local function budgetedFolderChildren(folder,isAllowed,descendants,nearCenter,nearRadius)
+    local children
+    if not descendants and folder.Name == "HaystackClient" then
+        if nearCenter then children = haySearch.Nearby(folder,nearCenter,nearRadius,nearRadius)
+        else children = haySearch.Snapshot(folder) end
+    end
+    children = children or (descendants and folder:GetDescendants() or folder:GetChildren())
     local index,started=0,os.clock()
     return function()
         if not folder.Parent or not isAllowed() then return nil end
@@ -1549,7 +1734,7 @@ end
                         if radius>0 and hay then
                             local folder=Workspace:FindFirstChild("HaystackClient")
                             if folder then
-                                for _,other in budgetedFolderChildren(folder,function() return not hubUnloaded and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) end) do
+                                for _,other in budgetedFolderChildren(folder,function() return not hubUnloaded and (sharedFarmState.AutoPickHay or sharedFarmState.AutoFindNeedle) end,false,hay.Position,radius+1) do
                                     if other~=hay and other:IsA("BasePart")
                                         and other:GetAttribute("HayId")
                                         and (other.Position-hay.Position).Magnitude<=radius+1 then
@@ -4191,30 +4376,87 @@ local function launchCutsceneBypass()
             if saved[key] == nil then saved[key] = previous end
             pcall(function() inst[key] = 1 end)
         end
+        -- Candidate discovery happens once per overlay, then follows GUI membership.
+        local finalVisualIndex = {Gui = nil, Connections = {}, Screens = {}, Candidates = {}}
+        local function clearFinalVisualIndex()
+            for _, connection in ipairs(finalVisualIndex.Connections) do connection:Disconnect() end
+            for _, entry in pairs(finalVisualIndex.Screens) do
+                for _, connection in ipairs(entry.Connections) do connection:Disconnect() end
+            end
+            finalVisualIndex.Gui = nil
+            table.clear(finalVisualIndex.Connections)
+            table.clear(finalVisualIndex.Screens)
+            table.clear(finalVisualIndex.Candidates)
+        end
+        local function watchFinalVisualGui(pg)
+            if finalVisualIndex.Gui == pg then return end
+            clearFinalVisualIndex(); finalVisualIndex.Gui = pg
+            local function addScreen(gui)
+                if not gui:IsA("ScreenGui") or finalVisualIndex.Screens[gui] then return end
+                local entry = {Connections = {}, Objects = {}, Watching = false}
+                finalVisualIndex.Screens[gui] = entry
+                local function add(object)
+                    local keys
+                    if object:IsA("GuiObject") then
+                        keys = {"BackgroundTransparency"}
+                        if object:IsA("TextLabel") or object:IsA("TextButton") or object:IsA("TextBox") then
+                            keys[#keys+1] = "TextTransparency"; keys[#keys+1] = "TextStrokeTransparency"
+                        elseif object:IsA("ImageLabel") or object:IsA("ImageButton") then
+                            keys[#keys+1] = "ImageTransparency"
+                        end
+                    elseif object:IsA("UIStroke") then keys = {"Transparency"} end
+                    if keys then
+                        entry.Objects[object] = true; finalVisualIndex.Candidates[object] = keys
+                    end
+                end
+                local function remove(object)
+                    entry.Objects[object] = nil; finalVisualIndex.Candidates[object] = nil
+                end
+                local function refresh()
+                    local matching = isFinalOverlay(gui)
+                    if matching == entry.Watching then return end
+                    entry.Watching = matching
+                    if entry.Added then entry.Added:Disconnect(); entry.Removed:Disconnect() end
+                    entry.Added, entry.Removed = nil, nil
+                    for object in pairs(entry.Objects) do remove(object) end
+                    if matching then
+                        entry.Added = gui.DescendantAdded:Connect(add)
+                        entry.Removed = gui.DescendantRemoving:Connect(remove)
+                        for _, object in ipairs(gui:GetDescendants()) do add(object) end
+                    end
+                end
+                entry.Connections[1] = gui:GetPropertyChangedSignal("Name"):Connect(refresh)
+                -- These wrappers also disconnect the current membership connections.
+                entry.Connections[2] = {Disconnect = function()
+                    if entry.Added then entry.Added:Disconnect(); entry.Removed:Disconnect() end
+                end}
+                refresh()
+            end
+            local function removeScreen(gui)
+                local entry = finalVisualIndex.Screens[gui]
+                if not entry then return end
+                for _, connection in ipairs(entry.Connections) do connection:Disconnect() end
+                for object in pairs(entry.Objects) do finalVisualIndex.Candidates[object] = nil end
+                finalVisualIndex.Screens[gui] = nil
+            end
+            finalVisualIndex.Connections[1] = pg.ChildAdded:Connect(addScreen)
+            finalVisualIndex.Connections[2] = pg.ChildRemoved:Connect(removeScreen)
+            for _, gui in ipairs(pg:GetChildren()) do addScreen(gui) end
+        end
         local function hideFinalCutsceneVisuals()
             if not finalVisualsEnabled or not scene then return end
             local pg = player:FindFirstChildOfClass("PlayerGui")
-            if not pg then return end
-            for _, gui in ipairs(pg:GetChildren()) do
-                if isFinalOverlay(gui) then
-                    for _, el in ipairs(gui:GetDescendants()) do
-                        if el:IsA("GuiObject") then
-                            maskFinalProperty(el, "BackgroundTransparency")
-                            if el:IsA("TextLabel") or el:IsA("TextButton") or el:IsA("TextBox") then
-                                maskFinalProperty(el, "TextTransparency")
-                                maskFinalProperty(el, "TextStrokeTransparency")
-                            end
-                            if el:IsA("ImageLabel") or el:IsA("ImageButton") then
-                                maskFinalProperty(el, "ImageTransparency")
-                            end
-                        elseif el:IsA("UIStroke") then
-                            maskFinalProperty(el, "Transparency")
-                        end
-                    end
+            if not pg then clearFinalVisualIndex(); return end
+            watchFinalVisualGui(pg)
+            for object, keys in pairs(finalVisualIndex.Candidates) do
+                if object.Parent and object:IsDescendantOf(pg) then
+                    for _, key in ipairs(keys) do maskFinalProperty(object, key) end
                 end
             end
         end
+
         local function restoreFinalCutsceneVisuals()
+            clearFinalVisualIndex()
             for inst, props in pairs(finalVisualBefore) do
                 if inst.Parent then
                     for key, original in pairs(props) do

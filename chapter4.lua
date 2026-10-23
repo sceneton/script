@@ -1317,15 +1317,19 @@ local function createCandleAutomation(options)
         local root=model:FindFirstChild("Root")
         return root and root:IsA("BasePart") and root.Position or model:GetPivot().Position
     end
-    local function approach(model)
+    local function approach(model,interrupted)
         check()
+        if interrupted and interrupted()then return false end
         local root=assert(character:FindFirstChild("HumanoidRootPart"),"Waiting for character root")
         local target=positionOf(model)
         root.CFrame=CFrame.lookAt(target+Vector3.new(3,2,0),target)
         root.AssemblyLinearVelocity=Vector3.zero
         root.AssemblyAngularVelocity=Vector3.zero
-        pause(0.6)
+        if interrupted then
+            if waitFor(interrupted,0.6)then return false end
+        else pause(0.6)end
         assert(model.Parent and (root.Position-positionOf(model)).Magnitude<=10,"Interaction target moved out of reach")
+        return true
     end
     local function describeTarget(model,attempt)
         local root=character and character:FindFirstChild("HumanoidRootPart")
@@ -1349,23 +1353,58 @@ local function createCandleAutomation(options)
             end
         end
     end
+    local function pickupOutcome(candle)
+        if player:GetAttribute("CarryingCandle")~=nil then return "carrying" end
+        if altar:GetAttribute("AllLit")==true then return "ritual-completed" end
+        if not candle.Parent then return "removed" end
+        if candle:GetAttribute("Placed")~=nil then return "already-placed" end
+        local owner=candle:GetAttribute("HeldBy")
+        if owner~=nil and owner~=player.UserId then return "claimed-by-other-player" end
+        if candle:GetAttribute("HayCandle")~=true or candle:GetAttribute("Revealed")~=true then return "no-longer-exposed" end
+    end
     local function collect(candle)
+        local function finish(outcome,attempt,stage)
+            if outcome=="carrying" then
+                record("PickupConfirmed",function()return describeTarget(candle,attempt)end)
+                return true
+            end
+            record("PickupTargetUnavailable",function()
+                local data=describeTarget(candle,attempt)
+                data.Reason=outcome;data.Stage=stage
+                return data
+            end)
+            status(altar:GetAttribute("AllLit")==true and "All candles completed"
+                or "Candle target changed; selecting another exposed candle")
+            return false
+        end
         for attempt=1,2 do
             check()
-            if player:GetAttribute("CarryingCandle")~=nil then return end
-            assert(candle.Parent and loose(candle),"Candle is no longer exposed and unclaimed")
-            status("Collecting "..candle.Name.." (attempt "..attempt..")")
-            approach(candle)
-            check()
-            record("PickupRequest",function()return describeTarget(candle,attempt)end)
-            remotes.PickUpCandle:FireServer(candle)
-            if waitFor(function()return player:GetAttribute("CarryingCandle")~=nil end,1.8)then
-                record("PickupConfirmed",function()return describeTarget(candle,attempt)end);return
+            local outcome=pickupOutcome(candle)
+            if outcome then return finish(outcome,attempt,"BeforeApproach")end
+            if candle:GetAttribute("HeldBy")~=player.UserId then
+                status("Collecting "..candle.Name.." (attempt "..attempt..")")
+                -- A teammate can claim or move this candle during the approach delay.
+                approach(candle,function()
+                    return pickupOutcome(candle)~=nil or candle:GetAttribute("HeldBy")==player.UserId
+                end)
             end
+            check()
+            outcome=pickupOutcome(candle)
+            if outcome then return finish(outcome,attempt,"AfterApproach")end
+            -- Local ownership can replicate before CarryingCandle. Wait for it instead
+            -- of sending a second request for an already held candle.
+            if candle:GetAttribute("HeldBy")==nil then
+                record("PickupRequest",function()return describeTarget(candle,attempt)end)
+                remotes.PickUpCandle:FireServer(candle)
+            end
+            waitFor(function()return pickupOutcome(candle)~=nil end,1.8)
+            outcome=pickupOutcome(candle)
+            if outcome then return finish(outcome,attempt,"WaitingForConfirmation")end
             record("PickupTimeout",function()return describeTarget(candle,attempt)end)
         end
         error("Pickup not confirmed; will retry")
     end
+
     local function place()
         holder=assert(findHolder(false),"Waiting for a free candle holder")
         for attempt=1,2 do
@@ -1477,16 +1516,17 @@ local function createCandleAutomation(options)
         end
         busy=true
         record("ActionStarted",function()return {Candle=candle and candle.Name,Holder=holder and holder.Name,Carrying=player:GetAttribute("CarryingCandle")}end)
+        local deferred=false
         local ok,err=xpcall(function()
             options.PauseTools()
             if not holder then
-                if candle then collect(candle)end
+                if candle and not collect(candle)then deferred=true;return end
                 place()
             end
             light()
             status(altar:GetAttribute("AllLit")==true and "All candles completed" or "Candle completed; continuing batch")
         end,function(e)return tostring(e)end)
-        record(ok and "ActionCompleted"or "ActionError",function()return {Error=not ok and tostring(err)or nil,Found=altar:GetAttribute("CandlesFound"),Lit=altar:GetAttribute("CandlesLit"),Holder=holder and holder.Name}end)
+        record(ok and (deferred and "ActionDeferred"or "ActionCompleted")or "ActionError",function()return {Error=not ok and tostring(err)or nil,Found=altar:GetAttribute("CandlesFound"),Lit=altar:GetAttribute("CandlesLit"),Holder=holder and holder.Name}end)
         releaseKey()
         if not ok then
             closePuzzle()

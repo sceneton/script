@@ -2462,6 +2462,8 @@ end)
 
     do
         local overview = overviewTab
+-- Unskippable controller adapted from BeyyTU/needlehub lobby.lua.
+-- Reference blob: 181c1d470765540fc8ef7cd45131602e9e7b099b; private runtime caches retained.
 local function cutsceneResultsVisible()
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local ending = pg and pg:FindFirstChild("NeedleEndingUI")
@@ -2473,7 +2475,6 @@ end
 local function setCutsceneBypassActive(_) end
 local cutsceneBypassStop = nil
 local function launchCutsceneBypass()
-    if BEYY_CHAPTER == "Lobby" then return true end
     if cutsceneBypassStop then return true end
     local ok, result = pcall(function()
 
@@ -2527,7 +2528,6 @@ local function launchCutsceneBypass()
         local lastRenderTime = os.clock()
 
         local function log(s)
-            -- Keep the controller quiet during normal scene transitions.
         end
         local function hook(c)
             if c then connections[#connections+1] = c end
@@ -2583,7 +2583,6 @@ local function launchCutsceneBypass()
         end
         local function kind()
             if shouldYieldCutsceneBypass() then return nil end
-            -- Explicit unfinished intros and visible skip/results UI keep normal behavior.
             if player:GetAttribute("IntroCutsceneFinished") == false then return nil end
             if introConfirmedAt and os.clock() - introConfirmedAt < INTRO_SETTLE_SECONDS then return nil end
             if yieldingToEnding then return nil end
@@ -2609,8 +2608,8 @@ local function launchCutsceneBypass()
             if originalMouseBehavior == nil then originalMouseBehavior = UserInputService.MouseBehavior end
         end
         local function lookVector()
-            local cp = cos(pitch)
-            return Vector3.new(sin(yaw)*cp, sin(pitch), cos(yaw)*cp)
+            local cp = math.cos(pitch)
+            return Vector3.new(math.sin(yaw)*cp, math.sin(pitch), math.cos(yaw)*cp)
         end
         local function hideHeadForFirstPerson()
             if not cameraFirstPerson then return end
@@ -2717,10 +2716,8 @@ local function launchCutsceneBypass()
             if not pg then return end
             for _, gui in ipairs(pg:GetChildren()) do
                 if gui:IsA("ScreenGui") and SAFE_HUD_NAMES[gui.Name:lower()] then
-                    local saved = hudNormal[gui]
-                    if saved then
-                        saved.enabled, saved.order = gui.Enabled, gui.DisplayOrder
-                    else
+                    local before = hudNormal[gui]
+                    if not before or before.enabled ~= gui.Enabled or before.order ~= gui.DisplayOrder then
                         hudNormal[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder }
                     end
                 end
@@ -2964,27 +2961,27 @@ local function launchCutsceneBypass()
             if not alive or not enabled or not active or not faceCameraEnabled then return end
             local hum, rt = humanoid(), root()
             if not hum or not rt or rt.Anchored or not yaw then return end
-            local forward = Vector3.new(sin(yaw), 0, cos(yaw))
+            local forward = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
             local oldLook = rt.CFrame.LookVector
             local flatOld = Vector3.new(oldLook.X, 0, oldLook.Z)
             local dot = flatOld.Magnitude > 0.01 and flatOld.Unit:Dot(forward) or 0
             if hum.AutoRotate then hum.AutoRotate = false end
             if dot < 0.9995 then
-                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, upAxis)
+                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, Vector3.yAxis)
                 pcall(function() rt.CFrame = rt.CFrame:Lerp(desired, 0.35) end)
             end
-        end
-        local function down(key)
-            return UserInputService:IsKeyDown(key)
         end
         local function directMovement()
             local hum = humanoid()
             if not hum or UserInputService:GetFocusedTextBox() then return end
+            local function down(key)
+                return UserInputService:IsKeyDown(key)
+            end
             local x = (down(Enum.KeyCode.D) and 1 or 0) - (down(Enum.KeyCode.A) and 1 or 0)
             local z = (down(Enum.KeyCode.W) and 1 or 0) - (down(Enum.KeyCode.S) and 1 or 0)
             if x ~= 0 or z ~= 0 then
                 if not yaw then return end
-                local front = Vector3.new(sin(yaw), 0, cos(yaw))
+                local front = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
                 local right = Vector3.new(-front.Z, 0, front.X)
                 local motion = front*z + right*x
                 if motion.Magnitude > 1 then motion = motion.Unit end
@@ -3142,16 +3139,13 @@ local function launchCutsceneBypass()
         local function handleCameraInput()
             if not alive or not enabled or not active or not yaw then return end
             pcall(function()
-                local dragging = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-                local desired = cameraFirstPerson and Enum.MouseBehavior.LockCenter
-                    or (dragging and Enum.MouseBehavior.LockCurrentPosition or Enum.MouseBehavior.Default)
-                if UserInputService.MouseBehavior ~= desired then
-                    UserInputService.MouseBehavior = desired
+                if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
                 end
             end)
             local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
-            if ok and md and (cameraFirstPerson or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)) then
-                if abs(md.X) > 0 or abs(md.Y) > 0 then
+            if ok and md then
+                if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
                     yaw = yaw - md.X * 0.004
                     pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)
                 end
@@ -3159,6 +3153,7 @@ local function launchCutsceneBypass()
             local now = os.clock()
             local dt = clamp(now - lastRenderTime, 0, 0.08)
             lastRenderTime = now
+            local function down(key) return UserInputService:IsKeyDown(key) end
             if not UserInputService:GetFocusedTextBox() then
                 local h = (down(Enum.KeyCode.Right) and 1 or 0) - (down(Enum.KeyCode.Left) and 1 or 0)
                 local v = (down(Enum.KeyCode.Up) and 1 or 0) - (down(Enum.KeyCode.Down) and 1 or 0)
@@ -3214,7 +3209,7 @@ local function launchCutsceneBypass()
         updateScene()
         task.spawn(function()
             while alive do
-                task.wait(0.1)
+                task.wait((active or scene) and 0.1 or 0.35)
                 if not active and not scene then
                     rememberGameplay()
                     rememberGameplayHud()

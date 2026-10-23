@@ -3170,6 +3170,59 @@ local function launchCutsceneBypass()
             pcall(function() UserInputService.MouseIconEnabled = true end)
         end
 
+        -- Chapter 4 cutscenes anchor the root independently of the camera/controls.
+        -- Own only the anchor we release, and return it when yielding mid-cutscene.
+        local movementRoot=nil
+        local movementReleases=0
+        local nextMovementAttempt,lastMovementError=0,-math.huge
+        local movementBlockers={"PumpkinSnared","PumpkinGrabbed","PumpkinPulled","BossHeld",
+            "BossRagdolled","BossRagdollRecovering","BossKnockdownCamera"}
+        local function restoreCutsceneAnchor(reason)
+            local previous=movementRoot
+            movementRoot=nil
+            if not previous or previous~=root() or not previous.Parent then return end
+            if player:GetAttribute("CutsceneActive")~=true or previous.Anchored then return end
+            local ok,err=pcall(function()previous.Anchored=true end)
+            cutsceneDiagnostics.Record(ok and "MovementAnchorRestored" or "MovementAnchorRestoreError",function()
+                return {Reason=reason,Anchored=previous.Anchored,Error=not ok and tostring(err)or nil}
+            end)
+        end
+        local function syncCutsceneMovement()
+            local eligible=alive and enabled and active and scene~=nil and not yieldingToEnding
+                and not shouldYieldCutsceneBypass() and player:GetAttribute("IntroCutsceneFinished")==true
+                and player:GetAttribute("CutsceneActive")==true
+            local hum,rt=humanoid(),root()
+            if eligible then
+                for _,attribute in ipairs(movementBlockers)do
+                    if player:GetAttribute(attribute)==true then eligible=false;break end
+                end
+                local stunnedUntil=player:GetAttribute("BossStunnedUntil")
+                if type(stunnedUntil)=="number" and stunnedUntil>0 and stunnedUntil>Workspace:GetServerTimeNow()then eligible=false end
+            end
+            if not eligible or not hum or (hum.Health and hum.Health<=0)or not rt then
+                restoreCutsceneAnchor("Cutscene movement no longer eligible")
+                return
+            end
+            if movementRoot and movementRoot~=rt then movementRoot=nil end
+            if not rt.Anchored or os.clock()<nextMovementAttempt then return end
+            local reapplied=movementRoot==rt
+            local ok,err=pcall(function()rt.Anchored=false end)
+            if ok and not rt.Anchored then
+                movementRoot=rt
+                movementReleases+=1
+                cutsceneDiagnostics.Record("MovementAnchorReleased",function()
+                    return {ReleaseCount=movementReleases,Reapplied=reapplied,Position=rt.Position,
+                        CutsceneActive=player:GetAttribute("CutsceneActive"),Scope="Local character only; server progression unchanged"}
+                end)
+            else
+                nextMovementAttempt=os.clock()+0.25
+                if os.clock()-lastMovementError>=1 then
+                    lastMovementError=os.clock()
+                    cutsceneDiagnostics.Record("MovementAnchorReleaseError",function()return {Error=tostring(err),Anchored=rt.Anchored}end)
+                end
+            end
+        end
+
         local function restoreInputs()
             local hum = humanoid()
             if hum then
@@ -3222,6 +3275,7 @@ local function launchCutsceneBypass()
             if down(Enum.KeyCode.Space) then pcall(function() hum.Jump = true end) end
         end
         local function restoreCamera()
+            restoreCutsceneAnchor("Camera ownership returned")
             cutsceneDiagnostics.Record("CameraRestore")
             cutsceneDiagnostics.ClearCamera()
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
@@ -3313,10 +3367,12 @@ local function launchCutsceneBypass()
             local shouldKeep = enabled and not yieldingToEnding and (current ~= nil or now < recoveryEnd)
             if shouldKeep then
                 if not active then enablePlayableCamera("recovery / F7") end
+                syncCutsceneMovement()
                 restoreInputs()
                 showGameplayHud()
                 hideFinalCutsceneVisuals()
             else
+                restoreCutsceneAnchor("Bypass yielded")
                 restoreFinalCutsceneVisuals()
                 restoreGameplayHud()
                 if active then disablePlayableCamera("recovered / bypass disabled") end
@@ -3328,7 +3384,7 @@ local function launchCutsceneBypass()
             return {Installed=true,Alive=alive,Enabled=enabled,Active=active,Scene=scene,YieldingToEnding=yieldingToEnding,
                 SkipVisible=lastEndingSkipVisible,PriorityYield=shouldYieldCutsceneBypass(),
                 RecoveryRemaining=math.max(0,recoveryEnd-os.clock()),FirstPerson=cameraFirstPerson,
-                CameraWriteError=cameraErrorWarned,PuzzleOrCandleBusy=sharedFarmPuzzleBusy()}
+                CameraWriteError=cameraErrorWarned,MovementAnchorOwned=movementRoot~=nil,MovementAnchorReleases=movementReleases,PuzzleOrCandleBusy=sharedFarmPuzzleBusy()}
         end
         hook(UserInputService.InputBegan:Connect(function(input, processed)
             if processed or UserInputService:GetFocusedTextBox() or shouldYieldCutsceneBypass() then return end
@@ -3383,6 +3439,8 @@ local function launchCutsceneBypass()
             end
         end))
         hook(player.CharacterAdded:Connect(function()
+            movementRoot=nil
+            nextMovementAttempt=0
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
             controls, lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil, nil
             task.delay(0.4, function() if alive and not active then rememberGameplay() end end)
@@ -3436,6 +3494,7 @@ local function launchCutsceneBypass()
         end)
         local simulationSignal = RunService.PreSimulation or RunService.Heartbeat
         hook(simulationSignal:Connect(function()
+            syncCutsceneMovement()
             if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then directMovement() end
         end))
 
@@ -3444,6 +3503,7 @@ local function launchCutsceneBypass()
             cutsceneDiagnostics.Record("ControllerStopped",cutsceneDiagnostics.Probe)
             cutsceneDiagnostics.Probe=nil
             cutsceneDiagnostics.ClearCamera()
+            restoreCutsceneAnchor("Controller stopped")
             local wasActive = active
             alive, enabled, active = false, false, false
             cameraRaycastParams, cameraRaycastCharacter = nil, nil

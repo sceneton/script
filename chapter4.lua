@@ -986,10 +986,225 @@ local function createPumpkinWeakpointResolver(spots)
     end
 end
 
+-- Optional bounded Chapter 4 diagnostics. No gameplay actions or network delivery.
+local function createChapter4Diagnostics(options)
+    local player,world,storage=options.Player,options.World,options.Storage
+    local alive=true
+    local function attributes(object,names)
+        local result={}
+        if object then for _,name in ipairs(names)do result[name]=object:GetAttribute(name)end end
+        return result
+    end
+    local function named(object)return object and object.Name or nil end
+    local function position()
+        local character=player.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        return root and root.Position or nil
+    end
+    local function safeValue(value,depth,seen)
+        local kind=typeof(value)
+        if kind=="nil" or kind=="boolean"then return value end
+        if kind=="number"then return value==value and math.abs(value)<math.huge and value or tostring(value)end
+        if kind=="string"then return value:sub(1,768)end
+        if kind=="Vector3"then return {X=value.X,Y=value.Y,Z=value.Z}end
+        if kind=="Instance"then return {Name=value.Name,Class=value.ClassName}end
+        if kind~="table"then return "<"..kind..">"end
+        depth=depth or 0;seen=seen or {}
+        if depth>=5 or seen[value]then return "<bounded>"end
+        seen[value]=true
+        local result,count={},0
+        for key,item in pairs(value)do
+            count+=1;if count>40 then result.Truncated=true;break end
+            if type(key)=="string"or type(key)=="number"then result[key]=safeValue(item,depth+1,seen)end
+        end
+        seen[value]=nil
+        return result
+    end
+    local function candleSnapshot()
+        local altar=world:FindFirstChild("WhereToPlaceCandles")
+        local folder=world:FindFirstChild("HayCandles")
+        local pg=player:FindFirstChildOfClass("PlayerGui")
+        local gui=pg and pg:FindFirstChild("CandleMatchMinigame")
+        local holders,candles={},{}
+        if altar then for _,name in ipairs({"1","2","3","4"})do
+            local holder=altar:FindFirstChild(name)
+            if holder then holders[name]=attributes(holder,{"Lit","ReservedBy"})end
+        end end
+        if folder then for index,candle in ipairs(folder:GetChildren())do
+            if index>16 then break end
+            candles[#candles+1]={Name=candle.Name,State=attributes(candle,{"HayCandle","Revealed","HeldBy","Placed"})}
+        end end
+        local ritual=storage:FindFirstChild("CandleRitual")
+        local remotes=ritual and ritual:FindFirstChild("Remotes")
+        local available={}
+        for _,name in ipairs({"PickUpCandle","PlaceCandle","MatchDone","MatchPuzzle"})do available[name]=remotes and remotes:FindFirstChild(name)~=nil or false end
+        return {Enabled=options.State.AutoCandles==true,MenuClosed=options.MenuClosed(),Position=position(),
+            Player=attributes(player,{"CarryingCandle","NeedleInputLocked","CutsceneActive","HintViewerOpen"}),
+            Altar=attributes(altar,{"CandlesFound","CandlesLit","CandlesTotal","AllLit"}),AltarPresent=altar~=nil,
+            Holders=holders,Candles=candles,MatchGuiEnabled=gui and gui.Enabled or false,Remotes=available}
+    end
+    local function bossSnapshot()
+        local boss=world:FindFirstChild("PumpkinGolem_Rig")
+        local folder=storage:FindFirstChild("PumpkinBoss")
+        return {Enabled=options.State.AutoBossWeakpointPitchfork==true,MenuClosed=options.MenuClosed(),Position=position(),
+            BossPresent=boss~=nil,Boss=attributes(boss,{"BossState","BossHealth","BossHidden","BossWeakPoint","BossWeakPointEndsAt","BossWeakPointDizzy","BossHeadless","Encounter"}),
+            Player=attributes(player,{"PitchforkOwned","PitchforkReach","PitchforkCooldown","NeedleEquippedSlot","BossEquippedSlot","NeedleInputLocked","CutsceneActive","HintViewerOpen","PumpkinSnared","PumpkinGrabbed","PumpkinPulled","BossHeld","BossRagdolled","BossRagdollRecovering","BossKnockdownCamera","BossStunnedUntil"}),
+            FeedbackAvailable=folder and folder:FindFirstChild("Feedback")~=nil or false,
+            Interpretation="Sends are requests. Matching feedback is reported as received; boss-health changes may include other players."}
+    end
+    local function recorder(label,flag,path,tab,snapshot)
+        local api={LastStatus="Waiting for controller",Counters={}}
+        local ring,head,count,sequence,dropped={},1,0,0,0
+        local dirty,wasEnabled,nextSave,lastUI=false,false,0,nil
+        local connections,watched={},{}
+        local feedback,lastOtherFeedback=nil,-math.huge
+        local lastCooldown=-math.huge
+        local CAPACITY=256
+        function api.Enabled()return alive and options.Alive() and options.State[flag]==true end
+        function api.Record(kind,build)
+            if not api.Enabled()then return end
+            if kind=="Cooldown"then
+                if os.clock()-lastCooldown<1 then return end
+                lastCooldown=os.clock()
+            end
+            local ok,data=pcall(function()return safeValue(type(build)=="function"and build()or build or {})end)
+            if not ok then
+                api.Counters.DiagnosticErrors=(api.Counters.DiagnosticErrors or 0)+1
+                data={DiagnosticError=tostring(data):sub(1,512)}
+            end
+            sequence+=1
+            local entry={Sequence=sequence,At=os.clock(),Kind=kind,Data=data}
+            if count<CAPACITY then ring[(head+count-1)%CAPACITY+1]=entry;count+=1
+            else ring[head]=entry;head=head%CAPACITY+1;dropped+=1 end
+            api.Counters[kind]=(api.Counters[kind]or 0)+1;dirty=true
+        end
+        function api.Status(text)
+            api.LastStatus=tostring(text)
+            api.Record("Status",function()return {Text=api.LastStatus,Current=snapshot()}end)
+        end
+        function api.Snapshot()
+            local events={}
+            for index=1,count do events[index]=ring[(head+index-2)%CAPACITY+1]end
+            local ok,current=pcall(function()return safeValue(snapshot())end)
+            return {Schema=1,Feature=label,PlaceId=game.PlaceId,JobId=game.JobId,UserId=player.UserId,
+                ExportedAt=os.time(),Enabled=api.Enabled(),Status=api.LastStatus,Capacity=CAPACITY,
+                DroppedEvents=dropped,TotalEvents=sequence,Counters=table.clone(api.Counters),Events=events,
+                Current=ok and current or {DiagnosticError=tostring(current):sub(1,512)}}
+        end
+        local status=tab:Paragraph({Title=label.." Diagnostics Status",Desc="Off; no diagnostic capture"})
+        local function export(manual)
+            local ok,json=pcall(function()return options.Http:JSONEncode(api.Snapshot())end)
+            if not ok then return false,"JSON encoding failed"end
+            local wrote,saved=pcall(options.Write,path,json)
+            saved=wrote and saved==true
+            local copied=false
+            if manual and type(setclipboard)=="function"then copied=pcall(setclipboard,json)end
+            if saved then dirty=false end
+            return saved or copied,(saved and ("Saved "..path)or "Could not save locally")..(copied and "; copied JSON to clipboard"or "")
+        end
+        function api.Export()
+            local ok,message=export(true)
+            status:SetDesc(message)
+            return ok,message
+        end
+        options.Toggle(tab,flag,label.." Diagnostics")
+        tab:Button({Title="Export "..label.." Diagnostics",Callback=api.Export})
+        local function disconnect()
+            for _,connection in ipairs(connections)do connection:Disconnect()end
+            table.clear(connections);table.clear(watched);feedback=nil
+        end
+        local function watch(key,object,names)
+            watched[key]=object
+            if not object then return end
+            for _,attribute in ipairs(names)do
+                local previous=object:GetAttribute(attribute)
+                connections[#connections+1]=object:GetAttributeChangedSignal(attribute):Connect(function()
+                    api.Record(attribute=="BossHealth"and "BossHealthChange"or "AttributeChanged",function()
+                        local value=object:GetAttribute(attribute)
+                        local result={Source=key,Attribute=attribute,Previous=previous,Value=value}
+                        if attribute=="BossHealth"and type(previous)=="number"and type(value)=="number"then
+                            result.Decrease=previous-value;result.Attribution="All attackers; not proof of our hit"
+                        end
+                        previous=value;return result
+                    end)
+                end)
+            end
+        end
+        local function syncObservers()
+            local altar=world:FindFirstChild("WhereToPlaceCandles")
+            local boss=world:FindFirstChild("PumpkinGolem_Rig")
+            local folder=storage:FindFirstChild("PumpkinBoss")
+            local remote=folder and folder:FindFirstChild("Feedback")
+            if remote and not remote:IsA("RemoteEvent")then remote=nil end
+            local desired={Player=player,Altar=label=="Candle"and altar or nil,Boss=label=="Boss Weak-Point"and boss or nil}
+            if label=="Candle"and altar then for _,name in ipairs({"1","2","3","4"})do desired["Holder"..name]=altar:FindFirstChild(name)end end
+            if label=="Candle"then remote=nil end
+            local changed=feedback~=remote
+            for key,object in pairs(desired)do if watched[key]~=object then changed=true end end
+            for key,object in pairs(watched)do if desired[key]~=object then changed=true end end
+            if not changed and next(watched)then return end
+            disconnect();feedback=remote
+            for key,object in pairs(desired)do
+                local names
+                if key=="Player"then names=label=="Candle"and {"CarryingCandle","NeedleInputLocked","CutsceneActive","HintViewerOpen"}
+                    or {"PitchforkOwned","PitchforkReach","PitchforkCooldown","NeedleInputLocked","CutsceneActive","PumpkinSnared","PumpkinGrabbed","PumpkinPulled","BossHeld","BossRagdolled","BossStunnedUntil"}
+                elseif key=="Altar"then names={"CandlesFound","CandlesLit","AllLit"}
+                elseif key=="Boss"then names={"BossState","BossHealth","BossWeakPoint","BossWeakPointEndsAt","BossWeakPointDizzy","BossHeadless"}
+                else names={"ReservedBy","Lit"}end
+                watch(key,object,names)
+            end
+            if feedback then connections[#connections+1]=feedback.OnClientEvent:Connect(function(kind,userId,amount,positionValue,tool,grade)
+                if not api.Enabled()then return end
+                local matching=kind=="Hit"and userId==player.UserId and tool=="Pitchfork"
+                if not matching and kind~="Hit"and os.clock()-lastOtherFeedback<1 then return end
+                lastOtherFeedback=os.clock()
+                api.Record(matching and "LocalPitchforkFeedback"or "BossFeedback",function()
+                    return {Kind=kind,UserId=userId,Amount=amount,Position=positionValue,Tool=tool,Grade=grade,
+                        Interpretation=matching and "Matching local pitchfork feedback; weak-point grade is reported, not inferred"or "Observed server feedback; not attributed to this automation"}
+                end)
+            end)end
+            api.Record("ObserverAttached",snapshot)
+        end
+        function api.Tick()
+            local enabled=api.Enabled()
+            if enabled then
+                if not wasEnabled then nextSave=os.clock()+5;api.Record("DiagnosticsEnabled",snapshot)end
+                syncObservers()
+                if dirty and os.clock()>=nextSave then nextSave=os.clock()+5;export(false)end
+            elseif wasEnabled then
+                disconnect()
+                if dirty then export(false)end
+            end
+            wasEnabled=enabled
+            local text=(enabled and "Capturing"or "Off").." | "..count.."/256 events | "..dropped.." overwritten"
+            if enabled and label=="Boss Weak-Point"then
+                text=text.." | requests "..(api.Counters.PitchforkRequest or 0).." | matching local feedback "..(api.Counters.LocalPitchforkFeedback or 0)
+            elseif enabled then
+                text=text.." | pickups "..(api.Counters.PickupConfirmed or 0).." | placements "..(api.Counters.PlacementConfirmed or 0)
+            end
+            if enabled then text=text.." | "..api.LastStatus end
+            if text~=lastUI then lastUI=text;status:SetDesc(text)end
+        end
+        function api.Stop()
+            disconnect()
+            if wasEnabled and dirty then export(false)end
+            wasEnabled=false
+        end
+        return api
+    end
+    local api={}
+    api.Candles=recorder("Candle","CandleDiagnostics",CACHE_FOLDER.."/chapter4_candle_diagnostics.json",options.CandleTab,candleSnapshot)
+    api.Boss=recorder("Boss Weak-Point","BossWeakpointDiagnostics",CACHE_FOLDER.."/chapter4_weakpoint_diagnostics.json",options.ToolsTab,bossSnapshot)
+    function api.Tick()api.Candles.Tick();api.Boss.Tick()end
+    function api.Stop()api.Candles.Stop();api.Boss.Stop();alive=false end
+    return api
+end
+
 local function createBossWeakpointPitchfork(options)
     local player,world=options.Player,options.World
     local active,nextSend,boss,root=true,0,nil,nil
     local bones,lastStatus={},nil
+    local function record(kind,build)if options.Record then pcall(options.Record,kind,build)end end
     local excluded={Sleeping=true,Intro=true,Rising=true,Falling=true,Returning=true,Unavailable=true,Defeated=true,PhaseTransition=true}
     local controller={}
     local function status(text)
@@ -1032,11 +1247,18 @@ local function createBossWeakpointPitchfork(options)
         local range=math.clamp(tonumber(player:GetAttribute("PitchforkReach"))or 13,13,24)
         if direction.Magnitude>range then status(string.format("Move closer to %s (%.1f / %.1f studs)",name,direction.Magnitude,range));return end
         if direction.Magnitude<0.01 then return end
-        if now<nextSend then return end
+        if now<nextSend then
+            record("Cooldown",function()return {Remaining=nextSend-now,Target=name}end)
+            return
+        end
         local remote=options.Remote()
         if not remote then status("Waiting for PitchforkDig remote");return end
-        local ok=pcall(remote.FireServer,remote,"Boss",head.Position,direction.Unit)
+        local ok,sendError=pcall(remote.FireServer,remote,"Boss",head.Position,direction.Unit)
         nextSend=now+math.max(0.1,tonumber(player:GetAttribute("PitchforkCooldown"))or 0.85)
+        record("PitchforkRequest",function()return {Sent=ok,Error=not ok and tostring(sendError)or nil,
+            WeakPoint=name,Origin=head.Position,Target=target,Direction=direction.Unit,Distance=direction.Magnitude,
+            Reach=range,Cooldown=nextSend-now,ServerTime=now,WeakPointEndsAt=ends,Dizzy=dizzy,
+            Geometry=details,BossHealth=rig:GetAttribute("BossHealth")}end)
         status(ok and ("Targeting "..name.."; hit confirmation handled by server")or "Pitchfork request failed; retry pending")
     end
     return controller
@@ -1048,6 +1270,7 @@ local function createCandleAutomation(options)
     local altar,remotes,holder,character
     local batchAltar,batchStarted,lastFound,lastLit=nil,false,0,0
     local lastStatus,lastWarning=nil,-math.huge
+    local function record(kind,build)if options.Record then pcall(options.Record,kind,build)end end
     local controller={}
     alive=true
     local function status(text)
@@ -1104,6 +1327,14 @@ local function createCandleAutomation(options)
         pause(0.6)
         assert(model.Parent and (root.Position-positionOf(model)).Magnitude<=10,"Interaction target moved out of reach")
     end
+    local function describeTarget(model,attempt)
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local target=positionOf(model)
+        return {Target=model.Name,Attempt=attempt,Position=target,PlayerPosition=root and root.Position,
+            Distance=root and (root.Position-target).Magnitude,Carrying=player:GetAttribute("CarryingCandle"),
+            Revealed=model:GetAttribute("Revealed"),HeldBy=model:GetAttribute("HeldBy"),Placed=model:GetAttribute("Placed"),
+            ReservedBy=model:GetAttribute("ReservedBy"),Lit=model:GetAttribute("Lit")}
+    end
     local function loose(candle)
         return candle:IsA("Model") and candle:GetAttribute("HayCandle")==true
             and candle:GetAttribute("Revealed")==true and candle:GetAttribute("HeldBy")==nil
@@ -1126,8 +1357,12 @@ local function createCandleAutomation(options)
             status("Collecting "..candle.Name.." (attempt "..attempt..")")
             approach(candle)
             check()
+            record("PickupRequest",function()return describeTarget(candle,attempt)end)
             remotes.PickUpCandle:FireServer(candle)
-            if waitFor(function()return player:GetAttribute("CarryingCandle")~=nil end,1.8)then return end
+            if waitFor(function()return player:GetAttribute("CarryingCandle")~=nil end,1.8)then
+                record("PickupConfirmed",function()return describeTarget(candle,attempt)end);return
+            end
+            record("PickupTimeout",function()return describeTarget(candle,attempt)end)
         end
         error("Pickup not confirmed; will retry")
     end
@@ -1139,10 +1374,14 @@ local function createCandleAutomation(options)
             status("Placing candle in holder "..holder.Name)
             approach(holder)
             check()
+            record("PlacementRequest",function()return describeTarget(holder,attempt)end)
             remotes.PlaceCandle:FireServer(holder)
             if waitFor(function()
                 return holder:GetAttribute("Lit")==true or holder:GetAttribute("ReservedBy")==player.UserId
-            end,2)then return end
+            end,2)then
+                record("PlacementConfirmed",function()return describeTarget(holder,attempt)end);return
+            end
+            record("PlacementTimeout",function()return describeTarget(holder,attempt)end)
             if player:GetAttribute("CarryingCandle")==nil then error("Placement unconfirmed; waiting for server state")end
         end
         error("Placement not confirmed; will retry")
@@ -1163,6 +1402,7 @@ local function createCandleAutomation(options)
             pause(0.46)
         end
         assert(waitFor(function()return holder:GetAttribute("Lit")==true end,5),"Lighting not confirmed; will retry")
+        record("LightingConfirmed",function()local data=describeTarget(holder);data.Mode="NormalMatch";return data end)
         waitFor(function()return not gui.Enabled end,2)
     end
     local function light()
@@ -1173,13 +1413,16 @@ local function createCandleAutomation(options)
         waitFor(function()local gui=puzzle();return gui and gui.Enabled end,1)
         check()
         status("Lighting holder "..holder.Name)
+        record("LightingRequest",function()return describeTarget(holder)end)
         remotes.MatchDone:FireServer(holder)
         if waitFor(function()return holder:GetAttribute("Lit")==true end,0.5)then
+            record("LightingConfirmed",function()local data=describeTarget(holder);data.Mode="Fast";return data end)
             closePuzzle()
             local gui=puzzle()
             if not gui or not gui.Enabled then return end
             status("Lighting confirmed; finishing minigame cleanup")
         else status("Using match-lighting fallback")end
+        record("LightingFallback",function()return describeTarget(holder)end)
         normalMatch()
         closePuzzle()
     end
@@ -1226,12 +1469,14 @@ local function createCandleAutomation(options)
             local ready=math.min(total,found+exposed)
             if ready<total then status(string.format("Waiting for all candles to be exposed (%d/%d ready)",ready,total));return end
             batchStarted=true
+            record("BatchReady",function()return {Found=found,Exposed=exposed,Total=total,Ready=ready}end)
         end
         if not holder and player:GetAttribute("CarryingCandle")==nil then
             if folder then for _,candidate in ipairs(folder:GetChildren())do if loose(candidate)then candle=candidate;break end end end
             if not candle then status("Waiting for an exposed candle");return end
         end
         busy=true
+        record("ActionStarted",function()return {Candle=candle and candle.Name,Holder=holder and holder.Name,Carrying=player:GetAttribute("CarryingCandle")}end)
         local ok,err=xpcall(function()
             options.PauseTools()
             if not holder then
@@ -1241,6 +1486,7 @@ local function createCandleAutomation(options)
             light()
             status(altar:GetAttribute("AllLit")==true and "All candles completed" or "Candle completed; continuing batch")
         end,function(e)return tostring(e)end)
+        record(ok and "ActionCompleted"or "ActionError",function()return {Error=not ok and tostring(err)or nil,Found=altar:GetAttribute("CandlesFound"),Lit=altar:GetAttribute("CandlesLit"),Holder=holder and holder.Name}end)
         releaseKey()
         if not ok then
             closePuzzle()
@@ -1706,7 +1952,7 @@ end
         AutoSellHay=false, SellThreshold=25, SellOnlyIfFull=false,
         AutoUseTNT=false, AutoUsePitchfork=false, AutoDeployDrone=false, AutoBossWeakpointPitchfork=false,
         AutoUseVacuum=false, VacuumHotbarSlot=5, ToolInterval=0.5,
-        AutoCandles=false,
+        AutoCandles=false, CandleDiagnostics=false, BossWeakpointDiagnostics=false,
         AutoBuyTools=false, BuyToolsList={"Pitchfork"}, BuyInterval=1,
         UpgBagSize=false, UpgExtraTake=false, UpgGemValue=false, UpgHayValue=false, PermInterval=1,
         UpgCapacity=false, UpgHandSpeed=false, UpgHandGrab=false, UpgHandHold=false,
@@ -1795,6 +2041,12 @@ end
     candleTab:Section({Title="Candles"})
     farmToggle(candleTab,"AutoCandles","Auto Collect & Light Candles")
     local candleStatus=candleTab:Paragraph({Title="Candle Status",Desc="Disabled"})
+    local chapter4Diagnostics=createChapter4Diagnostics({
+        Player=LocalPlayer,World=Workspace,Storage=ReplicatedStorage,Http=httpService,State=sharedFarmState,
+        CandleTab=candleTab,ToolsTab=toolsTab,Alive=function()return not hubUnloaded end,
+        MenuClosed=function()return hubWindow.Closed==true end,Write=safeWrite,
+        Toggle=function(tab,key,title)farmToggle(tab,key,title)end,
+    })
     shopTab:Section({ Title="Purchasing" })
     Registry.BuyToolsList = shopTab:Dropdown({
         Title="Buy Tools Selection",
@@ -1840,6 +2092,17 @@ end
     local function spawnChapterWorker(fn)
         if BEYY_CHAPTER ~= "Lobby" then task.spawn(fn) end
     end
+    local previousDiagnosticCleanup=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        chapter4Diagnostics.Stop()
+        if previousDiagnosticCleanup then pcall(previousDiagnosticCleanup)end
+    end
+    spawnChapterWorker(function()
+        while not hubUnloaded do
+            pcall(chapter4Diagnostics.Tick)
+            task.wait(0.5)
+        end
+    end)
     local needleFolder = ReplicatedStorage:FindFirstChild("NeedleHaystack")
     local sharedGameConfig, sharedUpgradeConfig
     if needleFolder then
@@ -1901,13 +2164,17 @@ end
         Enabled=function()return not hubUnloaded and sharedFarmState.AutoBossWeakpointPitchfork==true end,
         Blocked=function()return not hubWindow.Closed or farmBlocked()or needlePriority()end,
         Remote=function()return farmRemote("PitchforkDig")end,
-        Status=function(text)pcall(function()bossPitchforkStatus:SetDesc(text)end)end,
+        Status=function(text)pcall(function()bossPitchforkStatus:SetDesc(text)end);chapter4Diagnostics.Boss.Status(text)end,
+        Record=chapter4Diagnostics.Boss.Record,
     })
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(0.1)
             local ok,err=pcall(bossPitchfork.Tick)
-            if not ok then task.wait(1)end
+            if not ok then
+                chapter4Diagnostics.Boss.Record("WorkerError",function()return {Error=tostring(err)}end)
+                task.wait(1)
+            end
         end
     end)
     local collectSelectors={}
@@ -2159,7 +2426,8 @@ end
         MenuClosed=function()return hubWindow.Closed==true end,
         Blocked=farmBlocked,
         PauseTools=releaseSharedVacuum,
-        Status=function(text)candleStatus:SetDesc(text)end,
+        Status=function(text)candleStatus:SetDesc(text);chapter4Diagnostics.Candles.Status(text)end,
+        Record=chapter4Diagnostics.Candles.Record,
     })
     do
         local previous=_G.__BEYY_HUB_CLEANUP
@@ -2171,7 +2439,10 @@ end
     spawnChapterWorker(function()
         while not hubUnloaded do
             local ok,err=pcall(candleController.Tick)
-            if not ok then candleStatus:SetDesc("Candle worker error; retrying: "..tostring(err))end
+            if not ok then
+                chapter4Diagnostics.Candles.Record("WorkerError",function()return {Error=tostring(err)}end)
+                candleStatus:SetDesc("Candle worker error; retrying: "..tostring(err))
+            end
             task.wait(0.5)
         end
     end)
@@ -2274,6 +2545,149 @@ end
         local overview = overviewTab
 -- Unskippable controller adapted from BeyyTU/needlehub chapter4.lua.
 -- Reference blob: 79b9c03604d21366dfd579c01c17018d38aa3e52; private runtime caches retained.
+-- Optional read-only cutscene trace: bounded history, local exports, no gameplay actions.
+local function createCutsceneDiagnostics(options)
+    local api={Probe=nil,LastDecision="No controller observation yet"}
+    local enabled,alive,pumping=false,true,false
+    local ring,head,count,sequence,dropped={},1,0,0,0
+    local dirty,nextSave,lastMismatch=false,0,-math.huge
+    local expectedCamera,expectedFrame,lastWrite=nil,nil,nil
+    local errors,lastDecisionKey=0,nil
+    local lastCameraError=-math.huge
+    local path=CACHE_FOLDER.."/"..tostring(__BEYY_MODULE):lower().."_cutscene_diagnostics.json"
+    local function value(item,depth,seen)
+        local kind=typeof(item)
+        if kind=="nil"or kind=="boolean"then return item end
+        if kind=="number"then return item==item and math.abs(item)<math.huge and item or tostring(item)end
+        if kind=="string"then return item:sub(1,768)end
+        if kind=="Vector3"then return {X=item.X,Y=item.Y,Z=item.Z}end
+        if kind=="Instance"then return {Name=item.Name,Class=item.ClassName}end
+        if kind~="table"then return "<"..kind..">"end
+        depth=depth or 0;seen=seen or {}
+        if depth>=5 or seen[item]then return "<bounded>"end
+        seen[item]=true
+        local result,total={},0
+        for key,child in pairs(item)do
+            total+=1;if total>40 then break end
+            if type(key)=="string"or type(key)=="number"then result[key]=value(child,depth+1,seen)end
+        end
+        seen[item]=nil;return result
+    end
+    function api.Enabled()return alive and enabled and options.Alive()end
+    function api.Record(kind,build)
+        if not api.Enabled()then return end
+        if kind=="CameraWriteError"then
+            if os.clock()-lastCameraError<1 then return end
+            lastCameraError=os.clock()
+        end
+        local ok,data=pcall(function()return value(type(build)=="function"and build()or build or {})end)
+        if not ok then errors+=1;data={DiagnosticError=tostring(data):sub(1,512)}end
+        sequence+=1
+        local event={Sequence=sequence,At=os.clock(),Kind=kind,Data=data}
+        if count<256 then ring[(head+count-1)%256+1]=event;count+=1
+        else ring[head]=event;head=head%256+1;dropped+=1 end
+        dirty=true
+    end
+    function api.Decision(build)
+        if not api.Enabled()then return end
+        local ok,data=pcall(build)
+        if not ok then api.Record("DiagnosticError",{Error=tostring(data)});return end
+        local key=tostring(data.Reason)..":"..tostring(data.Scene)..":"..tostring(data.Active)
+        api.LastDecision=tostring(data.Reason)
+        if key~=lastDecisionKey then lastDecisionKey=key;api.Record("Decision",data)end
+    end
+    function api.ClearCamera()expectedCamera,expectedFrame,lastWrite=nil,nil,nil end
+    function api.CameraWritten(camera,frame)
+        if api.Enabled()then expectedCamera,expectedFrame,lastWrite=camera,frame,os.clock()end
+    end
+    function api.Snapshot()
+        local events={}
+        for index=1,count do events[index]=ring[(head+index-2)%256+1]end
+        local ok,current=pcall(function()
+            return value({Base=options.Base(),Controller=api.Probe and api.Probe()or {Installed=false},
+                LastCameraWriteAt=lastWrite,LastDecision=api.LastDecision})
+        end)
+        return {Schema=1,Module=__BEYY_MODULE,PlaceId=game.PlaceId,JobId=game.JobId,UserId=options.Player.UserId,
+            ExportedAt=os.time(),Enabled=api.Enabled(),TotalEvents=sequence,DroppedEvents=dropped,
+            DiagnosticErrors=errors,Capacity=256,Current=ok and current or {DiagnosticError=tostring(current):sub(1,512)},Events=events}
+    end
+    local status=options.Tab:Paragraph({Title="Cutscene Diagnostics Status",Desc="Off; no diagnostic capture"})
+    local function export(manual)
+        local ok,json=pcall(function()return options.Http:JSONEncode(api.Snapshot())end)
+        if not ok then return false,"JSON encoding failed"end
+        local wrote,saved=pcall(options.Write,path,json);saved=wrote and saved==true
+        local copied=false
+        if manual and type(setclipboard)=="function"then copied=pcall(setclipboard,json)end
+        if saved then dirty=false end
+        return saved or copied,(saved and ("Saved "..path)or "Could not save locally")..(copied and "; copied JSON to clipboard"or "")
+    end
+    function api.Export()
+        local ok,message=export(true);status:SetDesc(message);return ok,message
+    end
+    function api.Tick()
+        if not api.Enabled()then return end
+        if expectedFrame and os.clock()-lastMismatch>=2 then
+            local ok,mismatch=pcall(function()
+                local camera=options.World.CurrentCamera
+                if not camera then return {Reason="No current camera"}end
+                local distance=(camera.CFrame.Position-expectedFrame.Position).Magnitude
+                local dot=camera.CFrame.LookVector:Dot(expectedFrame.LookVector)
+                if camera~=expectedCamera or camera.CameraType~=Enum.CameraType.Scriptable or distance>0.1 or dot<0.999 then
+                    return {CameraChanged=camera~=expectedCamera,CameraType=tostring(camera.CameraType),PositionDelta=distance,LookDot=dot,
+                        Note="Observed after last bypass write; may be another camera owner, not necessarily an error"}
+                end
+            end)
+            if ok and mismatch then lastMismatch=os.clock();api.Record("CameraMismatch",mismatch)end
+        end
+        if dirty and os.clock()>=nextSave then nextSave=os.clock()+5;export(false)end
+        status:SetDesc("Capturing | "..count.."/256 events | "..dropped.." overwritten | "..api.LastDecision)
+    end
+    local function pump()
+        if pumping then return end;pumping=true
+        task.spawn(function()
+            while api.Enabled()do pcall(api.Tick);task.wait(0.5)end
+            pumping=false
+        end)
+    end
+    options.Registry.CutsceneDiagnostics=options.Tab:Toggle({Title="Unskippable Cutscene Diagnostics",Value=false,
+        Callback=function(state)
+            enabled=state==true
+            if enabled then
+                nextSave=os.clock()+5;lastDecisionKey=nil
+                api.Record("DiagnosticsEnabled",function()return {Current=options.Base()}end)
+                pump()
+            else
+                api.ClearCamera()
+                if dirty then export(false)end
+                status:SetDesc("Off; "..count.." recent events retained")
+            end
+        end})
+    options.Tab:Button({Title="Export Cutscene Diagnostics",Callback=api.Export})
+    function api.Stop()
+        if dirty then export(false)end
+        alive=false;enabled=false;api.Probe=nil;api.ClearCamera()
+    end
+    return api
+end
+
+local cutsceneDiagnostics=createCutsceneDiagnostics({
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Alive=function()return not hubUnloaded end,Write=safeWrite,
+    Base=function()
+        local character=LocalPlayer.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        local camera=Workspace.CurrentCamera
+        return {BypassToggle=Registry.CutsceneBypass and Registry.CutsceneBypass.Value or false,MenuClosed=hubWindow.Closed,
+            IntroFinished=LocalPlayer:GetAttribute("IntroCutsceneFinished"),CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),
+            Chapter2ReleaseActive=LocalPlayer:GetAttribute("Chapter2ReleaseActive"),NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),
+            NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),RootPresent=root~=nil,RootAnchored=root and root.Anchored,
+            Position=root and root.Position,WalkSpeed=humanoid and humanoid.WalkSpeed,JumpPower=humanoid and humanoid.JumpPower,
+            PlatformStand=humanoid and humanoid.PlatformStand,Sit=humanoid and humanoid.Sit,
+            CameraType=camera and tostring(camera.CameraType),CameraPosition=camera and camera.CFrame.Position,
+            MouseBehavior=tostring(UserInputService.MouseBehavior)}
+    end,
+})
 local function cutsceneResultsVisible()
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local ending = pg and pg:FindFirstChild("NeedleEndingUI")
@@ -2287,6 +2701,7 @@ local cutsceneBypassStop = nil
 local function launchCutsceneBypass()
     if BEYY_CHAPTER == "Lobby" then return true end
     if cutsceneBypassStop then return true end
+    cutsceneDiagnostics.Record("ControllerStarting")
     local ok, result = pcall(function()
 
         local Players = game:GetService("Players")
@@ -2491,9 +2906,11 @@ local function launchCutsceneBypass()
                 local hum = humanoid()
                 if hum then cam.CameraSubject = hum end
                 cam.CFrame = result
+                cutsceneDiagnostics.CameraWritten(cam,result)
                 cam.Focus = CFrame.new(focus)
             end)
             inCameraWrite = false
+            if not safe then cutsceneDiagnostics.Record("CameraWriteError",function()return {Error=tostring(err)}end)end
             if not safe and not cameraErrorWarned then
                 cameraErrorWarned = true
                 warn("[BeyyHub Cutscene] Camera write failed: " .. tostring(err))
@@ -2805,6 +3222,8 @@ local function launchCutsceneBypass()
             if down(Enum.KeyCode.Space) then pcall(function() hum.Jump = true end) end
         end
         local function restoreCamera()
+            cutsceneDiagnostics.Record("CameraRestore")
+            cutsceneDiagnostics.ClearCamera()
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
             restoreHeadTransparency()
             local cam = camera()
@@ -2855,6 +3274,18 @@ local function launchCutsceneBypass()
                 log("SKIPPABLE NEEDLE ENDING DETECTED — camera bypass released; mouse unlocked for SKIP / hub AutoSkip")
             end
             local current = enabled and kind() or nil
+            cutsceneDiagnostics.Decision(function()
+                local reason
+                if not enabled then reason="Controller disabled"
+                elseif shouldYieldCutsceneBypass() then reason="Menu/results/automation priority; see current state"
+                elseif player:GetAttribute("IntroCutsceneFinished")==false then reason="Intro unfinished"
+                elseif introConfirmedAt and now-introConfirmedAt<INTRO_SETTLE_SECONDS then reason="Intro settling"
+                elseif yieldingToEnding then reason="Visible Skip/ending UI owns the camera"
+                elseif current then reason="Bypassing "..current
+                elseif now<recoveryEnd then reason="Recovery grace"
+                else reason="No eligible unskippable scene flag"end
+                return {Reason=reason,Scene=current,Active=active,RecoveryRemaining=math.max(0,recoveryEnd-now)}
+            end)
             if current then
                 if current ~= scene then
                     scene = current
@@ -2893,6 +3324,12 @@ local function launchCutsceneBypass()
             if yieldingToEnding and lastEndingSkipVisible then releaseEndingCursor() end
         end
 
+        cutsceneDiagnostics.Probe=function()
+            return {Installed=true,Alive=alive,Enabled=enabled,Active=active,Scene=scene,YieldingToEnding=yieldingToEnding,
+                SkipVisible=lastEndingSkipVisible,PriorityYield=shouldYieldCutsceneBypass(),
+                RecoveryRemaining=math.max(0,recoveryEnd-os.clock()),FirstPerson=cameraFirstPerson,
+                CameraWriteError=cameraErrorWarned,PuzzleOrCandleBusy=sharedFarmPuzzleBusy()}
+        end
         hook(UserInputService.InputBegan:Connect(function(input, processed)
             if processed or UserInputService:GetFocusedTextBox() or shouldYieldCutsceneBypass() then return end
             if input.KeyCode == Enum.KeyCode.F3 then
@@ -3004,6 +3441,9 @@ local function launchCutsceneBypass()
 
         local function stop()
             if not alive then return end
+            cutsceneDiagnostics.Record("ControllerStopped",cutsceneDiagnostics.Probe)
+            cutsceneDiagnostics.Probe=nil
+            cutsceneDiagnostics.ClearCamera()
             local wasActive = active
             alive, enabled, active = false, false, false
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
@@ -3044,6 +3484,7 @@ local function launchCutsceneBypass()
         return stop
     end)
     if not ok or type(result) ~= "function" then
+        cutsceneDiagnostics.Record("ControllerError",function()return {Error=tostring(result)}end)
         warn("[BeyyHub] Cutscene bypass failed to start: " .. tostring(result))
         return false
     end
@@ -3058,6 +3499,7 @@ end
 local previousCutsceneHubCleanup = _G.__BEYY_HUB_CLEANUP
 _G.__BEYY_HUB_CLEANUP = function()
     shutdownCutsceneBypass()
+    cutsceneDiagnostics.Stop()
     if previousCutsceneHubCleanup then pcall(previousCutsceneHubCleanup) end
 end
 

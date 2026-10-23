@@ -3058,6 +3058,149 @@ do
     local overview = MainTab
 -- Unskippable controller adapted from BeyyTU/needlehub chapter1.lua.
 -- Reference blob: e9da7ac84b4b4e71f31e65b4d1037d5cfc53eedd; private runtime caches retained.
+-- Optional read-only cutscene trace: bounded history, local exports, no gameplay actions.
+local function createCutsceneDiagnostics(options)
+    local api={Probe=nil,LastDecision="No controller observation yet"}
+    local enabled,alive,pumping=false,true,false
+    local ring,head,count,sequence,dropped={},1,0,0,0
+    local dirty,nextSave,lastMismatch=false,0,-math.huge
+    local expectedCamera,expectedFrame,lastWrite=nil,nil,nil
+    local errors,lastDecisionKey=0,nil
+    local lastCameraError=-math.huge
+    local path=CACHE_FOLDER.."/"..tostring(__BEYY_MODULE):lower().."_cutscene_diagnostics.json"
+    local function value(item,depth,seen)
+        local kind=typeof(item)
+        if kind=="nil"or kind=="boolean"then return item end
+        if kind=="number"then return item==item and math.abs(item)<math.huge and item or tostring(item)end
+        if kind=="string"then return item:sub(1,768)end
+        if kind=="Vector3"then return {X=item.X,Y=item.Y,Z=item.Z}end
+        if kind=="Instance"then return {Name=item.Name,Class=item.ClassName}end
+        if kind~="table"then return "<"..kind..">"end
+        depth=depth or 0;seen=seen or {}
+        if depth>=5 or seen[item]then return "<bounded>"end
+        seen[item]=true
+        local result,total={},0
+        for key,child in pairs(item)do
+            total+=1;if total>40 then break end
+            if type(key)=="string"or type(key)=="number"then result[key]=value(child,depth+1,seen)end
+        end
+        seen[item]=nil;return result
+    end
+    function api.Enabled()return alive and enabled and options.Alive()end
+    function api.Record(kind,build)
+        if not api.Enabled()then return end
+        if kind=="CameraWriteError"then
+            if os.clock()-lastCameraError<1 then return end
+            lastCameraError=os.clock()
+        end
+        local ok,data=pcall(function()return value(type(build)=="function"and build()or build or {})end)
+        if not ok then errors+=1;data={DiagnosticError=tostring(data):sub(1,512)}end
+        sequence+=1
+        local event={Sequence=sequence,At=os.clock(),Kind=kind,Data=data}
+        if count<256 then ring[(head+count-1)%256+1]=event;count+=1
+        else ring[head]=event;head=head%256+1;dropped+=1 end
+        dirty=true
+    end
+    function api.Decision(build)
+        if not api.Enabled()then return end
+        local ok,data=pcall(build)
+        if not ok then api.Record("DiagnosticError",{Error=tostring(data)});return end
+        local key=tostring(data.Reason)..":"..tostring(data.Scene)..":"..tostring(data.Active)
+        api.LastDecision=tostring(data.Reason)
+        if key~=lastDecisionKey then lastDecisionKey=key;api.Record("Decision",data)end
+    end
+    function api.ClearCamera()expectedCamera,expectedFrame,lastWrite=nil,nil,nil end
+    function api.CameraWritten(camera,frame)
+        if api.Enabled()then expectedCamera,expectedFrame,lastWrite=camera,frame,os.clock()end
+    end
+    function api.Snapshot()
+        local events={}
+        for index=1,count do events[index]=ring[(head+index-2)%256+1]end
+        local ok,current=pcall(function()
+            return value({Base=options.Base(),Controller=api.Probe and api.Probe()or {Installed=false},
+                LastCameraWriteAt=lastWrite,LastDecision=api.LastDecision})
+        end)
+        return {Schema=1,Module=__BEYY_MODULE,PlaceId=game.PlaceId,JobId=game.JobId,UserId=options.Player.UserId,
+            ExportedAt=os.time(),Enabled=api.Enabled(),TotalEvents=sequence,DroppedEvents=dropped,
+            DiagnosticErrors=errors,Capacity=256,Current=ok and current or {DiagnosticError=tostring(current):sub(1,512)},Events=events}
+    end
+    local status=options.Tab:Paragraph({Title="Cutscene Diagnostics Status",Desc="Off; no diagnostic capture"})
+    local function export(manual)
+        local ok,json=pcall(function()return options.Http:JSONEncode(api.Snapshot())end)
+        if not ok then return false,"JSON encoding failed"end
+        local wrote,saved=pcall(options.Write,path,json);saved=wrote and saved==true
+        local copied=false
+        if manual and type(setclipboard)=="function"then copied=pcall(setclipboard,json)end
+        if saved then dirty=false end
+        return saved or copied,(saved and ("Saved "..path)or "Could not save locally")..(copied and "; copied JSON to clipboard"or "")
+    end
+    function api.Export()
+        local ok,message=export(true);status:SetDesc(message);return ok,message
+    end
+    function api.Tick()
+        if not api.Enabled()then return end
+        if expectedFrame and os.clock()-lastMismatch>=2 then
+            local ok,mismatch=pcall(function()
+                local camera=options.World.CurrentCamera
+                if not camera then return {Reason="No current camera"}end
+                local distance=(camera.CFrame.Position-expectedFrame.Position).Magnitude
+                local dot=camera.CFrame.LookVector:Dot(expectedFrame.LookVector)
+                if camera~=expectedCamera or camera.CameraType~=Enum.CameraType.Scriptable or distance>0.1 or dot<0.999 then
+                    return {CameraChanged=camera~=expectedCamera,CameraType=tostring(camera.CameraType),PositionDelta=distance,LookDot=dot,
+                        Note="Observed after last bypass write; may be another camera owner, not necessarily an error"}
+                end
+            end)
+            if ok and mismatch then lastMismatch=os.clock();api.Record("CameraMismatch",mismatch)end
+        end
+        if dirty and os.clock()>=nextSave then nextSave=os.clock()+5;export(false)end
+        status:SetDesc("Capturing | "..count.."/256 events | "..dropped.." overwritten | "..api.LastDecision)
+    end
+    local function pump()
+        if pumping then return end;pumping=true
+        task.spawn(function()
+            while api.Enabled()do pcall(api.Tick);task.wait(0.5)end
+            pumping=false
+        end)
+    end
+    options.Registry.CutsceneDiagnostics=options.Tab:Toggle({Title="Unskippable Cutscene Diagnostics",Value=false,
+        Callback=function(state)
+            enabled=state==true
+            if enabled then
+                nextSave=os.clock()+5;lastDecisionKey=nil
+                api.Record("DiagnosticsEnabled",function()return {Current=options.Base()}end)
+                pump()
+            else
+                api.ClearCamera()
+                if dirty then export(false)end
+                status:SetDesc("Off; "..count.." recent events retained")
+            end
+        end})
+    options.Tab:Button({Title="Export Cutscene Diagnostics",Callback=api.Export})
+    function api.Stop()
+        if dirty then export(false)end
+        alive=false;enabled=false;api.Probe=nil;api.ClearCamera()
+    end
+    return api
+end
+
+local cutsceneDiagnostics=createCutsceneDiagnostics({
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Alive=function()return not Unloaded end,Write=safeWrite,
+    Base=function()
+        local character=LocalPlayer.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        local camera=Workspace.CurrentCamera
+        return {BypassToggle=Registry.CutsceneBypass and Registry.CutsceneBypass.Value or false,MenuClosed=Window.Closed,
+            IntroFinished=LocalPlayer:GetAttribute("IntroCutsceneFinished"),CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),
+            Chapter2ReleaseActive=LocalPlayer:GetAttribute("Chapter2ReleaseActive"),NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),
+            NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),RootPresent=root~=nil,RootAnchored=root and root.Anchored,
+            Position=root and root.Position,WalkSpeed=humanoid and humanoid.WalkSpeed,JumpPower=humanoid and humanoid.JumpPower,
+            PlatformStand=humanoid and humanoid.PlatformStand,Sit=humanoid and humanoid.Sit,
+            CameraType=camera and tostring(camera.CameraType),CameraPosition=camera and camera.CFrame.Position,
+            MouseBehavior=tostring(UserInputService.MouseBehavior)}
+    end,
+})
 local function cutsceneResultsVisible()
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local ending = pg and pg:FindFirstChild("NeedleEndingUI")
@@ -3073,6 +3216,7 @@ end
 local cutsceneBypassStop = nil
 local function launchCutsceneBypass()
     if cutsceneBypassStop then return true end
+    cutsceneDiagnostics.Record("ControllerStarting")
     local ok, result = pcall(function()
 
         local Players = game:GetService("Players")
@@ -3275,9 +3419,11 @@ local function launchCutsceneBypass()
                 local hum = humanoid()
                 if hum then cam.CameraSubject = hum end
                 cam.CFrame = result
+                cutsceneDiagnostics.CameraWritten(cam,result)
                 cam.Focus = CFrame.new(focus)
             end)
             inCameraWrite = false
+            if not safe then cutsceneDiagnostics.Record("CameraWriteError",function()return {Error=tostring(err)}end)end
             if not safe and not cameraErrorWarned then
                 cameraErrorWarned = true
                 warn("[BeyyHub Cutscene] Camera write failed: " .. tostring(err))
@@ -3587,6 +3733,8 @@ local function launchCutsceneBypass()
             if down(Enum.KeyCode.Space) then pcall(function() hum.Jump = true end) end
         end
         local function restoreCamera()
+            cutsceneDiagnostics.Record("CameraRestore")
+            cutsceneDiagnostics.ClearCamera()
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
             restoreHeadTransparency()
             local cam = camera()
@@ -3637,6 +3785,18 @@ local function launchCutsceneBypass()
                 log("SKIPPABLE NEEDLE ENDING DETECTED — camera bypass released; mouse unlocked for SKIP / hub AutoSkip")
             end
             local current = enabled and kind() or nil
+            cutsceneDiagnostics.Decision(function()
+                local reason
+                if not enabled then reason="Controller disabled"
+                elseif shouldYieldCutsceneBypass() then reason="Menu/results/automation priority; see current state"
+                elseif player:GetAttribute("IntroCutsceneFinished")==false then reason="Intro unfinished"
+                elseif introConfirmedAt and now-introConfirmedAt<INTRO_SETTLE_SECONDS then reason="Intro settling"
+                elseif yieldingToEnding then reason="Visible Skip/ending UI owns the camera"
+                elseif current then reason="Bypassing "..current
+                elseif now<recoveryEnd then reason="Recovery grace"
+                else reason="No eligible unskippable scene flag"end
+                return {Reason=reason,Scene=current,Active=active,RecoveryRemaining=math.max(0,recoveryEnd-now)}
+            end)
             if current then
                 if current ~= scene then
                     scene = current
@@ -3675,6 +3835,12 @@ local function launchCutsceneBypass()
             if yieldingToEnding and lastEndingSkipVisible then releaseEndingCursor() end
         end
 
+        cutsceneDiagnostics.Probe=function()
+            return {Installed=true,Alive=alive,Enabled=enabled,Active=active,Scene=scene,YieldingToEnding=yieldingToEnding,
+                SkipVisible=lastEndingSkipVisible,PriorityYield=shouldYieldCutsceneBypass(),
+                RecoveryRemaining=math.max(0,recoveryEnd-os.clock()),FirstPerson=cameraFirstPerson,
+                CameraWriteError=cameraErrorWarned,NeedlePriority=needleHasPriority(),RoundEnding=roundEndingVisible()}
+        end
         hook(UserInputService.InputBegan:Connect(function(input, processed)
             if processed or UserInputService:GetFocusedTextBox() or shouldYieldCutsceneBypass() then return end
             if input.KeyCode == Enum.KeyCode.F3 then
@@ -3783,6 +3949,9 @@ local function launchCutsceneBypass()
 
         local function stop()
             if not alive then return end
+            cutsceneDiagnostics.Record("ControllerStopped",cutsceneDiagnostics.Probe)
+            cutsceneDiagnostics.Probe=nil
+            cutsceneDiagnostics.ClearCamera()
             local wasActive = active
             alive, enabled, active = false, false, false
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
@@ -3823,6 +3992,7 @@ local function launchCutsceneBypass()
         return stop
     end)
     if not ok or type(result) ~= "function" then
+        cutsceneDiagnostics.Record("ControllerError",function()return {Error=tostring(result)}end)
         warn("[BeyyHub] Cutscene bypass failed to start: " .. tostring(result))
         return false
     end
@@ -3837,6 +4007,7 @@ end
 local previousCutsceneHubCleanup = _G.__BEYY_HUB_CLEANUP
 _G.__BEYY_HUB_CLEANUP = function()
     shutdownCutsceneBypass()
+    cutsceneDiagnostics.Stop()
     if previousCutsceneHubCleanup then pcall(previousCutsceneHubCleanup) end
 end
 

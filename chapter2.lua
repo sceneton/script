@@ -1079,6 +1079,7 @@ print(string.format("[BeyyHub] Place %s -> %s", tostring(game.PlaceId), BEYY_CHA
 
 do
     local hubUnloaded = false
+    local cutsceneBridge = {FinalEndingProtected=false, LeverUntil=0, PuzzleUntil=0}
     local hubWindow
     local hubNativeUI
     local hubRestoreAction = nil
@@ -1988,6 +1989,8 @@ end
                         task.wait(0.2)
                         if hubUnloaded or farmBlocked() or not sharedFarmState.AutoHandInNeedle
                             or LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
+                        if cutsceneBridge.ProtectEnding then cutsceneBridge.ProtectEnding()
+                        else cutsceneBridge.FinalEndingProtected = true end
                         if not sendFarmRemote("NeedleHandIn") then
                             handInWarning("NeedleHandIn remote unavailable or send failed")
                             return
@@ -2481,6 +2484,7 @@ end
                 end
             end
             local function restore()
+                cutsceneBridge.GemAim = nil
                 releaseMouse()
                 pcall(function() RunService:UnbindFromRenderStep(COLOUR_RENDER_BIND) end)
                 pcall(function() UserInputService.MouseBehavior = previousMouseBehavior end)
@@ -2553,6 +2557,7 @@ end
                         UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
                     end
                     pcall(function() RunService:UnbindFromRenderStep(COLOUR_RENDER_BIND) end)
+                    cutsceneBridge.GemAim = aim
                     RunService:BindToRenderStep(COLOUR_RENDER_BIND, Enum.RenderPriority.Last.Value + 30, aim)
                     aim()
                     task.wait(math.max(COLOUR_CAMERA_SETTLE, 0.30))
@@ -2602,6 +2607,7 @@ end
 
                         task.wait(clickIndex < counts[i] and COLOUR_CLICK_GAP or 0.09)
                     end
+                    cutsceneBridge.GemAim = nil
                     pcall(function() RunService:UnbindFromRenderStep(COLOUR_RENDER_BIND) end)
                     colourStatus(string.format("%s pedestal: %d/%d clicks sent", colour, sent, counts[i]))
                     if sent < counts[i] then break end
@@ -4068,18 +4074,41 @@ return solved]===]
 
     do
         local overview = overviewTab
+-- Unskippable controller adapted from BeyyTU/needlehub chapter2.lua.
+-- Reference blob: 74b65d41e2e31a9a3becde9e3a5f5ee4f0031d62; private runtime caches retained.
 local function cutsceneResultsVisible()
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local ending = pg and pg:FindFirstChild("NeedleEndingUI")
-    return ending and ending:IsA("ScreenGui") and ending.Enabled == true
+    if not (ending and ending:IsA("ScreenGui") and ending.Enabled) then return false end
+    -- Some rounds keep NeedleEndingUI enabled before its actual ending
+    -- controls become visible. Never suppress the puzzle bypass on that alone.
+    local results = ending:FindFirstChild("ReturnToLobby", true)
+    if not (results and results:IsA("GuiObject")) then return false end
+    local node = results
+    while node and node ~= ending do
+        if node:IsA("GuiObject") and not node.Visible then return false end
+        node = node.Parent
+    end
+    return node == ending
 end
 local function shouldYieldCutsceneBypass()
-    return hubUnloaded or not hubWindow.Closed or needleBusy or sharedFarmPuzzleBusy() or cutsceneResultsVisible()
+    if hubUnloaded or cutsceneBridge.FinalEndingProtected or not hubWindow.Closed
+        or needleBusy or LocalPlayer:GetAttribute("NeedleOwned") == true
+        or cutsceneResultsVisible() then return true end
+    -- Levers are confirmed locally before the server's CutsceneActive flag
+    -- necessarily replicates. A brief post-lever grace makes the bypass start
+    -- immediately instead of being blocked by allPuzzlesRunning.
+    local inUnskippable = LocalPlayer:GetAttribute("CutsceneActive") == true
+        or LocalPlayer:GetAttribute("Chapter2ReleaseActive") == true
+        or os.clock() < cutsceneBridge.LeverUntil or os.clock() < cutsceneBridge.PuzzleUntil
+    if inUnskippable then return leverRunning or colourRunning end
+    return sharedFarmPuzzleBusy()
 end
-local function setCutsceneBypassActive(_) end
+local function setCutsceneBypassActive(active)
+    cutsceneBridge.Playable = active == true and not cutsceneBridge.FinalEndingProtected
+end
 local cutsceneBypassStop = nil
 local function launchCutsceneBypass()
-    if BEYY_CHAPTER == "Lobby" then return true end
     if cutsceneBypassStop then return true end
     local ok, result = pcall(function()
 
@@ -4109,6 +4138,7 @@ local function launchCutsceneBypass()
         local lastSavedSpeed, lastSavedJump, lastSavedRotate = nil, nil, nil
         local controls, cachedCamera = nil, nil
         local originalMouseBehavior = nil
+        local lastControlEnableAt = 0
         local connections = {}
         local hudEnabled = true
         local faceCameraEnabled = true
@@ -4130,10 +4160,18 @@ local function launchCutsceneBypass()
         local skipCandidates = setmetatable({}, { __mode = "k" })
         local skipGui, skipGuiAddedConnection = nil, nil
         local lastSkipFallbackScan = 0
+        local lastFinalVisualMaskAt = -math.huge
         local lastRenderTime = os.clock()
 
         local function log(s)
-            -- Keep the controller quiet during normal scene transitions.
+            if type(s) ~= "string" then return end
+            if s:find("READY:", 1, true)
+                or s:find("CUTSCENE DETECTED:", 1, true)
+                or s:find("PLAYABLE CAMERA ENABLED:", 1, true)
+                or s:find("ROBLOX CAMERA RETURNED:", 1, true)
+                or s == "STOPPED" then
+                print("[BeyyHub Cutscene] " .. s)
+            end
         end
         local function hook(c)
             if c then connections[#connections+1] = c end
@@ -4189,12 +4227,13 @@ local function launchCutsceneBypass()
         end
         local function kind()
             if shouldYieldCutsceneBypass() then return nil end
-            -- Explicit unfinished intros and visible skip/results UI keep normal behavior.
-            if player:GetAttribute("IntroCutsceneFinished") == false then return nil end
+            if player:GetAttribute("IntroCutsceneFinished") ~= true then return nil end
             if introConfirmedAt and os.clock() - introConfirmedAt < INTRO_SETTLE_SECONDS then return nil end
-            if yieldingToEnding then return nil end
-            if player:GetAttribute("Chapter2ReleaseActive") == true then return "THREE PUZZLES" end
-            if player:GetAttribute("CutsceneActive") == true then return "THREE LEVERS" end
+            if yieldingToEnding or cutsceneBridge.FinalEndingProtected then return nil end
+            if player:GetAttribute("Chapter2ReleaseActive") == true
+                or os.clock() < cutsceneBridge.PuzzleUntil then return "THREE PUZZLES" end
+            if player:GetAttribute("CutsceneActive") == true
+                or os.clock() < cutsceneBridge.LeverUntil then return "THREE LEVERS" end
             return nil
         end
         local function clamp(v, lo, hi)
@@ -4215,8 +4254,8 @@ local function launchCutsceneBypass()
             if originalMouseBehavior == nil then originalMouseBehavior = UserInputService.MouseBehavior end
         end
         local function lookVector()
-            local cp = cos(pitch)
-            return Vector3.new(sin(yaw)*cp, sin(pitch), cos(yaw)*cp)
+            local cp = math.cos(pitch)
+            return Vector3.new(math.sin(yaw)*cp, math.sin(pitch), math.cos(yaw)*cp)
         end
         local function hideHeadForFirstPerson()
             if not cameraFirstPerson then return end
@@ -4318,22 +4357,47 @@ local function launchCutsceneBypass()
         end))
 
         local SAFE_HUD_NAMES = { hud = true, needlehud = true, notifications = true }
+        local function isGameplayHud(gui)
+            if not gui:IsA("ScreenGui") then return false end
+            local name = gui.Name:lower()
+            if name:find("ending", 1, true) or name:find("cutscene", 1, true)
+                or name:find("cinematic", 1, true) or name:find("intro", 1, true)
+                or name:find("puzzle", 1, true) or name:find("skip", 1, true) then return false end
+            return SAFE_HUD_NAMES[name] or name:find("hud", 1, true) ~= nil
+                or name:find("hotbar", 1, true) ~= nil
+                or name:find("inventory", 1, true) ~= nil
+                or name:find("toolbar", 1, true) ~= nil
+        end
         local function rememberGameplayHud()
+            if active or scene then return end
             local pg = player:FindFirstChildOfClass("PlayerGui")
             if not pg then return end
             for _, gui in ipairs(pg:GetChildren()) do
-                if gui:IsA("ScreenGui") and SAFE_HUD_NAMES[gui.Name:lower()] then
-                    local saved = hudNormal[gui]
-                    if saved then
-                        saved.enabled, saved.order = gui.Enabled, gui.DisplayOrder
-                    else
-                        hudNormal[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder }
+                if isGameplayHud(gui) and gui.Enabled then
+                    local before = hudNormal[gui]
+                    if not before or not before.enabled or before.order ~= gui.DisplayOrder then
+                        hudNormal[gui] = { enabled = true, order = gui.DisplayOrder }
                     end
                 end
             end
         end
+        local lastHudDiscoveryAt = -math.huge
         local function showGameplayHud()
             if not hudEnabled then return end
+            -- Newly recreated hotbar/HUD ScreenGuis may have been disabled by
+            -- the server before the initial baseline could record them.
+            local now = os.clock()
+            if now - lastHudDiscoveryAt >= 0.35 then
+                lastHudDiscoveryAt = now
+                local pg = player:FindFirstChildOfClass("PlayerGui")
+                if pg then
+                    for _, gui in ipairs(pg:GetChildren()) do
+                        if isGameplayHud(gui) and not hudNormal[gui] then
+                            hudNormal[gui] = { enabled = true, order = gui.DisplayOrder }
+                        end
+                    end
+                end
+            end
             for gui, before in pairs(hudNormal) do
                 if gui.Parent and before.enabled then
                     if not hudForced[gui] then hudForced[gui] = { enabled = gui.Enabled, order = gui.DisplayOrder } end
@@ -4508,10 +4572,12 @@ local function launchCutsceneBypass()
             return pg
         end
         local function skipButtonVisible(pg)
+            local ending = pg:FindFirstChild("NeedleEndingUI")
+            if not ending or not ending.Enabled then return false end
             for btn in pairs(skipCandidates) do
                 if not btn.Parent or not btn:IsDescendantOf(pg) then
                     skipCandidates[btn] = nil
-                else
+                elseif btn:IsDescendantOf(ending) then
                     local visible, parent = true, btn
                     while parent and parent ~= pg do
                         if parent:IsA("GuiObject") and not parent.Visible then visible = false; break end
@@ -4524,6 +4590,12 @@ local function launchCutsceneBypass()
             return false
         end
         local function skipButtonOnScreen()
+            -- The ending is not eligible until our hand-in starts. This
+            -- avoids unrelated/early Skip elements suppressing puzzle bypass.
+            if not cutsceneBridge.FinalEndingProtected then
+                lastEndingSkipVisible = false
+                return false
+            end
             local now = os.clock()
             if now - lastEndingSkipScan < 0.08 then return lastEndingSkipVisible end
             lastEndingSkipScan = now
@@ -4531,10 +4603,14 @@ local function launchCutsceneBypass()
             if not pg then lastEndingSkipVisible = false; return false end
             lastEndingSkipVisible = skipButtonVisible(pg)
             local endingUI = pg:FindFirstChild("NeedleEndingUI")
-            local endingLikely = player:GetAttribute("NeedleOwned") == true
-                or player:GetAttribute("CutsceneActive") == true
-                or (endingUI and endingUI.Enabled == true)
-            local fallbackEvery = endingLikely and 0.1 or 4
+            if not (endingUI and endingUI:IsA("ScreenGui") and endingUI.Enabled) then
+                lastEndingSkipVisible = false
+                return false
+            end
+            -- Ownership of the needle/key alone is not an ending cutscene.
+            -- Added GUI objects are indexed immediately by DescendantAdded.
+            local endingVisible = endingUI and endingUI.Enabled == true
+            local fallbackEvery = endingVisible and 0.5 or (scene and 1.0 or 4.0)
             if not lastEndingSkipVisible and now - lastSkipFallbackScan >= fallbackEvery then
                 lastSkipFallbackScan = now
                 scanSkipCandidates(pg)
@@ -4552,14 +4628,20 @@ local function launchCutsceneBypass()
             if hum then
                 if hum.PlatformStand then pcall(function() hum.PlatformStand = false end) end
                 if hum.Sit then pcall(function() hum.Sit = false end) end
-                if hum.WalkSpeed <= 0 and lastSavedSpeed then hum.WalkSpeed = lastSavedSpeed end
-                if hum.JumpPower <= 0 and lastSavedJump then hum.JumpPower = lastSavedJump end
+                if hum.WalkSpeed <= 0 then hum.WalkSpeed = lastSavedSpeed or 16 end
+                if hum.JumpPower <= 0 then hum.JumpPower = lastSavedJump or 50 end
                 if not faceCameraEnabled and lastSavedRotate ~= nil and hum.AutoRotate ~= lastSavedRotate then
                     hum.AutoRotate = lastSavedRotate
                 end
             end
+            local rt = root()
+            if scene and rt and rt.Anchored then
+                pcall(function() rt.Anchored = false end)
+            end
             local ctrl = getControls()
-            if ctrl and ctrl.enabled == false then
+            local now = os.clock()
+            if ctrl and (ctrl.enabled == false or now - lastControlEnableAt >= 0.25) then
+                lastControlEnableAt = now
                 pcall(function() ctrl:Enable() end)
             end
             if player:GetAttribute("NeedleInputLocked") == true then
@@ -4570,27 +4652,27 @@ local function launchCutsceneBypass()
             if not alive or not enabled or not active or not faceCameraEnabled then return end
             local hum, rt = humanoid(), root()
             if not hum or not rt or rt.Anchored or not yaw then return end
-            local forward = Vector3.new(sin(yaw), 0, cos(yaw))
+            local forward = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
             local oldLook = rt.CFrame.LookVector
             local flatOld = Vector3.new(oldLook.X, 0, oldLook.Z)
             local dot = flatOld.Magnitude > 0.01 and flatOld.Unit:Dot(forward) or 0
             if hum.AutoRotate then hum.AutoRotate = false end
             if dot < 0.9995 then
-                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, upAxis)
+                local desired = CFrame.lookAt(rt.Position, rt.Position + forward, Vector3.yAxis)
                 pcall(function() rt.CFrame = rt.CFrame:Lerp(desired, 0.35) end)
             end
-        end
-        local function down(key)
-            return UserInputService:IsKeyDown(key)
         end
         local function directMovement()
             local hum = humanoid()
             if not hum or UserInputService:GetFocusedTextBox() then return end
+            local function down(key)
+                return UserInputService:IsKeyDown(key)
+            end
             local x = (down(Enum.KeyCode.D) and 1 or 0) - (down(Enum.KeyCode.A) and 1 or 0)
             local z = (down(Enum.KeyCode.W) and 1 or 0) - (down(Enum.KeyCode.S) and 1 or 0)
             if x ~= 0 or z ~= 0 then
                 if not yaw then return end
-                local front = Vector3.new(sin(yaw), 0, cos(yaw))
+                local front = Vector3.new(math.sin(yaw), 0, math.cos(yaw))
                 local right = Vector3.new(-front.Z, 0, front.X)
                 local motion = front*z + right*x
                 if motion.Magnitude > 1 then motion = motion.Unit end
@@ -4639,6 +4721,15 @@ local function launchCutsceneBypass()
         end
         local function updateScene()
             if not alive then return end
+            -- Needle and puzzle VIM routines own the camera. During Gem,
+            -- recover cutscene movement/input and HUD, but NEVER restore or
+            -- force a second camera over the Gem solver's targeting.
+            if needleBusy or leverRunning or colourRunning then
+                if colourRunning and enabled and not cutsceneBridge.FinalEndingProtected
+                    and hubWindow.Closed == true then restoreInputs() end
+                if active then showGameplayHud() end
+                return
+            end
             local now = os.clock()
             if player:GetAttribute("Chapter2ReleaseActive") == true then chapter2ReleaseSeen = true end
             local hasSkip = skipButtonOnScreen()
@@ -4658,7 +4749,7 @@ local function launchCutsceneBypass()
                     end
                     log("CUTSCENE DETECTED: " .. current)
                     if current == "THREE PUZZLES" then
-                        log("Final cinematic: preserve normal viewing distance and hide cutscene visuals only; ending AutoSkip UI untouched")
+                        print("[BeyyHub Cutscene] Puzzle-release cinematic bypass active (final needle ending remains protected)")
                     end
                     recoveryEnd = 0
                     if not active then enablePlayableCamera(current) end
@@ -4685,6 +4776,9 @@ local function launchCutsceneBypass()
                 if active then disablePlayableCamera("recovered / bypass disabled") end
             end
             if yieldingToEnding and lastEndingSkipVisible then releaseEndingCursor() end
+        end
+        cutsceneBridge.Refresh = function()
+            if alive then updateScene() end
         end
 
         hook(UserInputService.InputBegan:Connect(function(input, processed)
@@ -4720,6 +4814,13 @@ local function launchCutsceneBypass()
             end
         end))
         hook(player.AttributeChanged:Connect(function(attr)
+            if not cutsceneBridge.FinalEndingProtected and player:GetAttribute("IntroCutsceneFinished") == true then
+                if attr == "CutsceneActive" and player:GetAttribute(attr) == true then
+                    cutsceneBridge.LeverUntil = math.max(cutsceneBridge.LeverUntil, os.clock() + 6.5)
+                elseif attr == "Chapter2ReleaseActive" and player:GetAttribute(attr) == true then
+                    cutsceneBridge.PuzzleUntil = math.max(cutsceneBridge.PuzzleUntil, os.clock() + 6.5)
+                end
+            end
             if attr == "IntroCutsceneFinished" then
                 if player:GetAttribute("IntroCutsceneFinished") == true and not introConfirmedAt then
                     introConfirmedAt = os.clock()
@@ -4748,16 +4849,13 @@ local function launchCutsceneBypass()
         local function handleCameraInput()
             if not alive or not enabled or not active or not yaw then return end
             pcall(function()
-                local dragging = UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)
-                local desired = cameraFirstPerson and Enum.MouseBehavior.LockCenter
-                    or (dragging and Enum.MouseBehavior.LockCurrentPosition or Enum.MouseBehavior.Default)
-                if UserInputService.MouseBehavior ~= desired then
-                    UserInputService.MouseBehavior = desired
+                if UserInputService.MouseBehavior ~= Enum.MouseBehavior.LockCenter then
+                    UserInputService.MouseBehavior = Enum.MouseBehavior.LockCenter
                 end
             end)
             local ok, md = pcall(function() return UserInputService:GetMouseDelta() end)
-            if ok and md and (cameraFirstPerson or UserInputService:IsMouseButtonPressed(Enum.UserInputType.MouseButton2)) then
-                if abs(md.X) > 0 or abs(md.Y) > 0 then
+            if ok and md then
+                if math.abs(md.X) > 0 or math.abs(md.Y) > 0 then
                     yaw = yaw - md.X * 0.004
                     pitch = clamp(pitch - md.Y * 0.004, -1.0, 0.85)
                 end
@@ -4765,6 +4863,7 @@ local function launchCutsceneBypass()
             local now = os.clock()
             local dt = clamp(now - lastRenderTime, 0, 0.08)
             lastRenderTime = now
+            local function down(key) return UserInputService:IsKeyDown(key) end
             if not UserInputService:GetFocusedTextBox() then
                 local h = (down(Enum.KeyCode.Right) and 1 or 0) - (down(Enum.KeyCode.Left) and 1 or 0)
                 local v = (down(Enum.KeyCode.Up) and 1 or 0) - (down(Enum.KeyCode.Down) and 1 or 0)
@@ -4779,24 +4878,44 @@ local function launchCutsceneBypass()
                 if active then updateScene() end
                 releaseEndingCursor()
             end
-            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then
+            if alive and enabled and colourRunning and not cutsceneBridge.FinalEndingProtected
+                and hubWindow.Closed == true and not yieldingToEnding
+                and (os.clock() < cutsceneBridge.LeverUntil
+                    or os.clock() < cutsceneBridge.PuzzleUntil
+                    or player:GetAttribute("CutsceneActive") == true
+                    or player:GetAttribute("Chapter2ReleaseActive") == true) then
+                -- This late render callback runs after the cinematic's camera
+                -- script AND after Gem's normal aim callback, so Gem wins the
+                -- camera contest without the bypass fighting its teleports.
+                restoreInputs()
+                if cutsceneBridge.GemAim then cutsceneBridge.GemAim() end
+                showGameplayHud()
+                lastRenderTime = os.clock()
+            elseif alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then
+                -- Camera, input and HUD need last-render-priority enforcement
+                -- during cinematic scripts; expensive descendant scans stay
+                -- throttled in updateScene.
+                restoreInputs()
                 handleCameraInput()
                 forceCamera()
                 alignCharacterFacing()
                 directMovement()
                 showGameplayHud()
-                if scene then hideFinalCutsceneVisuals() end
             else
                 lastRenderTime = os.clock()
             end
         end)
         local simulationSignal = RunService.PreSimulation or RunService.Heartbeat
         hook(simulationSignal:Connect(function()
-            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then directMovement() end
+            if alive and enabled and active and not yieldingToEnding and not shouldYieldCutsceneBypass() then
+                restoreInputs()
+                directMovement()
+            end
         end))
 
         local function stop()
             if not alive then return end
+            cutsceneBridge.Refresh = nil
             local wasActive = active
             alive, enabled, active = false, false, false
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
@@ -4820,7 +4939,7 @@ local function launchCutsceneBypass()
         updateScene()
         task.spawn(function()
             while alive do
-                task.wait(0.1)
+                task.wait((active or scene) and 0.1 or 0.35)
                 if not active and not scene then
                     rememberGameplay()
                     rememberGameplayHud()
@@ -4854,6 +4973,14 @@ _G.__BEYY_HUB_CLEANUP = function()
     if previousCutsceneHubCleanup then pcall(previousCutsceneHubCleanup) end
 end
 
+    cutsceneBridge.ProtectEnding = function()
+        cutsceneBridge.FinalEndingProtected = true
+        cutsceneBridge.LeverUntil, cutsceneBridge.PuzzleUntil = 0, 0
+        cutsceneBridge.GemAim = nil
+        shutdownCutsceneBypass()
+        local toggle = Registry.CutsceneBypass
+        if toggle and toggle.Value == true then toggle:Set(false) end
+    end
     overview:Section({ Title = "Cutscenes" })
     Registry.CutsceneBypass = overview:Toggle({
         Title = "Unskippable Cutscene Bypass", Value = false,

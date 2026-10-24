@@ -938,6 +938,62 @@ local haySearch = (function()
         for index, record in ipairs(ordered) do result[index] = record.Object end
         return result
     end
+    -- Search the nearest occupied cells first. A cell's distance is a lower bound
+    -- for every 3D target inside it, so farther cells cannot beat the current best.
+    -- Unanchored parts are evaluated live because physics need not emit Position.
+    function api.Nearest(folder,center,isAllowed,accept)
+        local began=os.clock()
+        local stats={Mode="SpatialNearest",IndexWasReady=current==folder and ready,
+            InspectedParts=0,VisitedCells=0,IndexedCells=0,Yields=0}
+        if not watch(folder)then stats.IndexWaitSeconds=os.clock()-began;return nil,stats end
+        stats.IndexWaitSeconds=os.clock()-began
+        local function allowed()return alive and current==folder and folder.Parent~=nil and isAllowed()end
+        if not allowed()then stats.Cancelled=true;return nil,stats end
+        local buckets,loose={},{}
+        for key,bucket in pairs(cells)do
+            local x,z=key:match("^(-?%d+):(-?%d+)$")
+            x,z=tonumber(x),tonumber(z)
+            local dx=math.max(x*CELL-center.X,0,center.X-(x+1)*CELL)
+            local dz=math.max(z*CELL-center.Z,0,center.Z-(z+1)*CELL)
+            buckets[#buckets+1]={Bucket=bucket,Minimum=dx*dx+dz*dz}
+        end
+        for record in pairs(moving)do loose[#loose+1]=record end
+        stats.IndexedCells=#buckets
+        table.sort(buckets,function(a,b)return a.Minimum<b.Minimum end)
+        local best,bestScore,bestOrder=nil,math.huge,math.huge
+        local sliceStarted=os.clock()
+        local function consider(record)
+            stats.InspectedParts+=1
+            if stats.InspectedParts%32==0 and os.clock()-sliceStarted>=0.002 then
+                stats.Yields+=1;task.wait();sliceStarted=os.clock()
+            end
+            if not allowed()then return false end
+            local object=record.Object
+            if object and records[object]==record and object.Parent==folder and accept(object)then
+                local delta=object.Position-center
+                local score=delta:Dot(delta)
+                if score<bestScore or (score==bestScore and record.Order<bestOrder)then
+                    best,bestScore,bestOrder=object,score,record.Order
+                end
+            end
+            return true
+        end
+        for _,record in ipairs(loose)do
+            if not consider(record)then stats.Cancelled=true;return nil,stats end
+        end
+        for _,cell in ipairs(buckets)do
+            if cell.Minimum>bestScore then break end
+            stats.VisitedCells+=1
+            -- Snapshot this bucket before yielding; removals and movement may mutate it.
+            local entries={}
+            for record in pairs(cell.Bucket)do entries[#entries+1]=record end
+            for _,record in ipairs(entries)do
+                if not consider(record)then stats.Cancelled=true;return nil,stats end
+            end
+        end
+        if not allowed()then stats.Cancelled=true;return nil,stats end
+        return best,stats
+    end
     function api.Stop()
         alive = false; clear(); current = nil
     end
@@ -978,32 +1034,25 @@ local function aimHayTnt(world,config,root,isAllowed,preferred)
         return delta.X*delta.X+delta.Z*delta.Z>9
     end
     local hay=valid(preferred) and preferred or nil
+    local search={Mode="Preferred",InspectedParts=0,Yields=0}
     if not hay then
-        local best=math.huge
-        local position=root.Position
-        for _,part in budgetedFolderChildren(folder,isAllowed) do
-            if valid(part) then
-                local delta=part.Position-position
-                local score=delta:Dot(delta)
-                if score<best then best=score;hay=part end
-            end
-        end
+        hay,search=haySearch.Nearest(folder,root.Position,isAllowed,valid)
     end
     -- The scan may yield. Use the current character and target positions afterward.
-    if not root.Parent or not isAllowed() or not valid(hay) then return nil end
+    if not root.Parent or not isAllowed() or not valid(hay) then return nil,nil,nil,nil,search end
     local target=hay.Position
     local origin=root.Position+Vector3.new(0,1.5,0)
     local toward=target-origin
     local planar=Vector3.new(toward.X,0,toward.Z)
-    if planar.Magnitude<=3 then return nil end
+    if planar.Magnitude<=3 then return nil,nil,nil,nil,search end
     -- Put the projectile outside the avatar, on the side facing the hay.
     origin+=planar.Unit*2.5
     local displacement=target-origin
-    if displacement.Magnitude<0.1 then return nil end
+    if displacement.Magnitude<0.1 then return nil,nil,nil,nil,search end
     local minSpeed=tonumber(config and config.TNT_MIN_THROW_SPEED)
     local maxSpeed=tonumber(config and config.TNT_MAX_THROW_SPEED)
     local fuse=tonumber(config and config.TNT_FUSE_TIME) or 2.9
-    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil end
+    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil,nil,nil,nil,search end
     local up=math.abs(displacement.Unit:Dot(Vector3.yAxis))>0.97 and Vector3.zAxis or Vector3.yAxis
     local from=CFrame.lookAt(origin,target,up)
     -- Earliest feasible trajectory within the game's configured throw-speed limits.
@@ -1012,9 +1061,9 @@ local function aimHayTnt(world,config,root,isAllowed,preferred)
         if flight>=fuse-0.15 then break end
         local velocity=displacement/flight+Vector3.new(0,world.Gravity*flight*0.5,0)
         local speed=velocity.Magnitude
-        if speed>=minSpeed and speed<=maxSpeed then return from,velocity,hay,flight end
+        if speed>=minSpeed and speed<=maxSpeed then return from,velocity,hay,flight,search end
     end
-    return nil
+    return nil,nil,nil,nil,search
 end
 
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
@@ -1378,8 +1427,8 @@ local function createHayTntStep(options)
         end
         -- Sample repeated no-target searches once per second, rather than flooding the ring.
         if os.clock()-lastNoTarget>=1 then status("Selecting hay target")end
-        local from,velocity,hay=options.Aim(root,options.Allowed)
-        if cycle then cycle.SearchSeconds=os.clock()-started;cycle.TargetFound=from~=nil;cycle.Target=hay end
+        local from,velocity,hay,_,search=options.Aim(root,options.Allowed)
+        if cycle then cycle.SearchSeconds=os.clock()-started;cycle.TargetFound=from~=nil;cycle.Target=hay;cycle.Search=search end
         if not from then finish("No reachable target");return end
         if not root or not root.Parent or root~=options.Root()or not options.Allowed()then
             finish("Cancelled after target search");return
@@ -1393,10 +1442,12 @@ local function createHayTntStep(options)
         if cycle then cycle.Stage="Target refresh"end
         local refreshStarted=os.clock()
         local refreshedHay
-        from,velocity,refreshedHay=options.Aim(root,options.Allowed,hay)
+        local refresh
+        from,velocity,refreshedHay,_,refresh=options.Aim(root,options.Allowed,hay)
         if cycle then
             cycle.RefreshSeconds=os.clock()-refreshStarted;cycle.RefreshedTargetFound=from~=nil
             cycle.TargetChanged=refreshedHay~=hay;cycle.RefreshedTarget=refreshedHay
+            cycle.Refresh=refresh
         end
         if not from then finish("No valid trajectory after lighting");return end
         if not root.Parent or root~=options.Root()or not options.Allowed()then

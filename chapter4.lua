@@ -1602,10 +1602,17 @@ local function createBossWeakpointPitchfork(options)
     return controller
 end
 
+-- Candle sprint adapted from beyytu/needlehub at 807c07f2c36d1e43fa41c8b0429778a44691815a.
 local function createCandleAutomation(options)
     local player=options.Player
     local alive,busy,keyHeld=false,false,false
     local altar,remotes,holder,character
+    local earlyLightHolder,earlyLightSentAt=nil,-math.huge
+    local batchStartedAt,batchCharacter=nil,nil
+    local unanchorAttempted,unanchorWaitForSceneEnd=false,false
+    local unanchorRoot,unanchorInitiallyAnchored,unanchorConnection=nil,nil,nil
+    local unanchorWindowSeconds=5.5
+    local unanchorGeneration=0
     local batchAltar,batchStarted,lastFound,lastLit=nil,false,0,0
     local lastStatus,lastWarning=nil,-math.huge
     local function record(kind,build)if options.Record then pcall(options.Record,kind,build)end end
@@ -1645,27 +1652,86 @@ local function createCandleAutomation(options)
         repeat
             check()
             if predicate() then return true end
-            task.wait(0.05)
+            task.wait(0.025)
         until os.clock()>=deadline
         check()
         return predicate()
     end
     local function pause(seconds)waitFor(function()return false end,seconds)end
+    local function finishUnanchorWindow(reason)
+        if unanchorRoot and (reason=="server placement confirmed" or reason=="action completed")
+            and alive and options.Alive() and options.Enabled() and options.MenuClosed() and not options.Blocked()
+            and player.Character==character and player:GetAttribute("CutsceneActive")==true then
+            local lit=altar and tonumber(altar:GetAttribute("CandlesLit")) or 0
+            local total=altar and math.max(1,tonumber(altar:GetAttribute("CandlesTotal")) or 4) or 4
+            if lit<total then return end
+        end
+        if unanchorConnection then unanchorConnection:Disconnect();unanchorConnection=nil end
+        local root,wasAnchored=unanchorRoot,unanchorInitiallyAnchored
+        unanchorRoot,unanchorInitiallyAnchored=nil,nil
+        if root and root.Parent and player.Character==character and wasAnchored and player:GetAttribute("CutsceneActive")==true then
+            pcall(function()root.Anchored=true end)
+        end
+    end
+    local function startUnanchorWindow()
+        if unanchorRoot and unanchorRoot.Parent and player:GetAttribute("CutsceneActive")==true then
+            return true
+        end
+        if unanchorAttempted or player:GetAttribute("CutsceneActive")~=true
+            or not altar or altar:GetAttribute("AllLit")==true then return false end
+        local lit=tonumber(altar:GetAttribute("CandlesLit")) or 0
+        local total=math.max(1,tonumber(altar:GetAttribute("CandlesTotal")) or 4)
+        if lit<2 or lit>=total then return false end
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        if not root then return false end
+        if not root.Anchored then return false end
+        unanchorAttempted=true
+        unanchorGeneration+=1
+        local generation=unanchorGeneration
+        unanchorRoot,unanchorInitiallyAnchored=root,true
+        local started=os.clock()
+        local success,err=pcall(function()root.Anchored=false end)
+        record("UnanchorStarted",function()return {Success=success,Error=not success and tostring(err)or nil,Lit=lit,Total=total}end)
+        if not success or root.Anchored then
+            finishUnanchorWindow("root refused local unanchor")
+            return false
+        end
+        unanchorConnection=game:GetService("RunService").Heartbeat:Connect(function()
+            if unanchorRoot~=root then return end
+            if not alive or not options.Alive() or not options.Enabled()
+                or not options.MenuClosed() or options.Blocked() or player.Character~=character
+                or player:GetAttribute("CutsceneActive")~=true
+                or os.clock()-started>unanchorWindowSeconds then
+                finishUnanchorWindow("safety stop")
+            elseif root.Anchored then
+                pcall(function()root.Anchored=false end)
+            end
+        end)
+        task.delay(unanchorWindowSeconds+0.2,function()
+            if unanchorGeneration==generation and unanchorRoot==root then finishUnanchorWindow("timeout") end
+        end)
+        return true
+    end
     local function positionOf(model)
         local root=model:FindFirstChild("Root")
         return root and root:IsA("BasePart") and root.Position or model:GetPivot().Position
     end
-    local function approach(model,interrupted)
+    local function approach(model,interrupted,attempt)
         check()
         if interrupted and interrupted()then return false end
         local root=assert(character:FindFirstChild("HumanoidRootPart"),"Waiting for character root")
         local target=positionOf(model)
-        root.CFrame=CFrame.lookAt(target+Vector3.new(3,2,0),target)
-        root.AssemblyLinearVelocity=Vector3.zero
-        root.AssemblyAngularVelocity=Vector3.zero
-        if interrupted then
-            if waitFor(interrupted,0.6)then return false end
-        else pause(0.6)end
+        if (root.Position-target).Magnitude>5 then
+            root.CFrame=CFrame.lookAt(target+Vector3.new(3,2,0),target)
+            root.AssemblyLinearVelocity=Vector3.zero
+            root.AssemblyAngularVelocity=Vector3.zero
+            local settle=attempt~=1 and 0.35
+                or (player:GetAttribute("CutsceneActive")==true and 0.29 or 0.23)
+            if interrupted then
+                if waitFor(interrupted,settle)then return false end
+            else pause(settle)end
+        elseif attempt and attempt>1 then pause(0.12)end
+        check()
         assert(model.Parent and (root.Position-positionOf(model)).Magnitude<=10,"Interaction target moved out of reach")
         return true
     end
@@ -1719,12 +1785,13 @@ local function createCandleAutomation(options)
             check()
             local outcome=pickupOutcome(candle)
             if outcome then return finish(outcome,attempt,"BeforeApproach")end
+            if player:GetAttribute("CutsceneActive")==true then startUnanchorWindow()end
             if candle:GetAttribute("HeldBy")~=player.UserId then
                 status("Collecting "..candle.Name.." (attempt "..attempt..")")
                 -- A teammate can claim or move this candle during the approach delay.
                 approach(candle,function()
                     return pickupOutcome(candle)~=nil or candle:GetAttribute("HeldBy")==player.UserId
-                end)
+                end,attempt)
             end
             check()
             outcome=pickupOutcome(candle)
@@ -1740,25 +1807,40 @@ local function createCandleAutomation(options)
             if outcome then return finish(outcome,attempt,"WaitingForConfirmation")end
             record("PickupTimeout",function()return describeTarget(candle,attempt)end)
         end
+        if unanchorRoot and player:GetAttribute("CutsceneActive")==true then
+            unanchorWaitForSceneEnd=true
+            finishUnanchorWindow("pickup not confirmed")
+        end
         error("Pickup not confirmed; will retry")
     end
 
     local function place()
         holder=assert(findHolder(false),"Waiting for a free candle holder")
-        for attempt=1,2 do
+        local unanchorActive=startUnanchorWindow()
+        local attempts=unanchorActive and 1 or (player:GetAttribute("CutsceneActive")==true and 3 or 2)
+        for attempt=1,attempts do
             check()
             assert(holder:GetAttribute("ReservedBy")==nil or holder:GetAttribute("ReservedBy")==player.UserId,"Holder reserved by another player")
             status("Placing candle in holder "..holder.Name)
-            approach(holder)
+            approach(holder,nil,attempt)
             check()
+            local duringCutscene=player:GetAttribute("CutsceneActive")==true
+            if duringCutscene and not unanchorActive then unanchorActive=startUnanchorWindow()end
+            assert(holder:GetAttribute("ReservedBy")==nil or holder:GetAttribute("ReservedBy")==player.UserId,"Holder reserved by another player")
             record("PlacementRequest",function()return describeTarget(holder,attempt)end)
             remotes.PlaceCandle:FireServer(holder)
             if waitFor(function()
                 return holder:GetAttribute("Lit")==true or holder:GetAttribute("ReservedBy")==player.UserId
-            end,2)then
+            end,duringCutscene and 0.55 or 2)then
+                if unanchorActive then finishUnanchorWindow("server placement confirmed")end
                 record("PlacementConfirmed",function()return describeTarget(holder,attempt)end);return
             end
             record("PlacementTimeout",function()return describeTarget(holder,attempt)end)
+            if unanchorActive then
+                finishUnanchorWindow("server did not confirm placement")
+                unanchorWaitForSceneEnd=player:GetAttribute("CutsceneActive")==true
+                error("Placement not confirmed; waiting for cutscene end")
+            end
             if player:GetAttribute("CarryingCandle")==nil then error("Placement unconfirmed; waiting for server state")end
         end
         error("Placement not confirmed; will retry")
@@ -1782,10 +1864,40 @@ local function createCandleAutomation(options)
         record("LightingConfirmed",function()local data=describeTarget(holder);data.Mode="NormalMatch";return data end)
         waitFor(function()return not gui.Enabled end,2)
     end
+    local function clearFinishedPuzzle()
+        if not alive or not options.Alive() or not options.Enabled() or not batchStartedAt
+            or player.Character~=batchCharacter or not altar or not altar.Parent then return end
+        local gui=puzzle()
+        if not gui or not gui:IsA("ScreenGui") or not gui.Enabled then return end
+        local total=math.max(1,tonumber(altar:GetAttribute("CandlesTotal"))or 4)
+        if altar:GetAttribute("AllLit")~=true and (tonumber(altar:GetAttribute("CandlesLit"))or 0)<total then
+            for _,name in ipairs({"1","2","3","4"})do
+                local item=altar:FindFirstChild(name)
+                if item and item:GetAttribute("ReservedBy")==player.UserId and item:GetAttribute("Lit")~=true then return end
+            end
+        end
+        closePuzzle()
+        if gui.Enabled then gui.Enabled=false end
+        record("StaleMatchClosed")
+    end
     local function light()
         check()
-        if holder:GetAttribute("Lit")==true then closePuzzle();return end
+        if holder:GetAttribute("Lit")==true then closePuzzle();return true end
         assert(holder:GetAttribute("ReservedBy")==player.UserId,"Holder reservation not confirmed")
+        local gui=puzzle()
+        if player:GetAttribute("CutsceneActive")==true and (not gui or not gui.Enabled)then
+            if earlyLightHolder~=holder then earlyLightHolder,earlyLightSentAt=holder,-math.huge end
+            if os.clock()-earlyLightSentAt>=1.5 then
+                earlyLightSentAt=os.clock()
+                record("EarlyLightingRequest",function()return describeTarget(holder)end)
+                remotes.MatchDone:FireServer(holder)
+                if waitFor(function()return holder:GetAttribute("Lit")==true end,0.5)then
+                    closePuzzle();return true
+                end
+            end
+            status("Waiting for match GUI or server lighting confirmation")
+            return false
+        end
         -- The server sends a 0.55-second placement animation before opening this GUI.
         waitFor(function()local gui=puzzle();return gui and gui.Enabled end,1)
         check()
@@ -1795,17 +1907,17 @@ local function createCandleAutomation(options)
         if waitFor(function()return holder:GetAttribute("Lit")==true end,0.5)then
             record("LightingConfirmed",function()local data=describeTarget(holder);data.Mode="Fast";return data end)
             closePuzzle()
-            local gui=puzzle()
-            if not gui or not gui.Enabled then return end
-            status("Lighting confirmed; finishing minigame cleanup")
+            return true
         else status("Using match-lighting fallback")end
         record("LightingFallback",function()return describeTarget(holder)end)
         normalMatch()
         closePuzzle()
+        return true
     end
     function controller.IsBusy()return busy end
     function controller.Stop()
         alive=false
+        finishUnanchorWindow("hub unload")
         releaseKey()
         closePuzzle()
         busy=false
@@ -1815,15 +1927,23 @@ local function createCandleAutomation(options)
         altar=workspace:FindFirstChild("WhereToPlaceCandles")
         local found=altar and tonumber(altar:GetAttribute("CandlesFound"))or 0
         local lit=altar and tonumber(altar:GetAttribute("CandlesLit"))or 0
-        if altar~=batchAltar or found<lastFound or lit<lastLit then
-            batchAltar=altar;batchStarted=false
+        if altar~=batchAltar or found<lastFound or lit<lastLit or batchCharacter~=player.Character then
+            finishUnanchorWindow("new candle batch")
+            batchAltar=altar;batchStarted=false;batchStartedAt=nil;batchCharacter=player.Character
+            earlyLightHolder,earlyLightSentAt=nil,-math.huge
+            unanchorAttempted,unanchorWaitForSceneEnd=false,false
         end
         lastFound,lastLit=found,lit
-        if not options.Enabled()then status("Disabled");return end
-        if not options.MenuClosed()then status("Paused while menu is open");return end
-        if options.Blocked()then status("Paused for cutscene or input lock");return end
+        clearFinishedPuzzle()
+        if not options.Enabled()then finishUnanchorWindow("disabled");status("Disabled");return end
+        if not options.MenuClosed()then finishUnanchorWindow("menu open");status("Paused while menu is open");return end
+        if unanchorWaitForSceneEnd then
+            if player:GetAttribute("CutsceneActive")==true then status("Waiting for skeleton cutscene to end");return end
+            unanchorWaitForSceneEnd=false
+        end
+        if options.Blocked()then finishUnanchorWindow("input blocked");status("Paused for cutscene or input lock");return end
         if not altar then status("Waiting for candle objectives");return end
-        if altar:GetAttribute("AllLit")==true then status("All candles completed");return end
+        if altar:GetAttribute("AllLit")==true then finishUnanchorWindow("all candles completed");status("All candles completed");return end
         local ritual=game:GetService("ReplicatedStorage"):FindFirstChild("CandleRitual")
         remotes=ritual and ritual:FindFirstChild("Remotes")
         if not remotes or not remotes:FindFirstChild("PickUpCandle")or not remotes:FindFirstChild("PlaceCandle")
@@ -1852,19 +1972,23 @@ local function createCandleAutomation(options)
             if folder then for _,candidate in ipairs(folder:GetChildren())do if loose(candidate)then candle=candidate;break end end end
             if not candle then status("Waiting for an exposed candle");return end
         end
+        if not batchStartedAt then batchStartedAt=os.clock()end
         busy=true
         record("ActionStarted",function()return {Candle=candle and candle.Name,Holder=holder and holder.Name,Carrying=player:GetAttribute("CarryingCandle")}end)
-        local deferred=false
+        local deferred,completed=false,false
         local ok,err=xpcall(function()
             options.PauseTools()
             if not holder then
                 if candle and not collect(candle)then deferred=true;return end
                 place()
             end
-            light()
+            completed=light()
+            if not completed then deferred=true;return end
             status(altar:GetAttribute("AllLit")==true and "All candles completed" or "Candle completed; continuing batch")
         end,function(e)return tostring(e)end)
         record(ok and (deferred and "ActionDeferred"or "ActionCompleted")or "ActionError",function()return {Error=not ok and tostring(err)or nil,Found=altar:GetAttribute("CandlesFound"),Lit=altar:GetAttribute("CandlesLit"),Holder=holder and holder.Name}end)
+        finishUnanchorWindow("action completed")
+        if completed then clearFinishedPuzzle()end
         releaseKey()
         if not ok then
             closePuzzle()
@@ -1873,6 +1997,7 @@ local function createCandleAutomation(options)
         end
         holder=nil
         busy=false
+        return ok and completed
     end
     return controller
 end
@@ -2523,6 +2648,35 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
             or LocalPlayer:GetAttribute("CutsceneActive")==true
             or LocalPlayer:GetAttribute("HintViewerOpen")==true
     end
+    local candleCutscenePassLogged=false
+    local function candleBlocked()
+        local blocked=farmBlocked()
+        if not blocked then
+            candleCutscenePassLogged=false
+            return false
+        end
+        if hubUnloaded or BEYY_CHAPTER~="Chapter4"
+            or LocalPlayer:GetAttribute("HintViewerOpen")==true
+            or LocalPlayer:GetAttribute("CutsceneActive")~=true then
+            candleCutscenePassLogged=false
+            return true
+        end
+        local altar=Workspace:FindFirstChild("WhereToPlaceCandles")
+        local lit=altar and tonumber(altar:GetAttribute("CandlesLit")) or 0
+        local total=altar and tonumber(altar:GetAttribute("CandlesTotal")) or 4
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local ending=pg and pg:FindFirstChild("NeedleEndingUI")
+        if not altar or altar:GetAttribute("AllLit")==true or lit<2 or lit>=total
+            or (ending and ending:IsA("ScreenGui") and ending.Enabled) then
+            candleCutscenePassLogged=false
+            return true
+        end
+        if not candleCutscenePassLogged then
+            candleCutscenePassLogged=true
+            chapter4Diagnostics.Candles.Record("SkeletonCutscenePass",function()return {Lit=lit,Total=total}end)
+        end
+        return false
+    end
     local function needlePriority()
         return candleController and candleController.IsBusy() or false
     end
@@ -2818,7 +2972,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
         Alive=function()return not hubUnloaded end,
         Enabled=function()return sharedFarmState.AutoCandles==true end,
         MenuClosed=function()return hubWindow.Closed==true end,
-        Blocked=farmBlocked,
+        Blocked=candleBlocked,
         PauseTools=releaseSharedVacuum,
         Status=function(text)candleStatus:SetDesc(text);chapter4Diagnostics.Candles.Status(text)end,
         Record=chapter4Diagnostics.Candles.Record,
@@ -2837,7 +2991,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
                 chapter4Diagnostics.Candles.Record("WorkerError",function()return {Error=tostring(err)}end)
                 candleStatus:SetDesc("Candle worker error; retrying: "..tostring(err))
             end
-            task.wait(0.5)
+            task.wait(ok and err==true and 0.01 or 0.25)
         end
     end)
     local function owned(attr) return LocalPlayer:GetAttribute(attr)==true end

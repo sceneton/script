@@ -20,6 +20,22 @@ The loader selects only the current place's module, checks the main-branch revis
 - chapter4.lua: universal controls for place 102537610748607 plus Farming → Candles → Auto Collect & Light Candles. This saved toggle defaults off and replaces Chapter 4's needle controls. It waits until all four candles are exposed (including candles already collected), then processes them consecutively: confirming pickup, placing in free holders, and uses server-confirmed fast lighting with normal match assistance as fallback. Hay tools/vacuum pause during candle actions; the normal client close handler restores movement and cursor after lighting. Farming → Tools also includes a saved **Auto Boss Weak-Point Pitchfork** toggle (default off). It resolves the Pumpkin Golem's nine configured weak-point regions from animated bone pairs and aims at their facing surface within pitchfork reach. It follows the attack cooldown and pauses for menus, candle actions, cutscenes, pumpkin snare/grab/pull actions and combat input locks; the pitchfork does not need to be equipped. Ordinary hay pitchfork requests yield while this boss mode is engaged.
 - native_ui.lua: native menu implementation embedded in all five modules.
 
+## Chapter 4 candle sprint
+
+The existing saved **Auto Collect & Light Candles** toggle now adapts the candle sprint from [beyytu/needlehub](https://github.com/beyytu/needlehub/blob/807c07f2c36d1e43fa41c8b0429778a44691815a/chapter4.lua). It still waits for all four exposed/collected candles and confirms pickup, reservation and lighting through replicated server state. Approaches use shorter settling waits, and confirmed lighting advances immediately to the next candle.
+
+After two candles are lit, the controller can attempt the remaining holders during the skeleton cutscene. It permits one local root-unanchor window of at most 5.5 seconds per batch; an unconfirmed placement waits for the cutscene to end. Hidden-GUI lighting requests are limited to one per holder every 1.5 seconds. Opening the menu, disabling automation, input blocking or unloading releases held input and restores an anchor owned by the controller. Existing camera and hay-tool priority gates remain active during candle actions. Finished or delayed match UI is cleaned up without closing an unlit local reservation.
+
+The port retains the target repository's teammate-ownership checks and opt-in candle diagnostics. It does not import the source's full-console capture or automatic clipboard writes. The toggle continues to default off.
+
+Local regression command (Node.js plus the official Luau CLI):
+
+```sh
+node tests/chapter4_candles.cjs /path/to/luau
+```
+
+The harness extracts and executes the production candle controller and its cutscene gate against mocks. Live Roblox behavior has not been tested for this port.
+
 ## Settings and recovery
 
 Existing WindUI/BeyyHub/config/*.json configs remain compatible. Config controls and farm settings are under Overview & Settings. Lobby Tools follows that tab. Anti-AFK defaults on.

@@ -341,6 +341,331 @@ local function installAntiIdle(tab, registry, isRunning)
 end
 
 -- Pitchfork-only targeting: maintain child slots and budget large searches.
+-- Shared discovery for AutoSkip and camera bypass; no input or game-state writes.
+local function createSkipCandidateIndex(getGui)
+    local api={}
+    local pg,alive,dirty,nextRecovery=nil,true,true,0
+    local objects,buttons,markedText,connections={},{},{},{}
+    local function marked(text)return type(text)=="string"and text:lower():find("skip",1,true)~=nil end
+    local function clear()
+        for _,entry in pairs(objects)do for _,connection in ipairs(entry.Connections)do connection:Disconnect()end end
+        for _,connection in ipairs(connections)do connection:Disconnect()end
+        table.clear(objects);table.clear(buttons);table.clear(markedText);table.clear(connections)
+        dirty=true;pg=nil
+    end
+    local function add(object)
+        if objects[object]then return end
+        local entry={Object=object,Connections={},NameMarked=marked(object.Name)}
+        objects[object]=entry
+        if object:IsA("GuiButton")then buttons[#buttons+1]=entry end
+        local function nameChanged()
+            local current=marked(object.Name)
+            if current~=entry.NameMarked then entry.NameMarked=current;dirty=true end
+        end
+        entry.Connections[#entry.Connections+1]=object:GetPropertyChangedSignal("Name"):Connect(nameChanged)
+        entry.Connections[#entry.Connections+1]=object.AncestryChanged:Connect(function()dirty=true end)
+        if object:IsA("TextLabel")or object:IsA("TextButton")then
+            local function textChanged()
+                local current=marked(object.Text)
+                if current~=entry.TextMarked then entry.TextMarked=current;markedText[object]=current or nil;dirty=true end
+            end
+            textChanged()
+            entry.Connections[#entry.Connections+1]=object:GetPropertyChangedSignal("Text"):Connect(textChanged)
+        end
+        dirty=true
+    end
+    local function remove(object)
+        local entry=objects[object]
+        if not entry then return end
+        for _,connection in ipairs(entry.Connections)do connection:Disconnect()end
+        objects[object]=nil;markedText[object]=nil;dirty=true
+    end
+    local function scan()
+        if not pg then return end
+        for _,object in ipairs(pg:GetDescendants())do add(object)end
+        for object in pairs(objects)do if not object:IsDescendantOf(pg)then remove(object)end end
+        nextRecovery=os.clock()+4
+    end
+    local function refresh()
+        if not alive then return end
+        local current=getGui()
+        if current~=pg then
+            clear();pg=current
+            if pg then
+                connections[1]=pg.DescendantAdded:Connect(add)
+                connections[2]=pg.DescendantRemoving:Connect(remove)
+                scan()
+            end
+        end
+        if not pg or not dirty then return end
+        dirty=false
+        local compact={}
+        for _,entry in ipairs(buttons)do
+            local object=entry.Object
+            if objects[object]==entry and object:IsDescendantOf(pg)then
+                compact[#compact+1]=entry
+                entry.Direct=entry.NameMarked or entry.TextMarked or false
+                entry.Context=entry.Direct
+                local ancestor,hops=object.Parent,0
+                while ancestor and ancestor~=pg and hops<5 do
+                    local parentEntry=objects[ancestor]
+                    if parentEntry and parentEntry.NameMarked then entry.Context=true end
+                    ancestor=ancestor.Parent;hops+=1
+                end
+            end
+        end
+        buttons=compact
+        for object in pairs(markedText)do
+            local ancestor=object.Parent
+            local nearest=true
+            while ancestor and ancestor~=pg do
+                local entry=objects[ancestor]
+                if entry and ancestor:IsA("GuiButton")then
+                    entry.Context=true
+                    if nearest and object:IsA("TextLabel")then entry.Direct=true end
+                    nearest=false
+                end
+                ancestor=ancestor.Parent
+            end
+        end
+    end
+    local function visible(object)
+        local parent=object
+        while parent and parent~=pg do
+            if parent:IsA("GuiObject")and not parent.Visible then return false end
+            if parent:IsA("ScreenGui")and not parent.Enabled then return false end
+            parent=parent.Parent
+        end
+        return parent==pg
+    end
+    function api.Contains(object,context)
+        refresh()
+        local entry=objects[object]
+        return alive and pg~=nil and entry~=nil and object:IsDescendantOf(pg)
+            and (context and entry.Context or (not context and entry.Direct))and visible(object)or false
+    end
+    function api.Find(context,predicate)
+        refresh()
+        if not alive or not pg then return nil end
+        for attempt=1,2 do
+            for _,entry in ipairs(buttons)do
+                local object=entry.Object
+                if (context and entry.Context or (not context and entry.Direct))and visible(object)
+                    and (not predicate or predicate(object))then return object end
+            end
+            if attempt==1 and os.clock()>=nextRecovery then scan();refresh()else break end
+        end
+    end
+    function api.Stop()alive=false;clear()end
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()api.Stop();if previous then previous()end end
+    return api
+end
+
+-- Idle waits wake on toggles/state changes, with a one-second recovery timer.
+-- Active intervals and purchase-confirmation deadlines are supplied by callers.
+local function createWorkerWake(player)
+    local api={}
+    local alive=true
+    local waiters,connections={},{}
+    local cashFolder,cashValue,cashConnections=nil,nil,{}
+    local function finish(token,cancelTimer)
+        if token.Done then return end
+        token.Done=true;waiters[token]=nil
+        if cancelTimer and token.Timer then pcall(task.cancel,token.Timer)end
+        task.defer(token.Thread)
+    end
+    function api.Wake(key)
+        for token in pairs(waiters)do
+            if key==nil or token.Key==key or(key=="upgrades"and token.Key=="upgrades-cash")then finish(token,true)end
+        end
+    end
+    local function syncCash()
+        local folder=player:FindFirstChild("leaderstats")
+        local value=folder and folder:FindFirstChild("Cash")
+        if folder==cashFolder and value==cashValue then return end
+        for _,connection in ipairs(cashConnections)do connection:Disconnect()end
+        table.clear(cashConnections);cashFolder,cashValue=folder,value
+        if folder then
+            cashConnections[#cashConnections+1]=folder.ChildAdded:Connect(function()syncCash();api.Wake("upgrades-cash")end)
+            cashConnections[#cashConnections+1]=folder.ChildRemoved:Connect(function()syncCash();api.Wake("upgrades-cash")end)
+        end
+        if value then cashConnections[#cashConnections+1]=value:GetPropertyChangedSignal("Value"):Connect(function()api.Wake("upgrades-cash")end)end
+    end
+    connections[1]=player.AttributeChanged:Connect(function(name)
+        if name:sub(1,10)=="HayUpgrade"or name=="UpgradeCostMultiplier"or name=="PitchforkUpgradeCostMultiplier"then api.Wake("upgrades")end
+    end)
+    connections[2]=player.ChildAdded:Connect(function(child)if child.Name=="leaderstats"then syncCash();api.Wake("upgrades")end end)
+    connections[3]=player.ChildRemoved:Connect(function(child)if child==cashFolder then syncCash();api.Wake("upgrades")end end)
+    function api.Wait(interval,idle,key)
+        if not alive then return end
+        if not idle then task.wait(interval);return end
+        if key=="upgrades"or key=="upgrades-cash"then syncCash()end
+        local token={Thread=coroutine.running(),Key=key}
+        waiters[token]=true
+        token.Timer=task.delay(1,function()finish(token,false)end)
+        coroutine.yield()
+    end
+    function api.Stop()
+        if not alive then return end
+        alive=false
+        for _,connection in ipairs(connections)do connection:Disconnect()end
+        for _,connection in ipairs(cashConnections)do connection:Disconnect()end
+        for token in pairs(waiters)do finish(token,true)end
+        table.clear(connections);table.clear(cashConnections)
+        cashFolder,cashValue=nil,nil
+    end
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()api.Stop();if previous then previous()end end
+    return api
+end
+
+-- Optional bounded local feature traces. Observers never send input or gameplay requests.
+local function createFeatureDiagnostics(options)
+    local api={Probe=nil,Remote=nil}
+    local enabled,alive,pumping=false,true,false
+    local ring,head,count,total,dropped={},1,0,0,0
+    local dirty,nextSave,lastState=false,0,nil
+    local errors,lastStatus=0,"No observation yet"
+    local counters,statuses,connections={},{},{}
+    local feedback,feedbackConnection=nil,nil
+    local nextOtherFeedback=0
+    local path=CACHE_FOLDER.."/"..options.File..".json"
+    local http=game:GetService("HttpService")
+    local function value(item,depth,seen)
+        local kind=typeof(item)
+        if kind=="nil"or kind=="boolean"or kind=="string"then return kind=="string"and item:sub(1,1000)or item end
+        if kind=="number"then return item==item and math.abs(item)<math.huge and item or tostring(item)end
+        if kind=="Vector3"then return {X=item.X,Y=item.Y,Z=item.Z}end
+        if kind=="CFrame"then return value(item.Position)end
+        if kind=="Instance"then return {Name=item.Name,Class=item.ClassName}end
+        if kind~="table"then return tostring(item)end
+        depth=depth or 0;seen=seen or {}
+        if depth>=5 or seen[item]then return "<bounded>"end
+        seen[item]=true
+        local output,n={},0
+        for key,child in pairs(item)do
+            n+=1;if n>40 then break end
+            if type(key)=="number"or type(key)=="string"then output[key]=value(child,depth+1,seen)end
+        end
+        seen[item]=nil;return output
+    end
+    function api.Enabled()return alive and enabled and options.Alive()end
+    function api.Record(kind,build)
+        if not api.Enabled()then return end
+        local ok,data=pcall(function()return value(type(build)=="function"and build()or build or {})end)
+        if not ok then errors+=1;return end
+        total+=1;counters[kind]=(counters[kind]or 0)+1
+        local event={Sequence=total,At=os.clock(),Kind=kind,Data=data}
+        if count<256 then ring[(head+count-1)%256+1]=event;count+=1
+        else ring[head]=event;head=head%256+1;dropped+=1 end
+        dirty=true
+    end
+    function api.Status(stage,message)
+        if not api.Enabled()then return end
+        if statuses[stage]==message then return end
+        statuses[stage]=message;lastStatus=stage..": "..tostring(message)
+        api.Record("Status",{Stage=stage,Message=message})
+    end
+    function api.Snapshot()
+        local ok,current=pcall(function()
+            local character=options.Player.Character
+            local root=character and character:FindFirstChild("HumanoidRootPart")
+            local flags={}
+            for _,key in ipairs({"NeedleOwned","HasCarKey","CarryingUfoPart","NeedleInputLocked","CutsceneActive","HintViewerOpen",
+                "BossHeld","BossRagdolled","BossRagdollRecovering","BossKnockdownCamera","BossStunnedUntil",
+                "PumpkinSnared","PumpkinGrabbed","PumpkinPulled","BossEquippedSlot","VacuumHeat","VacuumActive"})do flags[key]=options.Player:GetAttribute(key)end
+            return value({MenuClosed=options.Menu(),RootPresent=root~=nil,RootAnchored=root and root.Anchored,
+                Position=root and root.Position,Player=flags,Feature=api.Probe and api.Probe()or {}})
+        end)
+        if not ok then errors+=1;return {SnapshotError=tostring(current)}end
+        return current
+    end
+    local status=options.Tab:Paragraph({Title=options.Title.." Status",Desc="Off; no diagnostic capture"})
+    local function export(manual)
+        local events={};for i=1,count do events[i]=ring[(head+i-2)%256+1]end
+        local ok,json=pcall(function()return http:JSONEncode({Schema=1,Module=__BEYY_MODULE,Feature=options.Title,
+            PlaceId=game.PlaceId,JobId=game.JobId,ExportedAt=os.time(),Enabled=api.Enabled(),Capacity=256,
+            TotalEvents=total,DroppedEvents=dropped,DiagnosticErrors=errors,Counters=counters,Events=events,
+            Current=api.Snapshot(),Interpretation="Requests are attempts. Observed feedback is not automatically credited to this automation."})end)
+        if not ok then errors+=1;return end
+        local written,result=pcall(options.Write,path,json)
+        if written and result then dirty=false end
+        if manual and type(setclipboard)=="function"then pcall(setclipboard,json)end
+    end
+    function api.Export()export(true)end
+    local function disconnect()
+        for _,connection in ipairs(connections)do connection:Disconnect()end
+        table.clear(connections)
+        if feedbackConnection then feedbackConnection:Disconnect()end
+        feedback,feedbackConnection=nil,nil
+    end
+    local function syncRemote()
+        local remote=api.Remote and api.Remote()
+        if remote==feedback then return end
+        if feedbackConnection then feedbackConnection:Disconnect()end
+        feedback,feedbackConnection=remote,nil
+        if remote and remote:IsA("RemoteEvent")then
+            feedbackConnection=remote.OnClientEvent:Connect(function(...)
+                local args=table.pack(...)
+                local argumentCount=args.n;args.n=nil
+                if args[1]=="Hit"and args[2]~=options.Player.UserId then
+                    if os.clock()<nextOtherFeedback then counters.SuppressedOtherFeedback=(counters.SuppressedOtherFeedback or 0)+1;return end
+                    nextOtherFeedback=os.clock()+1
+                end
+                api.Record("ObservedServerFeedback",function()return {ArgumentCount=argumentCount,Arguments=args,Attribution="Observed only; inspect sender/tool/grade before attributing a hit"}end)
+            end)
+        end
+    end
+    local function pump()
+        if pumping then return end
+        pumping=true
+        task.spawn(function()
+            while api.Enabled()do
+                local ok=pcall(function()
+                    syncRemote()
+                    local current=api.Snapshot()
+                    local key=http:JSONEncode(current.Feature or {})
+                    if key~=lastState then lastState=key;api.Record("StateChanged",current)end
+                    if dirty and os.clock()>=nextSave then nextSave=os.clock()+5;export(false)end
+                    status:SetDesc("Capturing | "..count.."/256 events | "..dropped.." overwritten | "..lastStatus)
+                end)
+                if not ok then errors+=1 end
+                task.wait(0.5)
+            end
+            pumping=false
+        end)
+    end
+    options.Registry[options.Key]=options.Tab:Toggle({Title=options.Title,Value=false,Callback=function(on)
+        if not alive then return end
+        enabled=on==true
+        if enabled then
+            disconnect();lastState=nil;table.clear(statuses);nextSave=os.clock()+5
+            connections[1]=options.Player.AttributeChanged:Connect(function(key)
+                if key:find("Boss",1,true)or key:find("Needle",1,true)or key=="HasCarKey"or key=="CarryingUfoPart"or key=="CutsceneActive"then
+                    api.Record("PlayerAttribute",function()return {Attribute=key,Value=options.Player:GetAttribute(key)}end)
+                end
+            end)
+            if options.Player.OnTeleport then
+                connections[#connections+1]=options.Player.OnTeleport:Connect(function(state)
+                    api.Record("TeleportObserved",{State=tostring(state)})
+                    if dirty then export(false)end
+                end)
+            end
+            api.Record("DiagnosticsEnabled",api.Snapshot);pump()
+        else disconnect();if dirty then export(false)end;status:SetDesc("Off | "..count.." recorded events")end
+    end})
+    options.Tab:Button({Title="Export "..options.Title,Callback=api.Export})
+    function api.Stop()
+        if not alive then return end
+        disconnect();if dirty then export(false)end
+        alive=false;enabled=false;api.Probe=nil;api.Remote=nil
+    end
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()api.Stop();if previous then previous()end end
+    return api
+end
+
 local function createPitchforkSelector(allowModels, preferHovered, options)
     options=options or {}
     local folderName=options.FolderName or "HaystackClient"
@@ -784,6 +1109,7 @@ end)
 
 local function createAutoUpgradeRuntime(options)
     local config, configModule, pending
+    local idle,waitKey=true,"upgrades"
     local tracks = {
         {"UpgVacPower","VacuumPower"},{"UpgVacCooling","VacuumCooling"},
         {"UpgVacRuntime","VacuumRuntime"},
@@ -803,6 +1129,7 @@ local function createAutoUpgradeRuntime(options)
         return math.round(price*100)/100
     end
     local function tick()
+        idle,waitKey=true,"upgrades"
         local folder=options.Folder()
         local module=folder and folder:FindFirstChild("Config")
         local remote=folder and folder:FindFirstChild("BuyUpgrade")
@@ -814,6 +1141,7 @@ local function createAutoUpgradeRuntime(options)
             if options.OnConfig then options.OnConfig(loaded) end
         end
         if pending then
+            idle=false
             if level(pending.Name)~=pending.Level or not options.State[pending.Flag] then pending=nil
             elseif os.clock()<pending.Until then status("Waiting for "..pending.Name.." purchase confirmation"); return
             else
@@ -847,13 +1175,13 @@ local function createAutoUpgradeRuntime(options)
         if #available==0 and not earlyTnt and not lateTnt then status("Selected cash upgrades are maxed or unavailable"); return end
         local target
         if earlyTnt then
-            if cash<earlyTnt.Cost then status(string.format("Saving for TntCooldown: $%.2f / $%.2f",cash,earlyTnt.Cost)); return end
+            if cash<earlyTnt.Cost then waitKey="upgrades-cash";status(string.format("Saving for TntCooldown: $%.2f / $%.2f",cash,earlyTnt.Cost)); return end
             target=earlyTnt
         elseif power then
-            if cash<power.Cost then status(string.format("Saving for VacuumPower: $%.2f / $%.2f",cash,power.Cost)); return end
+            if cash<power.Cost then waitKey="upgrades-cash";status(string.format("Saving for VacuumPower: $%.2f / $%.2f",cash,power.Cost)); return end
             target=power
         elseif vacuum and cash>=vacuum.Cost*0.75 then
-            if cash<vacuum.Cost then status(string.format("Saving for %s: $%.2f / $%.2f",vacuum.Name,cash,vacuum.Cost)); return end
+            if cash<vacuum.Cost then waitKey="upgrades-cash";status(string.format("Saving for %s: $%.2f / $%.2f",vacuum.Name,cash,vacuum.Cost)); return end
             target=vacuum
         else
             for _,entry in ipairs(available) do if cash>=entry.Cost then target=entry;break end end
@@ -861,15 +1189,17 @@ local function createAutoUpgradeRuntime(options)
             if #available==0 and lateTnt and cash>=lateTnt.Cost then target=lateTnt end
         end
         if not target then
+            waitKey="upgrades-cash"
             local cheapest=available[1] or lateTnt
             for _,entry in ipairs(available) do if entry.Cost<cheapest.Cost then cheapest=entry end end
             status(string.format("Waiting for cash: $%.2f / $%.2f (%s)",cash,cheapest.Cost,cheapest.Name)); return
         end
+        idle=false
         remote:FireServer(target.Name)
         pending={Name=target.Name,Flag=target.Flag,Level=target.Level,Until=os.clock()+0.25}
         status(string.format("Requested %s L%d ($%.2f); awaiting confirmation",target.Name,target.Level+1,target.Cost))
     end
-    return {Tick=function()
+    return {IsIdle=function()return idle end,WaitKey=function()return waitKey end,Tick=function()
         local ok,err=pcall(tick)
         if not ok then config=nil; pending=nil; status("Upgrade error; retrying: "..tostring(err)) end
     end}
@@ -1401,6 +1731,9 @@ end
 
     local chapter2ConfigReady=false
     local Registry = {}
+    local sharedSkipIndex=createSkipCandidateIndex(function()return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")end)
+local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
+
     local overviewTab = hubWindow:Tab({ Title = "Overview & Settings", Icon = "house" })
     installAntiIdle(overviewTab, Registry, function() return not hubUnloaded end)
     installUniversalWinsRecorder(overviewTab, Registry, function() return not hubUnloaded end)
@@ -1476,6 +1809,7 @@ end
             Title=title, Desc=desc, Value=sharedFarmState[key],
             Callback=function(enabled)
                 sharedFarmState[key] = enabled == true
+                workerWake.Wake(key:sub(1,3)=="Upg"and "upgrades"or key)
                 saveSharedFarmSettings()
             end,
         })
@@ -1517,8 +1851,10 @@ end
     farmToggle(needleTab,"AutoFindNeedle","Auto Find Needle")
     farmToggle(needleTab,"AutoPickupNeedle","Auto Pick Up Needle")
     local pickupStatus = needleTab:Paragraph({ Title="Key / Needle Pickup Status", Desc="Waiting for the next pickup scan." })
+    local keyDiagnostics=createFeatureDiagnostics({Tab=needleTab,Registry=Registry,Title="Key Pickup Diagnostics",Key="KeyPickupDiagnostics",File="chapter2_key_pickup_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     local lastPickupStatus
     local function setPickupStatus(message)
+        keyDiagnostics.Status("Pickup",message)
         if message == lastPickupStatus then return end
         lastPickupStatus = message
         pcall(function() pickupStatus:SetDesc(message) end)
@@ -1872,7 +2208,8 @@ end
             Enum.KeyCode.Four,Enum.KeyCode.Five,Enum.KeyCode.Six,
             Enum.KeyCode.Seven,Enum.KeyCode.Eight,Enum.KeyCode.Nine}
         while not hubUnloaded do
-            task.wait(0.08)
+            workerWake.Wait(0.08,not sharedFarmState.AutoUseVacuum and not vacuumHeld,"AutoUseVacuum")
+            if hubUnloaded then break end
             local active=vacuumFocus.Ready() and needleFolder and BEYY_CHAPTER~="Lobby" and sharedFarmState.AutoUseVacuum
                 and not farmBlocked() and not needlePriority() and hubWindow.Closed==true
             if not active then
@@ -1991,6 +2328,7 @@ end
                             or LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
                         if cutsceneBridge.ProtectEnding then cutsceneBridge.ProtectEnding()
                         else cutsceneBridge.FinalEndingProtected = true end
+                        keyDiagnostics.Record("HandInRequest",function()return {Owned=LocalPlayer:GetAttribute("NeedleOwned"),FinalEndingProtected=cutsceneBridge.FinalEndingProtected}end)
                         if not sendFarmRemote("NeedleHandIn") then
                             handInWarning("NeedleHandIn remote unavailable or send failed")
                             return
@@ -2001,6 +2339,7 @@ end
                             task.wait(0.05)
                         end
                         if not hubUnloaded and LocalPlayer:GetAttribute("NeedleOwned")==true then
+                            keyDiagnostics.Status("HandIn","No server confirmation; retry pending")
                             handInWarning("no server confirmation; will retry from beneath Laser")
                         end
                     else
@@ -2020,6 +2359,7 @@ end
             end
         end
     end)
+    keyDiagnostics.Probe=function()return {AutoFind=sharedFarmState.AutoFindNeedle,AutoPickup=sharedFarmState.AutoPickupNeedle,AutoHandIn=sharedFarmState.AutoHandInNeedle,Status=lastPickupStatus,Busy=needleBusy,HandInBusy=handInBusy,NeedleFolder=needleFolder~=nil,PuzzleBusy=sharedFarmPuzzleBusy()}end
     local function pickupBlockReason()
         if hubUnloaded then return "Hub unloaded" end
         if not sharedFarmState.AutoPickupNeedle then return "Auto pickup is off" end
@@ -2048,6 +2388,7 @@ end
                 elseif not root or not camera then
                     setPickupStatus("Waiting for the character and camera")
                 else
+                    keyDiagnostics.Record("AttemptStarted",function()return {Target=needle,Reason=targetReason,Position=needle and needle.Position}end)
                     needleBusy=true
                     releaseSharedVacuum()
                     local previousRoot=root.CFrame
@@ -2201,6 +2542,7 @@ end
                         end
                     end,function(e) return tostring(e) end)
                     clear()
+                    keyDiagnostics.Record(collected and "OwnershipConfirmed"or "AttemptUnconfirmed",function()return {Error=not ok and tostring(err)or nil,Collected=collected,NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned")}end)
                     if not ok then
                         setPickupStatus("Pickup error: "..tostring(err))
                         warn("[BeyyHub] Chapter 2 key pickup: "..tostring(err))
@@ -2299,13 +2641,15 @@ end
         spawnChapterWorker(function()
             while not hubUnloaded do
                 upgrades.Tick()
-                task.wait(0.25)
+                workerWake.Wait(0.25,upgrades.IsIdle(),upgrades.WaitKey())
             end
         end)
     end
 
 
         local puzzleTab = hubWindow:Tab({ Title = "Puzzles", Icon = "puzzle" })
+        local puzzleDiagnostics=createFeatureDiagnostics({Tab=puzzleTab,Registry=Registry,Title="Auto Puzzle Diagnostics",Key="AutoPuzzleDiagnostics",File="chapter2_puzzle_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+
         local function countVisibleColourGems(folder)
             local count, total = 0, 0
             for _, child in ipairs(folder:GetChildren()) do
@@ -2349,6 +2693,7 @@ end
         local COLOUR_CLICK_GAP = 0.07
         local COLOUR_BETWEEN_PEDESTALS = 0.06
         local function colourStatus(_message)
+            puzzleDiagnostics.Status("Colour",_message)
         end
         local function readColourPuzzle()
             local puzzles = Workspace:FindFirstChild("Puzzles")
@@ -2651,6 +2996,7 @@ end
         local LEVER_RENDER_BIND = "BeyyV103_00LeverAim_" .. tostring(LocalPlayer.UserId)
 
         local function status(_message)
+            puzzleDiagnostics.Status("Levers",_message)
         end
         local function leverFolder()
             local puzzles = Workspace:FindFirstChild("Puzzles")
@@ -2951,6 +3297,7 @@ end
         local pictureCancelled = false
         local pictureAllowReposition = false
         local function pictureStatus(_message)
+            puzzleDiagnostics.Status("Picture",_message)
         end
         local function runPicturePuzzle()
             if pictureRunning then
@@ -3170,7 +3517,14 @@ end
         local autoStartCancelled=false
         local allPuzzlesStage = "Idle"
         local allPuzzlesStatus=puzzleTab:Paragraph({Title="Auto Puzzle Status",Desc="Waiting for startup"})
+        puzzleDiagnostics.Probe=function()
+            local folder=Workspace:FindFirstChild("Puzzles")
+            local states={}
+            if folder then for _,object in ipairs(folder:GetChildren())do states[object.Name]=object:GetAttributes()end end
+            return {SequenceRunning=allPuzzlesRunning,Cancelled=allPuzzlesCancel,AutoStart=autoSolveOnJoin,StartupWaiting=autoStartWaiting,Stage=allPuzzlesStage,ControllerBusy=puzzleControllerBusy,Levers=leverRunning,Colour=colourRunning,Picture=pictureRunning,PuzzleStates=states}
+        end
         local function allStatus(message)
+            puzzleDiagnostics.Status("Sequence",message)
             allPuzzlesStage = message
             allPuzzlesStatus:SetDesc(message)
         end
@@ -4301,8 +4655,6 @@ local function launchCutsceneBypass()
         local chapter2ReleaseSeen = player:GetAttribute("Chapter2ReleaseActive") == true
         local yieldingToEnding = false
         local lastEndingSkipScan, lastEndingSkipVisible = 0, false
-        local skipCandidates = setmetatable({}, { __mode = "k" })
-        local skipGui, skipGuiAddedConnection = nil, nil
         local lastSkipFallbackScan = 0
         local lastFinalVisualMaskAt = -math.huge
         local lastRenderTime = os.clock()
@@ -4677,91 +5029,8 @@ local function launchCutsceneBypass()
             end
         end
 
-        local function indexSkipCandidate(inst)
-            if not inst then return end
-            local btn = nil
-            if inst:IsA("GuiButton") then
-                btn = inst
-            elseif inst:IsA("TextLabel") and inst.Text:lower():find("skip", 1, true) then
-                local ancestor = inst.Parent
-                while ancestor and not ancestor:IsA("GuiButton") do
-                    ancestor = ancestor.Parent
-                end
-                btn = ancestor
-            end
-            if not btn then return end
-            local name = btn.Name:lower()
-            local text = btn:IsA("TextButton") and btn.Text:lower() or ""
-            local marked = name:find("skip", 1, true) or text:find("skip", 1, true)
-            if not marked then
-                for _, child in ipairs(btn:GetChildren()) do
-                    if child:IsA("TextLabel") and child.Text:lower():find("skip", 1, true) then
-                        marked = true
-                        break
-                    end
-                end
-            end
-            if marked then skipCandidates[btn] = true end
-        end
-        local function scanSkipCandidates(pg)
-            for _, obj in ipairs(pg:GetDescendants()) do indexSkipCandidate(obj) end
-        end
-        local function watchSkipGui()
-            local pg = player:FindFirstChildOfClass("PlayerGui")
-            if pg == skipGui and skipGuiAddedConnection then return pg end
-            if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end
-            skipGuiAddedConnection, skipGui = nil, pg
-            if pg then
-                scanSkipCandidates(pg)
-                skipGuiAddedConnection = pg.DescendantAdded:Connect(indexSkipCandidate)
-            end
-            return pg
-        end
-        local function skipButtonVisible(pg)
-            local ending = pg:FindFirstChild("NeedleEndingUI")
-            if not ending or not ending.Enabled then return false end
-            for btn in pairs(skipCandidates) do
-                if not btn.Parent or not btn:IsDescendantOf(pg) then
-                    skipCandidates[btn] = nil
-                elseif btn:IsDescendantOf(ending) then
-                    local visible, parent = true, btn
-                    while parent and parent ~= pg do
-                        if parent:IsA("GuiObject") and not parent.Visible then visible = false; break end
-                        if parent:IsA("ScreenGui") and not parent.Enabled then visible = false; break end
-                        parent = parent.Parent
-                    end
-                    if visible then return true end
-                end
-            end
-            return false
-        end
         local function skipButtonOnScreen()
-            -- The ending is not eligible until our hand-in starts. This
-            -- avoids unrelated/early Skip elements suppressing puzzle bypass.
-            if not cutsceneBridge.FinalEndingProtected then
-                lastEndingSkipVisible = false
-                return false
-            end
-            local now = os.clock()
-            if now - lastEndingSkipScan < 0.08 then return lastEndingSkipVisible end
-            lastEndingSkipScan = now
-            local pg = watchSkipGui()
-            if not pg then lastEndingSkipVisible = false; return false end
-            lastEndingSkipVisible = skipButtonVisible(pg)
-            local endingUI = pg:FindFirstChild("NeedleEndingUI")
-            if not (endingUI and endingUI:IsA("ScreenGui") and endingUI.Enabled) then
-                lastEndingSkipVisible = false
-                return false
-            end
-            -- Ownership of the needle/key alone is not an ending cutscene.
-            -- Added GUI objects are indexed immediately by DescendantAdded.
-            local endingVisible = endingUI and endingUI.Enabled == true
-            local fallbackEvery = endingVisible and 0.5 or (scene and 1.0 or 4.0)
-            if not lastEndingSkipVisible and now - lastSkipFallbackScan >= fallbackEvery then
-                lastSkipFallbackScan = now
-                scanSkipCandidates(pg)
-                lastEndingSkipVisible = skipButtonVisible(pg)
-            end
+            lastEndingSkipVisible=sharedSkipIndex.Find(false)~=nil
             return lastEndingSkipVisible
         end
         local function releaseEndingCursor()
@@ -5091,8 +5360,6 @@ local function launchCutsceneBypass()
             cameraRaycastParams, cameraRaycastCharacter = nil, nil
             pcall(function() RunService:UnbindFromRenderStep(renderId) end)
             unwatchLeverCamera()
-            if skipGuiAddedConnection then pcall(function() skipGuiAddedConnection:Disconnect() end) end
-            skipGuiAddedConnection = nil
             restoreGameplayHud()
             restoreFinalCutsceneVisuals()
             for _, conn in ipairs(connections) do pcall(function() conn:Disconnect() end) end

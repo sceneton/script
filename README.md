@@ -36,6 +36,16 @@ node tests/chapter4_candles.cjs /path/to/luau
 
 The harness extracts and executes the production candle controller and its cutscene gate against mocks. Live Roblox behavior has not been tested for this port.
 
+## Chapter 4 Auto TNT diagnostics
+
+In **Farming → Tools**, enable **Auto TNT Diagnostics**, leave Auto Use TNT running for a few throws, then click **Export Auto TNT Diagnostics**. The export writes `BeyyHub/chapter4_auto_tnt_diagnostics.json` and copies the JSON to the clipboard when supported. Capture defaults off; enabled capture also saves dirty reports at five-second intervals. It uses the existing 256-event ring and reports overwritten events. It does not collect the full client console or send reports to a webhook.
+
+`AttemptFinished` separates initial `SearchSeconds`, the complete `LightCallSeconds`, and post-light `RefreshSeconds`. `ReadyOverdueSeconds` measures time since the script's predicted ready deadline, including scheduler delays or time spent blocked. `TotalAfterPredictedReadySeconds` covers the remaining attempt. These are client-clock measurements, not measurements of the game's displayed cooldown.
+
+Gate events separately report acknowledgement latency, configured lighting duration, actual time since acknowledgement, denials/retry deadlines, missing acknowledgements, local send errors, and expired/rejected throws. Current state includes the raw cooldown attribute, its effective fallback, configured light time, blockers and the last captured attempt. A sent throw means the local request succeeded; it does not prove server acceptance or a hit. Repeated no-target failures are sampled once per second to preserve the useful history.
+
+The instrumentation keeps the existing target-selection algorithm, cooldown prediction, required lighting wait and normal polling intervals. TNT worker errors are recorded and retried on the existing polling loop. Run the source-extracted regressions with `node tests/chapter4_tnt.cjs /path/to/luau`.
+
 ## Settings and recovery
 
 Existing WindUI/BeyyHub/config/*.json configs remain compatible. Config controls and farm settings are under Overview & Settings. Lobby Tools follows that tab. Anti-AFK defaults on.

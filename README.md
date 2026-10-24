@@ -36,6 +36,18 @@ node tests/chapter4_candles.cjs /path/to/luau
 
 The harness extracts and executes the production candle controller and its cutscene gate against mocks. Live Roblox behavior has not been tested for this port.
 
+## Chapter 4 Auto TNT diagnostics
+
+In **Farming → Tools**, enable **Auto TNT Diagnostics**, leave Auto Use TNT running for a few throws, then click **Export Auto TNT Diagnostics**. The export writes `BeyyHub/chapter4_auto_tnt_diagnostics.json` and copies the JSON to the clipboard when supported. Capture defaults off; enabled capture also saves dirty reports at five-second intervals. It uses the existing 256-event ring and reports overwritten events. It does not collect the full client console or send reports to a webhook.
+
+`AttemptFinished` separates initial `SearchSeconds`, the complete `LightCallSeconds`, and post-light `RefreshSeconds`. `Search` and `Refresh` report the query mode, inspected parts, visited/indexed cells, budget yields and initial index wait. `ReadyOverdueSeconds` measures time since the script's predicted ready deadline, including scheduler delays or time spent blocked. `TotalAfterPredictedReadySeconds` covers the remaining attempt. These are client-clock measurements, not measurements of the game's displayed cooldown.
+
+Gate events separately report acknowledgement latency, configured lighting duration, actual time since acknowledgement, denials/retry deadlines, missing acknowledgements, local send errors, and expired/rejected throws. Current state includes the raw cooldown attribute, its effective fallback, configured light time, blockers and the last captured attempt. A sent throw means the local request succeeded; it does not prove server acceptance or a hit. Repeated no-target failures are sampled once per second to preserve the useful history.
+
+TNT target selection searches the shared hay index's nearest occupied cells first. Exact 3D distance and original insertion order resolve the nearest eligible target; cells whose minimum distance exceeds that target's distance are skipped. Unanchored parts are checked live, and movement/membership updates use the existing index listeners. A preferred target remains the fast path after lighting. Initial index construction may still take time; subsequent searches reuse it.
+
+The cooldown prediction, required lighting wait, throw geometry and normal polling intervals are preserved. TNT worker errors are recorded and retried on the existing polling loop. Run the source-extracted regressions with `node tests/chapter4_tnt.cjs /path/to/luau` and `node tests/chapter4_tnt_search.cjs /path/to/luau`. The search workload test inspects 128 of 20,128 parts while selecting the same target as an exhaustive search. This is a mocked candidate-count comparison, not a measured in-game time improvement.
+
 ## Settings and recovery
 
 Existing WindUI/BeyyHub/config/*.json configs remain compatible. Config controls and farm settings are under Overview & Settings. Lobby Tools follows that tab. Anti-AFK defaults on.

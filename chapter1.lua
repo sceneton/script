@@ -60,6 +60,112 @@ end
 
 print("[BeyyHub] LocalPlayer ready: ".. LocalPlayer.Name)
 
+-- Native, reversible cosmetic graphics reduction. No external code or object destruction.
+local function installMinimalGraphics(tab,registry)
+    local world=game:GetService("Workspace")
+    local lighting=game:GetService("Lighting")
+    local players=game:GetService("Players")
+    local enabled,alive,generation=false,true,0
+    local originals=setmetatable({},{__mode="k"})
+    local connections={}
+    local function set(object,key,value)
+        local ok,old=pcall(function()return object[key]end)
+        if not ok or old==value then return end
+        local saved=originals[object]
+        if not saved then saved={};originals[object]=saved end
+        if saved[key]==nil then saved[key]={Value=old}end
+        pcall(function()object[key]=value end)
+    end
+    local function characterObject(object)
+        for _,player in ipairs(players:GetPlayers())do
+            local character=player.Character
+            if character and (object==character or object:IsDescendantOf(character))then return true end
+        end
+        local parent=object
+        while parent and parent~=world and parent~=lighting do
+            if parent:IsA("Model")and parent:FindFirstChildOfClass("Humanoid")then return true end
+            parent=parent.Parent
+        end
+        return false
+    end
+    local function apply(object)
+        if not enabled or not alive or characterObject(object)then return end
+        if object:IsA("BasePart")then
+            set(object,"Material",Enum.Material.Plastic)
+            set(object,"Reflectance",0)
+            set(object,"CastShadow",false)
+            if object:IsA("MeshPart")then
+                set(object,"RenderFidelity",Enum.RenderFidelity.Performance)
+                set(object,"TextureID","")
+            end
+        elseif object:IsA("Decal")or object:IsA("Texture")then
+            set(object,"Transparency",1)
+        elseif object:IsA("SpecialMesh")then
+            set(object,"TextureId","")
+        elseif object:IsA("ParticleEmitter")or object:IsA("Trail")or object:IsA("Beam")
+            or object:IsA("Smoke")or object:IsA("Fire")or object:IsA("Sparkles")
+            or object:IsA("PostEffect")or object:IsA("Light")then
+            set(object,"Enabled",false)
+        elseif object:IsA("Explosion")then
+            set(object,"Visible",false)
+        end
+    end
+    local function restore()
+        for object,properties in pairs(originals)do
+            for key,saved in pairs(properties)do pcall(function()object[key]=saved.Value end)end
+        end
+        table.clear(originals)
+    end
+    local function disconnect()
+        for _,connection in ipairs(connections)do connection:Disconnect()end
+        table.clear(connections)
+    end
+    local function toggle(on)
+        if not alive or enabled==(on==true)then return end
+        enabled=on==true;generation+=1
+        disconnect()
+        if not enabled then restore();return end
+        set(lighting,"GlobalShadows",false)
+        local terrain=world:FindFirstChildOfClass("Terrain")
+        if terrain then
+            set(terrain,"WaterWaveSize",0);set(terrain,"WaterWaveSpeed",0)
+            set(terrain,"WaterReflectance",0);set(terrain,"WaterTransparency",1)
+        end
+        pcall(function()
+            local settings=UserSettings():GetService("UserGameSettings")
+            set(settings,"SavedQualityLevel",Enum.SavedQualitySetting.QualityLevel1)
+        end)
+        local token=generation
+        -- Subscribe before scanning so streamed/new effects are included.
+        for _,root in ipairs({world,lighting})do
+            connections[#connections+1]=root.DescendantAdded:Connect(function(object)
+                task.defer(function()
+                    if token==generation and alive and enabled and object.Parent then pcall(apply,object)end
+                end)
+            end)
+        end
+        task.spawn(function()
+            local started=os.clock()
+            for _,root in ipairs({world,lighting})do
+                for index,object in ipairs(root:GetDescendants())do
+                    if not alive or not enabled or token~=generation then return end
+                    pcall(apply,object)
+                    if index%64==0 and os.clock()-started>=0.002 then task.wait();started=os.clock()end
+                end
+            end
+        end)
+    end
+    registry.MinimalGraphics=tab:Toggle({Title="Minimal Graphics",Value=false,
+        Desc="Reduce world textures, shadows and effects. Turn off to restore; characters and UI stay intact.",Callback=toggle})
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()
+        if alive then
+            alive=false;enabled=false;generation+=1;disconnect();restore()
+        end
+        if previous then pcall(previous)end
+    end
+end
+
 local function installUniversalWinsRecorder(tab, registry, isRunning)
     local env=type(getgenv)=='function' and getgenv()or _G
     if env.BeyyWinsRecorder then env.BeyyWinsRecorder.Stop()end
@@ -3352,6 +3458,7 @@ do
     afkOrbitTelemetry.Element=MainTab:Paragraph({Title="Orbit Status",Desc="Waiting for auto farm"})
     replayStatus=MainTab:Paragraph({Title="Replay Status",Desc=replayStatusText})
     installAntiIdle(MainTab, Registry, function() return not Unloaded end)
+    installMinimalGraphics(MainTab, Registry)
     installUniversalWinsRecorder(MainTab, Registry, function() return not Unloaded end)
     Info(MainTab, "Game: ".. (IN_GAME and "Chapter 1 (FARMHOUSE)" or "Lobby"))
     Info(MainTab, "Toggle UI: RightControl")
@@ -5896,5 +6003,6 @@ task.spawn(function()
         end
     end
 end)
+
 
 

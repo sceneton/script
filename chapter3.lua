@@ -85,7 +85,9 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
     local settings=readJson(settingsPath)or {Enabled=true,Url=''}
     settings.Enabled=settings.Enabled~=false
     local function validUrl(url)
-        return type(url)=='string'and url:match('^https://discord%.com/api/webhooks/%d+/[%w_%-]+$')~=nil
+        if type(url)~='string'then return false end
+        return url:match('^https://discord%.com/api/webhooks/%d+/[%w_%-]+$')~=nil
+            or url:match('^https://canary%.discord%.com/api/webhooks/%d+/[%w_%-]+$')~=nil
     end
     if not validUrl(settings.Url)then settings.Url=''end
     local state=readJson(statePath)or {}
@@ -132,6 +134,18 @@ local function installUniversalWinsRecorder(tab, registry, isRunning)
             settings.Enabled=value==true;writeJson(settingsPath,settings)
             setStatus(settings.Enabled and 'Enabled; waiting for wins / pending reports'or 'Discord reporting paused')
         end})
+    tab:Button({Title='Use Saved Wins Webhook Preset',Callback=function()
+        local preset=readJson(storage..'/wins_webhook_preset.json')
+        if not preset or not validUrl(preset.Url)then
+            setStatus('No valid local preset; run the private preset setup script first');return
+        end
+        local previous=settings.Url
+        settings.Url=preset.Url
+        if not writeJson(settingsPath,settings)then
+            settings.Url=previous;setStatus('Could not save webhook selection');return
+        end
+        setStatus('Saved webhook preset selected locally')
+    end})
     tab:Input({Title='Wins Webhook URL',Value='',Placeholder='Paste webhook URL to replace the saved one',Callback=function(value)
         if type(value)~='string'or value==''then return end
         value=value:match('^%s*(.-)%s*$')

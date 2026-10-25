@@ -1398,9 +1398,40 @@ local function createHayTntStep(options)
     end
     local function status(message)pcall(diagnostics.Status,"TNT",message)end
     local function record(kind,data)pcall(diagnostics.Record,kind,data)end
+    local block,lastBlock,lastBlockSample
+    local function blockSnapshot()
+        if not block then return nil end
+        local now=os.clock()
+        return {Reason=block.Reason,ObservedAt=block.ObservedAt,PredictedReadyAt=block.PredictedReadyAt,
+            BlockedAfterCooldownSeconds=math.max(0,now-block.Since),ObservedSeconds=now-block.ObservedAt,
+            Active=true,Clock="Client os.clock; readiness is predicted"}
+    end
+    local function observeBlock(reason)
+        if not enabled()then block=nil;lastBlock=nil;lastBlockSample=nil;return end
+        local now=os.clock()
+        local state=gate.DiagnosticSnapshot()
+        local readyAt=state.PredictedReadyAt
+        local overdue=type(readyAt)=="number"and now>=readyAt
+        if block and (not reason or not overdue or reason~=block.Reason or readyAt~=block.PredictedReadyAt)then
+            local ended=blockSnapshot()
+            ended.Active=false;ended.EndedAt=now
+            ended.EndReason=not reason and "Block cleared"or not overdue and "Cooldown prediction moved"or "Block reason changed"
+            lastBlock=ended;record("CooldownBlockEnded",ended);block=nil
+        end
+        if reason and overdue then
+            if not block then
+                -- Do not attribute time before diagnostics first observed this reason.
+                block={Reason=reason,ObservedAt=now,Since=now,PredictedReadyAt=readyAt}
+                lastBlockSample=now;record("CooldownBlockStarted",blockSnapshot())
+            elseif now-(lastBlockSample or 0)>=1 then
+                lastBlockSample=now;record("CooldownBlockOngoing",blockSnapshot())
+            end
+        end
+    end
     local function step()
         activeCycle=nil
         local reason=options.BlockReason()
+        observeBlock(reason)
         if reason then status(reason);return end
         if not gate.Ready()then status("Waiting for cooldown, startup or TNT remote");return end
         local root=options.Root()
@@ -1457,7 +1488,8 @@ local function createHayTntStep(options)
         if cycle then cycle.ThrowSent=sent end
         finish(sent and "Throw request sent"or "Throw rejected locally or send failed")
     end
-    return {Snapshot=function()return lastCycle end,Tick=function()
+    return {Snapshot=function()return lastCycle end,
+        BlockSnapshot=function()return {Current=blockSnapshot(),LastCompleted=lastBlock}end,Tick=function()
         local ok,err=pcall(step)
         if not ok then
             record("WorkerError",function()return {Error=tostring(err),Cycle=activeCycle}end)
@@ -3016,7 +3048,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
             ConfiguredLightTime=sharedGameConfig and sharedGameConfig.TNT_LIGHT_TIME,
             HayFolderPresent=Workspace:FindFirstChild("HaystackClient")~=nil,
             RemoteAvailable=farmRemote("TntAction")~=nil,CandleBusy=needlePriority(),FarmingBlocked=farmBlocked(),
-            Gate=tntRetry.DiagnosticSnapshot(),LastCapturedAttempt=tntStep.Snapshot()}
+            Gate=tntRetry.DiagnosticSnapshot(),LastCapturedAttempt=tntStep.Snapshot(),CooldownBlocks=tntStep.BlockSnapshot()}
     end
     spawnChapterWorker(function()
         while not hubUnloaded do

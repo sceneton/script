@@ -666,6 +666,53 @@ local function createFeatureDiagnostics(options)
     return api
 end
 
+local function installTntObservation(diagnostics, probe)
+    local retry,block,lastBlock,lastSample,lastAim=nil,nil,nil,0,nil
+    local function snapshot()
+        if not block then return nil end
+        return {Reason=block.Reason,ObservedAt=block.ObservedAt,PredictedReadyAt=block.ReadyAt,
+            BlockedAfterCooldownSeconds=os.clock()-block.ObservedAt,Active=true}
+    end
+    function diagnostics.BindGate(value)retry=value end
+    function diagnostics.MeasureAim(stage,fn,...)
+        local started=os.clock()
+        diagnostics.Status("TNT",stage)
+        local result=table.pack(pcall(fn,...))
+        if not result[1]then diagnostics.Record("WorkerError",{Stage=stage,Error=tostring(result[2])});error(result[2],0)end
+        lastAim={Stage=stage,Seconds=os.clock()-started,TargetFound=result[2]~=nil,Target=result[4],At=os.clock()}
+        diagnostics.Record("TargetTiming",lastAim)
+        return table.unpack(result,2,result.n)
+    end
+    diagnostics.Probe=function()
+        local data=probe()
+        local state=retry and retry.DiagnosticSnapshot()or nil
+        data.Gate=state
+        local now=os.clock()
+        local readyAt=state and state.PredictedReadyAt
+        local reason=data.BlockReason
+        if not reason and lastAim and not lastAim.TargetFound then reason="Waiting for reachable hay / valid throw trajectory"end
+        data.BlockReason=reason;data.LastTargetTiming=lastAim
+        local overdue=type(readyAt)=="number"and now>=readyAt
+        if not diagnostics.Enabled()then block=nil;lastBlock=nil;lastAim=nil
+        else
+            if block and (not reason or not overdue or reason~=block.Reason or readyAt~=block.ReadyAt)then
+                local ended=snapshot();ended.Active=false;ended.EndedAt=now
+                ended.EndReason=not reason and "Block cleared"or not overdue and "Cooldown prediction moved"or "Block reason changed"
+                lastBlock=ended;diagnostics.Record("CooldownBlockEnded",ended);block=nil
+            end
+            if reason and overdue then
+                if not block then
+                    block={Reason=reason,ObservedAt=now,ReadyAt=readyAt};lastSample=now
+                    diagnostics.Record("CooldownBlockStarted",snapshot())
+                elseif now-lastSample>=1 then lastSample=now;diagnostics.Record("CooldownBlockOngoing",snapshot())end
+            end
+        end
+        data.CooldownBlocks={Current=snapshot(),LastCompleted=lastBlock}
+        data.Observation="Block durations start at first enabled sample after predicted cooldown; sampled every 0.5 seconds"
+        return data
+    end
+end
+
 local function createPitchforkSelector(allowModels, preferHovered, options)
     options=options or {}
     local folderName=options.FolderName or "HaystackClient"
@@ -1206,10 +1253,18 @@ local function createAutoUpgradeRuntime(options)
 end
 
 
-local function createTntRetryGate(getRemote, getCooldown, getLightTime)
+local function createTntRetryGate(getRemote, getCooldown, getLightTime, diagnostics)
+    local startupReadyAt=os.clock()+1.5 -- One-time startup delay; never wait on a lit fuse.
     local lastLitAt
     local remote, connection
     local alive, nextLightAt, phase, expiresAt, throwReadyAt = true, 0, nil, 0, 0
+    local requestId,requestAt,ackAt=0,nil,nil
+    local function record(kind,build)
+        if diagnostics then pcall(diagnostics.Record,"Gate:"..kind,build)end
+    end
+    local function status(message)
+        if diagnostics then pcall(diagnostics.Status,"TNT",message)end
+    end
     local function cooldown()
         local value=tonumber(getCooldown())
         return value and value==value and value>0 and value<math.huge and value or 20
@@ -1221,24 +1276,34 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
         if current~=remote then
             if connection then connection:Disconnect() end
             remote=current; phase=nil; nextLightAt=0; lastLitAt=nil
+            record("RemoteBound",function()return {Remote=current.Name}end)
             connection=remote.OnClientEvent:Connect(function(action,value)
                 local now=os.clock()
+                local waiting=phase=="waiting"
+                record("ServerReply",function()return {Action=action,Value=value,RequestId=requestId,
+                    MatchedWaiting=waiting,ReplySeconds=waiting and requestAt and now-requestAt or nil,Phase=phase}end)
                 if action=="denied" then
                     local remaining=tonumber(value)
                     if not remaining or remaining~=remaining or remaining<0 or remaining==math.huge then remaining=1 end
                     lastLitAt=nil -- A server denial overrides predicted upgrade savings.
                     nextLightAt=now+remaining+0.05
                     phase=nil
+                    record("Denied",function()return {RequestId=requestId,ServerRemaining=remaining,RetryAt=nextLightAt}end)
+                    status("Server denied TNT; waiting for retry deadline")
                 elseif action=="lit" then
                     lastLitAt=now
                     nextLightAt=now+cooldown()+0.05
                     if phase=="waiting" then
+                        ackAt=now
                         phase="lit"
                         local fuse=tonumber(value)
                         expiresAt=now+((fuse and fuse>0 and fuse<math.huge) and fuse or 2.9)
                         local duration=tonumber(getLightTime and getLightTime())
                         if not duration or duration~=duration or duration<0 or duration==math.huge then duration=0.48 end
                         throwReadyAt=now+duration
+                        record("LightingAcknowledged",function()return {RequestId=requestId,AcknowledgementSeconds=requestAt and now-requestAt,
+                            CooldownSeconds=cooldown(),LightingSeconds=duration,ThrowReadyAt=throwReadyAt,FuseExpiresAt=expiresAt}end)
+                        status("Lighting acknowledged; waiting for lighting duration")
                     end
                 end
             end)
@@ -1249,9 +1314,18 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
     local function deadline()
         -- An upgrade can shorten the cooldown after a light request was acknowledged.
         if lastLitAt then nextLightAt=math.min(nextLightAt,lastLitAt+cooldown()+0.05) end
-        return nextLightAt
+        return math.max(startupReadyAt,nextLightAt)
     end
     function gate.Remaining() return math.max(0,deadline()-os.clock()) end
+    -- Snapshot is observational: do not advance or shorten the retry deadline here.
+    function gate.DiagnosticSnapshot()
+        local predicted=lastLitAt and math.min(nextLightAt,lastLitAt+cooldown()+0.05)or nextLightAt
+        return {Phase=phase or "idle",RequestId=requestId,RequestAt=requestAt,AcknowledgedAt=ackAt,
+            PredictedReadyAt=math.max(startupReadyAt,predicted),StartupReadyAt=startupReadyAt,
+            ReservedRetryAt=nextLightAt,ThrowReadyAt=throwReadyAt,FuseExpiresAt=expiresAt,
+            CooldownAttribute=getCooldown(),EffectiveCooldown=cooldown(),ConfiguredLightTime=getLightTime and getLightTime(),
+            Clock="Client os.clock; cooldown is a prediction, not the game's displayed timer"}
+    end
     function gate.Ready() return bind() and os.clock()>=deadline() end
     function gate.WaitInterval()
         local remaining=gate.Remaining()
@@ -1261,23 +1335,44 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
         if not gate.Ready() then return false end
         lastLitAt=nil -- Lost acknowledgements retain their reserved retry deadline.
         phase="waiting"
+        requestId+=1;requestAt=os.clock();ackAt=nil
         nextLightAt=os.clock()+cooldown()+0.05 -- Lost acknowledgements must not cause rapid retries.
+        record("LightRequest",gate.DiagnosticSnapshot)
+        status("Waiting for server lighting acknowledgement")
         local ok=pcall(remote.FireServer,remote,"light")
-        if not ok then phase=nil;nextLightAt=os.clock()+1;return false end
+        if not ok then
+            phase=nil;nextLightAt=os.clock()+1
+            record("LightSendFailed",gate.DiagnosticSnapshot);status("Light request failed locally")
+            return false
+        end
         local deadline=os.clock()+2
         while alive and phase=="waiting" and os.clock()<deadline do task.wait(0.03) end
-        if not alive or phase~="lit" then phase=nil;return false end
+        if not alive or phase~="lit" then
+            record(phase=="waiting"and "AcknowledgementTimeout"or "LightingAborted",gate.DiagnosticSnapshot)
+            phase=nil;return false
+        end
         -- A lighting acknowledgement starts the fuse; it is not permission to throw yet.
         local remaining=throwReadyAt-os.clock()
         if remaining>0 then task.wait(remaining) end
+        record("LightingWaitFinished",function()return {RequestId=requestId,Ready=alive and phase=="lit"and os.clock()<expiresAt,
+            SinceAcknowledgementSeconds=ackAt and os.clock()-ackAt,ThrowReadyAt=throwReadyAt,FuseRemaining=expiresAt-os.clock()}end)
         return alive and phase=="lit" and os.clock()<expiresAt
     end
     function gate.Throw(...)
-        if not alive or phase~="lit" or os.clock()<throwReadyAt or os.clock()>=expiresAt then return false end
+        if not alive or phase~="lit" or os.clock()<throwReadyAt or os.clock()>=expiresAt then
+            record("ThrowRejectedLocally",gate.DiagnosticSnapshot);return false
+        end
         phase=nil -- Exactly one throw for a confirmed lighting request.
-        return pcall(remote.FireServer,remote,"throw",...)
+        local ok,result=pcall(remote.FireServer,remote,"throw",...)
+        record("ThrowRequest",function()return {RequestId=requestId,Sent=ok,Error=not ok and tostring(result)or nil,
+            SinceLightRequestSeconds=requestAt and os.clock()-requestAt,SinceAcknowledgementSeconds=ackAt and os.clock()-ackAt,
+            LightingDeadlineOverrunSeconds=os.clock()-throwReadyAt,FuseRemaining=expiresAt-os.clock(),
+            Interpretation="Sent means local FireServer succeeded, not server acceptance or a hit"}end)
+        status(ok and "Throw request sent"or "Throw request failed locally")
+        return ok,result
     end
     function gate.Stop()
+        record("Stopped",gate.DiagnosticSnapshot)
         alive=false;phase=nil
         if connection then connection:Disconnect();connection=nil end
     end
@@ -1289,6 +1384,8 @@ local function createTntRetryGate(getRemote, getCooldown, getLightTime)
     bind()
     return gate
 end
+
+-- Instrument the existing hay TNT sequence without changing its waits or targeting.
 
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
@@ -1840,6 +1937,9 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
+    local tntDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+        Key="AutoTntDiagnostics",File="chapter2_auto_tnt_diagnostics",Player=LocalPlayer,
+        Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
     farmToggle(toolsTab,"AutoDeployDrone","Auto Deploy Drone")
     farmToggle(toolsTab,"AutoUseVacuum","Auto Use Vacuum (live heat + cooldown)",
@@ -2109,7 +2209,7 @@ end
         end
     end)
     do
-    local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end,function() return sharedGameConfig and sharedGameConfig.TNT_LIGHT_TIME end)
+    local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end,function() return sharedGameConfig and sharedGameConfig.TNT_LIGHT_TIME end,tntDiagnostics)
     local tntStartupReadyAt=os.clock()+1.5 -- Delay once per execution, before lighting the fuse.
     local function tntBlocked()
         if hubUnloaded or BEYY_CHAPTER=="Lobby"
@@ -2140,6 +2240,21 @@ end
 
         end
     end)
+    installTntObservation(tntDiagnostics,function()
+        local reason
+        if not sharedFarmState.AutoUseTNT then reason="Auto TNT disabled"
+        elseif not needleFolder then reason="Waiting for NeedleHaystack"
+        elseif tntBlocked()then
+            reason=LocalPlayer:GetAttribute("CutsceneActive")==true and "Paused for cutscene"or LocalPlayer:GetAttribute("NeedleInputLocked")==true and "Paused for input lock"or "Farming blocked"
+        elseif needlePriority()then reason="Paused for needle action"
+        elseif os.clock()<tntStartupReadyAt then reason="Waiting for TNT startup"
+        elseif LocalPlayer:GetAttribute("TntOwned")~=true then reason="Waiting for TNT ownership"
+        elseif not farmRemote("TntAction")then reason="Waiting for TNT remote"
+        elseif not farmRoot()then reason="Waiting for character"end
+        return {AutoUseTNT=sharedFarmState.AutoUseTNT,Owned=LocalPlayer:GetAttribute("TntOwned"),
+            BlockReason=reason,RemoteAvailable=farmRemote("TntAction")~=nil,HayFolderPresent=Workspace:FindFirstChild("HaystackClient")~=nil}
+    end)
+    tntDiagnostics.BindGate(tntRetry)
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(tntRetry.WaitInterval())
@@ -2152,9 +2267,9 @@ end
                     local function allowed()
                         return not hubUnloaded and sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority()
                     end
-                    local from,velocity,hay=aimHayTnt(Workspace,sharedGameConfig,root,allowed)
+                    local from,velocity,hay=tntDiagnostics.MeasureAim("Target search",aimHayTnt,Workspace,sharedGameConfig,root,allowed)
                     if from and root and root.Parent and root==farmRoot() and allowed() and tntRetry.Light() then
-                        from,velocity=aimHayTnt(Workspace,sharedGameConfig,root,allowed,hay)
+                        from,velocity=tntDiagnostics.MeasureAim("Target refresh",aimHayTnt,Workspace,sharedGameConfig,root,allowed,hay)
                         if from and root.Parent and root==farmRoot() and allowed() then
                             tntRetry.Throw(from,velocity)
                         end
@@ -5595,3 +5710,4 @@ end
 
     print("[BeyyHub] v103.00 " .. BEYY_CHAPTER .. " module loaded (RightControl to open)")
 end
+

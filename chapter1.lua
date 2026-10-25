@@ -3326,13 +3326,14 @@ do
 end
 
 local CollectingTab
+local tntDiagnostics
 do
 local MainTab = Window:Tab({ Title = "Overview & Settings", Icon = "house" })
 local FarmingSection = Window:Section({ Title = "Farming", Icon = "wheat", Opened = true })
 CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
 local SellingTab = FarmingSection:Tab({ Title = "Selling", Icon = "coins" })
 local ToolsTab = FarmingSection:Tab({ Title = "Tools", Icon = "hammer" })
-local tntDiagnostics=createFeatureDiagnostics({Tab=ToolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+tntDiagnostics=createFeatureDiagnostics({Tab=ToolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
     Key="AutoTntDiagnostics",File="chapter1_auto_tnt_diagnostics",Player=LocalPlayer,
     Alive=function()return not Unloaded end,Menu=function()return Window.Closed end,Write=safeWrite})
 tntTelemetry.Diagnostics=tntDiagnostics

@@ -1827,6 +1827,7 @@ end
     end
 
     local chapter2ConfigReady=false
+    local DiagnosticsTab = hubWindow:Tab({ Title = "Diagnostics", Icon = "activity" })
     local Registry = {}
     local sharedSkipIndex=createSkipCandidateIndex(function()return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")end)
 local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
@@ -1937,7 +1938,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
-    local tntDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
         Key="AutoTntDiagnostics",File="chapter2_auto_tnt_diagnostics",Player=LocalPlayer,
         Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
@@ -1951,7 +1952,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     farmToggle(needleTab,"AutoFindNeedle","Auto Find Needle")
     farmToggle(needleTab,"AutoPickupNeedle","Auto Pick Up Needle")
     local pickupStatus = needleTab:Paragraph({ Title="Key / Needle Pickup Status", Desc="Waiting for the next pickup scan." })
-    local keyDiagnostics=createFeatureDiagnostics({Tab=needleTab,Registry=Registry,Title="Key Pickup Diagnostics",Key="KeyPickupDiagnostics",File="chapter2_key_pickup_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+    local keyDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Key Pickup Diagnostics",Key="KeyPickupDiagnostics",File="chapter2_key_pickup_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     local lastPickupStatus
     local function setPickupStatus(message)
         keyDiagnostics.Status("Pickup",message)
@@ -2763,7 +2764,7 @@ end
 
 
         local puzzleTab = hubWindow:Tab({ Title = "Puzzles", Icon = "puzzle" })
-        local puzzleDiagnostics=createFeatureDiagnostics({Tab=puzzleTab,Registry=Registry,Title="Auto Puzzle Diagnostics",Key="AutoPuzzleDiagnostics",File="chapter2_puzzle_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+        local puzzleDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto Puzzle Diagnostics",Key="AutoPuzzleDiagnostics",File="chapter2_puzzle_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
 
         local function countVisibleColourGems(folder)
             local count, total = 0, 0
@@ -4671,7 +4672,7 @@ local function createCutsceneDiagnostics(options)
 end
 
 local cutsceneDiagnostics=createCutsceneDiagnostics({
-    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=DiagnosticsTab,Registry=Registry,
     Alive=function()return not hubUnloaded end,Write=safeWrite,
     Base=function()
         local character=LocalPlayer.Character

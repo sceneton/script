@@ -3327,13 +3327,15 @@ end
 
 local CollectingTab
 local tntDiagnostics
+local DiagnosticsTab
 do
 local MainTab = Window:Tab({ Title = "Overview & Settings", Icon = "house" })
+DiagnosticsTab = Window:Tab({ Title = "Diagnostics", Icon = "activity" })
 local FarmingSection = Window:Section({ Title = "Farming", Icon = "wheat", Opened = true })
 CollectingTab = FarmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
 local SellingTab = FarmingSection:Tab({ Title = "Selling", Icon = "coins" })
 local ToolsTab = FarmingSection:Tab({ Title = "Tools", Icon = "hammer" })
-tntDiagnostics=createFeatureDiagnostics({Tab=ToolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
     Key="AutoTntDiagnostics",File="chapter1_auto_tnt_diagnostics",Player=LocalPlayer,
     Alive=function()return not Unloaded end,Menu=function()return Window.Closed end,Write=safeWrite})
 tntTelemetry.Diagnostics=tntDiagnostics
@@ -3606,7 +3608,7 @@ local function createCutsceneDiagnostics(options)
 end
 
 local cutsceneDiagnostics=createCutsceneDiagnostics({
-    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=DiagnosticsTab,Registry=Registry,
     Alive=function()return not Unloaded end,Write=safeWrite,
     Base=function()
         local character=LocalPlayer.Character
@@ -5894,4 +5896,5 @@ task.spawn(function()
         end
     end
 end)
+
 

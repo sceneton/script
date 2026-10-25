@@ -1810,6 +1810,7 @@ end
         hubCursorCleanup = function() hubWindow:Close() end
     end
 
+    local DiagnosticsTab = hubWindow:Tab({ Title = "Diagnostics", Icon = "activity" })
     local Registry = {}
     local sharedSkipIndex=createSkipCandidateIndex(function()return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")end)
 local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
@@ -1883,7 +1884,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     local collectingTab = farmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
     local sellingTab = farmingSection:Tab({ Title = "Selling", Icon = "coins" })
     local toolsTab = farmingSection:Tab({ Title = "Tools", Icon = "hammer" })
-    local bossFunctionsDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Boss Function Diagnostics",Key="BossFunctionDiagnostics",File="chapter3_boss_functions_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+    local bossFunctionsDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Boss Function Diagnostics",Key="BossFunctionDiagnostics",File="chapter3_boss_functions_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
 
     local needleTab = farmingSection:Tab({ Title = "Needle", Icon = "search" })
     local inventorySection = hubWindow:Section({ Title = "Inventory", Icon = "backpack", Opened = true })
@@ -1925,7 +1926,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
-    local tntDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
         Key="AutoTntDiagnostics",File="chapter3_auto_tnt_diagnostics",Player=LocalPlayer,
         Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
@@ -3791,13 +3792,13 @@ end
 
         local tab=hubWindow:Tab({Title="Chapter 3 / Ranch",Icon="construction"})
         tab:Section({Title="UFO part collection"})
-        local createdUfoDiagnostics=createFeatureDiagnostics({Tab=tab,Registry=Registry,Title="UFO Collection Diagnostics",Key="UfoCollectionDiagnostics",File="chapter3_ufo_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+        local createdUfoDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="UFO Collection Diagnostics",Key="UfoCollectionDiagnostics",File="chapter3_ufo_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
         ufoDiagnostics=createdUfoDiagnostics
         ufoDiagnostics.Probe=function()return ranchUfoDiagnostic()end
         farmToggle(tab,"AutoGrabAttachUfoParts","Auto Grab & Attach UFO Parts",
             "Automatically picks up revealed UFO pieces, approaches the UFO and attaches them. Confirms ownership and PartsReturned; starts OFF for testing.")
         ranchUfoStatusLabel=tab:Paragraph({Title="UFO Pickup / Attach Status",Desc=ranchUfoStatusText})
-        tab:Button({Title="Export UFO Pickup Diagnostics",Callback=function()
+        DiagnosticsTab:Button({Title="Export UFO Pickup Diagnostics",Callback=function()
             local ok,err=pcall(function()
                 local data=ranchUfoDiagnostic()
                 local json=httpService:JSONEncode(data)
@@ -3985,7 +3986,7 @@ farmToggle(tab,"AutoBossFight","Auto Boss Fight")
 farmToggle(tab,"AutoBossBodyHits","Body Hits Between Weak Points")
 farmToggle(tab,"AutoBossGrabEscape","Auto Grab Escape")
 farmToggle(tab,"AutoBossFinish","Auto Key Pickup & Finish")
-farmToggle(tab,"BossDiagnostics","Boss Diagnostics")
+farmToggle(DiagnosticsTab,"BossDiagnostics","Boss Diagnostics")
 local statusLabel=tab:Paragraph({Title="Boss Status",Desc="Auto Boss Fight is OFF"})
 local tntLabel=tab:Paragraph({Title="Boss TNT Status",Desc="Waiting for vulnerable head"})
 local vacuumLabel=tab:Paragraph({Title="Boss Vacuum Status",Desc="Waiting for boss"})
@@ -4123,7 +4124,7 @@ _G.__BEYY_HUB_CLEANUP=function()
     stop()
     if previousBossCleanup then pcall(previousBossCleanup) end
 end
-tab:Button({Title="Export Boss Diagnostics",Callback=function()
+DiagnosticsTab:Button({Title="Export Boss Diagnostics",Callback=function()
     saveTrace(true)
     if type(setclipboard)=="function" then pcall(function() setclipboard(Http:JSONEncode(trace)) end) end
 end})
@@ -4577,7 +4578,7 @@ local function createCutsceneDiagnostics(options)
 end
 
 local cutsceneDiagnostics=createCutsceneDiagnostics({
-    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=DiagnosticsTab,Registry=Registry,
     Alive=function()return not hubUnloaded end,Write=safeWrite,
     Base=function()
         local character=LocalPlayer.Character

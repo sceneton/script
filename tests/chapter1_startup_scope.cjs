@@ -1,7 +1,7 @@
 const fs=require('node:fs'),path=require('node:path'),os=require('node:os'),cp=require('node:child_process');
 const source=fs.readFileSync(process.argv[3]||path.join(__dirname,'../chapter1.lua'),'utf8').replace(/\r\n/g,'\n');
 const scope=source.slice(source.indexOf('local CollectingTab\n'),source.indexOf('\ndo\n',source.indexOf('local CollectingTab\n')));
-const constructor=source.match(/^.*tntDiagnostics=createFeatureDiagnostics\(\{Tab=ToolsTab[\s\S]*?Write=safeWrite\}\)/m)?.[0];
+const constructor=source.match(/^.*tntDiagnostics=createFeatureDiagnostics\(\{Tab=\w+[\s\S]*?Write=safeWrite\}\)/m)?.[0];
 const start=source.indexOf('local function installTntObservation('),end=source.indexOf('local function createPitchforkSelector(',start);
 if(!constructor||start<0||end<0)throw Error('Missing Chapter 1 startup sections');
 const fixture=`local function createFeatureDiagnostics()return {Enabled=function()return false end}end

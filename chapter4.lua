@@ -2635,6 +2635,7 @@ end
         hubCursorCleanup = function() hubWindow:Close() end
     end
 
+    local DiagnosticsTab = hubWindow:Tab({ Title = "Diagnostics", Icon = "activity" })
     local Registry = {}
     local sharedSkipIndex=createSkipCandidateIndex(function()return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")end)
 local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
@@ -2706,7 +2707,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     local collectingTab = farmingSection:Tab({ Title = "Collecting", Icon = "wheat" })
     local sellingTab = farmingSection:Tab({ Title = "Selling", Icon = "coins" })
     local toolsTab = farmingSection:Tab({ Title = "Tools", Icon = "hammer" })
-    local bossFunctionsDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Boss Function Diagnostics",Key="BossFunctionDiagnostics",File="chapter4_boss_functions_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+    local bossFunctionsDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Boss Function Diagnostics",Key="BossFunctionDiagnostics",File="chapter4_boss_functions_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
 
     local candleTab = farmingSection:Tab({ Title = "Candles", Icon = "flame" })
     local inventorySection = hubWindow:Section({ Title = "Inventory", Icon = "backpack", Opened = true })
@@ -2748,7 +2749,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
-    local tntDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
         Key="AutoTntDiagnostics",File="chapter4_auto_tnt_diagnostics",Player=LocalPlayer,
         Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
@@ -2764,7 +2765,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     local candleStatus=candleTab:Paragraph({Title="Candle Status",Desc="Disabled"})
     local chapter4Diagnostics=createChapter4Diagnostics({
         Player=LocalPlayer,World=Workspace,Storage=ReplicatedStorage,Http=httpService,State=sharedFarmState,
-        CandleTab=candleTab,ToolsTab=toolsTab,Alive=function()return not hubUnloaded end,
+        CandleTab=DiagnosticsTab,ToolsTab=DiagnosticsTab,Alive=function()return not hubUnloaded end,
         MenuClosed=function()return hubWindow.Closed==true end,Write=safeWrite,
         Toggle=function(tab,key,title)farmToggle(tab,key,title)end,
     })
@@ -3442,7 +3443,7 @@ local function createCutsceneDiagnostics(options)
 end
 
 local cutsceneDiagnostics=createCutsceneDiagnostics({
-    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=DiagnosticsTab,Registry=Registry,
     Alive=function()return not hubUnloaded end,Write=safeWrite,
     Base=function()
         local character=LocalPlayer.Character

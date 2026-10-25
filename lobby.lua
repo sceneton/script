@@ -1824,6 +1824,7 @@ end
         hubCursorCleanup = function() hubWindow:Close() end
     end
 
+    local DiagnosticsTab = hubWindow:Tab({ Title = "Diagnostics", Icon = "activity" })
     local Registry = {}
     local sharedSkipIndex=createSkipCandidateIndex(function()return game:GetService("Players").LocalPlayer:FindFirstChildOfClass("PlayerGui")end)
 local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
@@ -1936,7 +1937,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
-    local tntDiagnostics=createFeatureDiagnostics({Tab=toolsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
         Key="AutoTntDiagnostics",File="lobby_auto_tnt_diagnostics",Player=LocalPlayer,
         Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
@@ -2998,7 +2999,7 @@ local function createCutsceneDiagnostics(options)
 end
 
 local cutsceneDiagnostics=createCutsceneDiagnostics({
-    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=overview,Registry=Registry,
+    Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=DiagnosticsTab,Registry=Registry,
     Alive=function()return not hubUnloaded end,Write=safeWrite,
     Base=function()
         local character=LocalPlayer.Character

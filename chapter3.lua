@@ -1317,7 +1317,10 @@ local function createAutoUpgradeRuntime(options)
         {"UpgDroneSpeed","DroneSpeed"},{"UpgDroneGrab","DroneGrab"},{"UpgDroneCapacity","DroneCapacity"},
         {"UpgTntCooldown","TntCooldown"},
     }
-    local function status(text) options.Status(text) end
+    local lastStatus
+    local function status(text)
+        if text~=lastStatus then lastStatus=text;options.Status(text) end
+    end
     local function level(name) return tonumber(options.Player:GetAttribute("HayUpgrade"..name)) or 1 end
     local function cost(name, entry)
         local price=tonumber(entry.Cost)
@@ -1393,8 +1396,9 @@ local function createAutoUpgradeRuntime(options)
             status(string.format("Waiting for cash: $%.2f / $%.2f (%s)",cash,cheapest.Cost,cheapest.Name)); return
         end
         idle=false
-        remote:FireServer(target.Name)
+        -- Reserve before sending: replication may confirm the purchase immediately.
         pending={Name=target.Name,Flag=target.Flag,Level=target.Level,Until=os.clock()+0.25}
+        remote:FireServer(target.Name)
         status(string.format("Requested %s L%d ($%.2f); awaiting confirmation",target.Name,target.Level+1,target.Cost))
     end
     return {IsIdle=function()return idle end,WaitKey=function()return waitKey end,Tick=function()
@@ -2572,7 +2576,7 @@ end
         spawnChapterWorker(function()
             while not hubUnloaded do
                 upgrades.Tick()
-                workerWake.Wait(0.25,upgrades.IsIdle(),upgrades.WaitKey())
+                workerWake.Wait(0.05,upgrades.IsIdle(),upgrades.WaitKey())
             end
         end)
     end

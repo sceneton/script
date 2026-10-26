@@ -4778,6 +4778,7 @@ do
     end
 
     local function equipVacuum()
+        if not canVacuum() then return false end
         if forceVacuumReselect then
             if not canVacuum() then return false end
             local x,y=mousePoint()
@@ -4809,6 +4810,18 @@ do
             if vacuumTool then break end
         end
         if vacuumTool and vacuumTool.Parent == character then return true end
+        -- Prefer an actual Tool over the hotbar key's fixed selection waits.
+        if vacuumTool and vacuumTool.Parent == backpack then
+            local humanoid = character:FindFirstChildOfClass("Humanoid")
+            if humanoid then
+                local equipped = pcall(function() humanoid:EquipTool(vacuumTool) end)
+                if equipped then
+                    task.wait()
+                    if not canVacuum() or LocalPlayer.Character~=character then return false end
+                    if vacuumTool.Parent==character then return true end
+                end
+            end
+        end
 
         local slot = math.clamp(math.floor(tonumber(State.VacuumHotbarSlot) or 5), 1, 9)
         local key = HOTBAR_KEYS[slot]
@@ -4850,7 +4863,9 @@ do
                 if not wasEnabled then
                     wasEnabled = true
 
-                    if heat == nil then
+                    -- Missing startup telemetry does not mean the vacuum overheated.
+                    if LocalPlayer:GetAttribute("VacuumOverheated")==true then
+                        coolingPending = true
                         readyAt = os.clock() + cooling + COOLDOWN_SAFETY
                     end
                     print(string.format("[Vacuum] Heat HUD %s; Runtime L%d %.0fs / Cooling L%d %.0fs (fallback timings)",

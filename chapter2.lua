@@ -772,97 +772,6 @@ local function createFeatureDiagnostics(options)
     return api
 end
 
--- Diagnostic mirror of Chapter 2's existing gates; never calls Ready/Light or changes state.
-local function evaluateChapter2TntConditions(state)
-    local function raw(value)if value==nil then return "<unset>"end;return value end
-    local inputLock=state.NeedleInputLocked==true and state.CutsceneActive~=true
-    local ownedPriority=state.NeedleOwned==true and(state.AutoHandInNeedle or state.AutoPickupNeedle)or false
-    local exposedPriority=state.NeedleOwned~=true and state.AutoPickupNeedle and state.ExposedObjective~=nil or false
-    local needlePriority=state.NeedleBusy or ownedPriority or exposedPriority or false
-    local tntBlocked=state.HubUnloaded or state.Chapter=="Lobby"or state.IntroCutsceneFinished~=true
-        or state.NeedleRoundComplete==true or state.HintViewerOpen==true or state.EndingUIScreenEnabled or inputLock or false
-    local checks={
-        {"Auto TNT disabled",not state.AutoUseTNT},
-        {"NeedleHaystack missing",not state.NeedleFolderPresent},
-        {"Hub unloaded",state.HubUnloaded},
-        {"Lobby place",state.Chapter=="Lobby"},
-        {"IntroCutsceneFinished is not true",state.IntroCutsceneFinished~=true},
-        {"NeedleRoundComplete is true",state.NeedleRoundComplete==true},
-        {"HintViewerOpen is true",state.HintViewerOpen==true},
-        {"NeedleEndingUI results are visible",state.EndingUIScreenEnabled},
-        {"NeedleInputLocked outside an active cutscene",inputLock},
-        {"Needle pickup worker busy",state.NeedleBusy},
-        {"Owned needle has pickup/hand-in priority",ownedPriority},
-        {"Exposed objective has pickup priority",exposedPriority},
-        {"One-time TNT startup delay",state.Now<state.StartupReadyAt},
-        {"TntOwned is not true",state.TntOwned~=true},
-        {"TntAction remote missing",not state.RemotePresent},
-        {"TntAction is not a RemoteEvent",state.RemotePresent and not state.RemoteIsEvent},
-        {"Character root missing",not state.RootPresent},
-        {"Character root no longer parented",state.RootPresent and not state.RootParented},
-        {"Predicted gate cooldown",state.Now<state.GateReadyAt},
-    }
-    local blockers,flags={},{}
-    for _,check in ipairs(checks)do flags[check[1]]=check[2]==true;if check[2]then blockers[#blockers+1]=check[1]end end
-    return {BlockReason=blockers[1],ActiveBlockers=blockers,Conditions=flags,TntBlocked=tntBlocked,NeedlePriority=needlePriority,
-        Raw={IntroCutsceneFinished=raw(state.IntroCutsceneFinished),NeedleRoundComplete=raw(state.NeedleRoundComplete),
-            HintViewerOpen=raw(state.HintViewerOpen),NeedleInputLocked=raw(state.NeedleInputLocked),CutsceneActive=raw(state.CutsceneActive),
-            NeedleOwned=raw(state.NeedleOwned),TntOwned=raw(state.TntOwned),AutoUseTNT=raw(state.AutoUseTNT),
-            AutoPickupNeedle=raw(state.AutoPickupNeedle),AutoHandInNeedle=raw(state.AutoHandInNeedle),NeedleBusy=state.NeedleBusy,
-            EndingUIPresent=state.EndingUIPresent,EndingUIClass=state.EndingUIClass,EndingUIEnabled=raw(state.EndingUIEnabled),
-            RemotePresent=state.RemotePresent,RemoteIsEvent=state.RemoteIsEvent,RootPresent=state.RootPresent,RootParented=state.RootParented,
-            ExposedObjective=state.ExposedObjective,Now=state.Now,StartupReadyAt=state.StartupReadyAt,GateReadyAt=state.GateReadyAt},
-        Informational={MenuClosed=state.MenuClosed,PuzzleBusy=state.PuzzleBusy,RootAnchored=state.RootAnchored,
-            Note="Menu/puzzle/anchor state is context, not an independent TNT gate. CutsceneActive alone is not a TNT blocker."}}
-end
-
-local function installTntObservation(diagnostics, probe)
-    local retry,block,lastBlock,lastSample,lastAim=nil,nil,nil,0,nil
-    local function snapshot()
-        if not block then return nil end
-        return {Reason=block.Reason,ObservedAt=block.ObservedAt,PredictedReadyAt=block.ReadyAt,
-            BlockedAfterCooldownSeconds=os.clock()-block.ObservedAt,Active=true}
-    end
-    function diagnostics.BindGate(value)retry=value end
-    function diagnostics.MeasureAim(stage,fn,...)
-        local started=os.clock()
-        diagnostics.Status("TNT",stage)
-        local result=table.pack(pcall(fn,...))
-        if not result[1]then diagnostics.Record("WorkerError",{Stage=stage,Error=tostring(result[2])});error(result[2],0)end
-        lastAim={Stage=stage,Seconds=os.clock()-started,TargetFound=result[2]~=nil,Target=result[4],At=os.clock()}
-        diagnostics.Record("TargetTiming",lastAim)
-        return table.unpack(result,2,result.n)
-    end
-    diagnostics.Probe=function()
-        local data=probe()
-        local state=retry and retry.DiagnosticSnapshot()or nil
-        data.Gate=state
-        local now=os.clock()
-        local readyAt=state and state.PredictedReadyAt
-        local reason=data.BlockReason
-        if not reason and lastAim and not lastAim.TargetFound then reason="Waiting for reachable hay / valid throw trajectory"end
-        data.BlockReason=reason;data.LastTargetTiming=lastAim
-        local overdue=type(readyAt)=="number"and now>=readyAt
-        if not diagnostics.Enabled()then block=nil;lastBlock=nil;lastAim=nil
-        else
-            if block and (not reason or not overdue or reason~=block.Reason or readyAt~=block.ReadyAt)then
-                local ended=snapshot();ended.Active=false;ended.EndedAt=now
-                ended.EndReason=not reason and "Block cleared"or not overdue and "Cooldown prediction moved"or "Block reason changed"
-                lastBlock=ended;diagnostics.Record("CooldownBlockEnded",ended);block=nil
-            end
-            if reason and overdue then
-                if not block then
-                    block={Reason=reason,ObservedAt=now,ReadyAt=readyAt};lastSample=now
-                    diagnostics.Record("CooldownBlockStarted",snapshot())
-                elseif now-lastSample>=1 then lastSample=now;diagnostics.Record("CooldownBlockOngoing",snapshot())end
-            end
-        end
-        data.CooldownBlocks={Current=snapshot(),LastCompleted=lastBlock}
-        data.Observation="Block durations start at first enabled sample after predicted cooldown; sampled every 0.5 seconds"
-        return data
-    end
-end
-
 local function createPitchforkSelector(allowModels, preferHovered, options)
     options=options or {}
     local folderName=options.FolderName or "HaystackClient"
@@ -1165,77 +1074,6 @@ local function budgetedFolderChildren(folder,isAllowed,descendants,nearCenter,ne
     end
 end
 
--- An enabled UI shell is not an active ending. Match the visible results controls.
-local function tntEndingResultsVisible(ending)
-    if not(ending and ending:IsA("ScreenGui")and ending.Enabled)then return false end
-    local results=ending:FindFirstChild("ReturnToLobby",true)
-    if not(results and results:IsA("GuiObject"))then return false end
-    local node=results
-    while node and node~=ending do
-        if node:IsA("GuiObject")and not node.Visible then return false end
-        node=node.Parent
-    end
-    return node==ending
-end
-
-local function aimHayTnt(world,config,root,isAllowed,preferred)
-    if not root or not root.Parent or not isAllowed()then return nil end
-    local folder=world:FindFirstChild("HaystackClient")
-    if not folder then return nil end
-    local minSpeed=tonumber(config and config.TNT_MIN_THROW_SPEED)
-    local maxSpeed=tonumber(config and config.TNT_MAX_THROW_SPEED)
-    local fuse=tonumber(config and config.TNT_FUSE_TIME)or 2.9
-    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil end
-    local function valid(part)
-        if not part or part.Parent~=folder or not part:IsA("BasePart")or part:GetAttribute("HayId")==nil then return false end
-        local delta=part.Position-root.Position
-        return delta.X*delta.X+delta.Z*delta.Z>9
-    end
-    local function trajectory(part)
-        if not valid(part)then return nil end
-        local target=part.Position
-        local origin=root.Position+Vector3.new(0,1.5,0)
-        local toward=target-origin
-        local planar=Vector3.new(toward.X,0,toward.Z)
-        if planar.Magnitude<=3 then return nil end
-        origin+=planar.Unit*2.5
-        local displacement=target-origin
-        if displacement.Magnitude<0.1 then return nil end
-        local up=math.abs(displacement.Unit:Dot(Vector3.yAxis))>0.97 and Vector3.zAxis or Vector3.yAxis
-        local from=CFrame.lookAt(origin,target,up)
-        for index=4,60 do
-            local flight=index*0.025
-            if flight>=fuse-0.15 then break end
-            local velocity=displacement/flight+Vector3.new(0,world.Gravity*flight*0.5,0)
-            local speed=velocity.Magnitude
-            if speed>=minSpeed and speed<=maxSpeed then return from,velocity,part,flight end
-        end
-    end
-    if valid(preferred)then
-        local from,velocity,part,flight=trajectory(preferred)
-        if from then return from,velocity,part,flight end
-    end
-    local function selectTarget(nearby)
-        local best,hay=math.huge,nil
-        local position=root.Position
-        -- Nearby uses the maintained spatial index. Keep a full-range fallback.
-        for _,part in budgetedFolderChildren(folder,isAllowed,false,nearby and position or nil,nearby and 48 or nil)do
-            if valid(part)then
-                local delta=part.Position-position
-                local score=delta:Dot(delta)
-                if score<best and(not nearby or score<=48*48)and trajectory(part)then best=score;hay=part end
-            end
-        end
-        -- Both the scan and index initialisation may yield. Recompute final geometry.
-        if not root.Parent or not isAllowed()or not valid(hay)then return nil end
-        return trajectory(hay)
-    end
-    local from,velocity,hay,flight=selectTarget(true)
-    if from then return from,velocity,hay,flight end
-    if not root.Parent or not isAllowed()then return nil end
-    return selectTarget(false)
-end
-
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
 -- Start intro input before constructing the menu or waiting for gameplay assets.
 local earlyIntroRunning = true
@@ -1424,140 +1262,6 @@ local function createAutoUpgradeRuntime(options)
     end}
 end
 
-
-local function createTntRetryGate(getRemote, getCooldown, getLightTime, diagnostics)
-    local startupReadyAt=os.clock()+1.5 -- One-time startup delay; never wait on a lit fuse.
-    local lastLitAt
-    local remote, connection
-    local alive, nextLightAt, phase, expiresAt, throwReadyAt = true, 0, nil, 0, 0
-    local requestId,requestAt,ackAt=0,nil,nil
-    local function record(kind,build)
-        if diagnostics then pcall(diagnostics.Record,"Gate:"..kind,build)end
-    end
-    local function status(message)
-        if diagnostics then pcall(diagnostics.Status,"TNT",message)end
-    end
-    local function cooldown()
-        local value=tonumber(getCooldown())
-        return value and value==value and value>0 and value<math.huge and value or 20
-    end
-    local function bind()
-        if not alive then return false end
-        local current=getRemote()
-        if not current or not current:IsA("RemoteEvent") then return false end
-        if current~=remote then
-            if connection then connection:Disconnect() end
-            remote=current; phase=nil; nextLightAt=0; lastLitAt=nil
-            record("RemoteBound",function()return {Remote=current.Name}end)
-            connection=remote.OnClientEvent:Connect(function(action,value)
-                local now=os.clock()
-                local waiting=phase=="waiting"
-                record("ServerReply",function()return {Action=action,Value=value,RequestId=requestId,
-                    MatchedWaiting=waiting,ReplySeconds=waiting and requestAt and now-requestAt or nil,Phase=phase}end)
-                if action=="denied" then
-                    local remaining=tonumber(value)
-                    if not remaining or remaining~=remaining or remaining<0 or remaining==math.huge then remaining=1 end
-                    lastLitAt=nil -- A server denial overrides predicted upgrade savings.
-                    nextLightAt=now+remaining+0.05
-                    phase=nil
-                    record("Denied",function()return {RequestId=requestId,ServerRemaining=remaining,RetryAt=nextLightAt}end)
-                    status("Server denied TNT; waiting for retry deadline")
-                elseif action=="lit" then
-                    lastLitAt=now
-                    nextLightAt=now+cooldown()+0.05
-                    if phase=="waiting" then
-                        ackAt=now
-                        phase="lit"
-                        local fuse=tonumber(value)
-                        expiresAt=now+((fuse and fuse>0 and fuse<math.huge) and fuse or 2.9)
-                        local duration=tonumber(getLightTime and getLightTime())
-                        if not duration or duration~=duration or duration<0 or duration==math.huge then duration=0.48 end
-                        throwReadyAt=now+duration
-                        record("LightingAcknowledged",function()return {RequestId=requestId,AcknowledgementSeconds=requestAt and now-requestAt,
-                            CooldownSeconds=cooldown(),LightingSeconds=duration,ThrowReadyAt=throwReadyAt,FuseExpiresAt=expiresAt}end)
-                        status("Lighting acknowledged; waiting for lighting duration")
-                    end
-                end
-            end)
-        end
-        return true
-    end
-    local gate={}
-    local function deadline()
-        -- An upgrade can shorten the cooldown after a light request was acknowledged.
-        if lastLitAt then nextLightAt=math.min(nextLightAt,lastLitAt+cooldown()+0.05) end
-        return math.max(startupReadyAt,nextLightAt)
-    end
-    function gate.Remaining() return math.max(0,deadline()-os.clock()) end
-    -- Snapshot is observational: do not advance or shorten the retry deadline here.
-    function gate.DiagnosticSnapshot()
-        local predicted=lastLitAt and math.min(nextLightAt,lastLitAt+cooldown()+0.05)or nextLightAt
-        return {Phase=phase or "idle",RequestId=requestId,RequestAt=requestAt,AcknowledgedAt=ackAt,
-            PredictedReadyAt=math.max(startupReadyAt,predicted),StartupReadyAt=startupReadyAt,
-            ReservedRetryAt=nextLightAt,ThrowReadyAt=throwReadyAt,FuseExpiresAt=expiresAt,
-            CooldownAttribute=getCooldown(),EffectiveCooldown=cooldown(),ConfiguredLightTime=getLightTime and getLightTime(),
-            Clock="Client os.clock; cooldown is a prediction, not the game's displayed timer"}
-    end
-    function gate.Ready() return bind() and os.clock()>=deadline() end
-    function gate.WaitInterval()
-        local remaining=gate.Remaining()
-        return remaining>0 and math.clamp(remaining,0.03,0.25) or 0.1
-    end
-    function gate.Light()
-        if not gate.Ready() then return false end
-        lastLitAt=nil -- Lost acknowledgements retain their reserved retry deadline.
-        phase="waiting"
-        requestId+=1;requestAt=os.clock();ackAt=nil
-        nextLightAt=os.clock()+cooldown()+0.05 -- Lost acknowledgements must not cause rapid retries.
-        record("LightRequest",gate.DiagnosticSnapshot)
-        status("Waiting for server lighting acknowledgement")
-        local ok=pcall(remote.FireServer,remote,"light")
-        if not ok then
-            phase=nil;nextLightAt=os.clock()+1
-            record("LightSendFailed",gate.DiagnosticSnapshot);status("Light request failed locally")
-            return false
-        end
-        local deadline=os.clock()+2
-        while alive and phase=="waiting" and os.clock()<deadline do task.wait(0.03) end
-        if not alive or phase~="lit" then
-            record(phase=="waiting"and "AcknowledgementTimeout"or "LightingAborted",gate.DiagnosticSnapshot)
-            phase=nil;return false
-        end
-        -- A lighting acknowledgement starts the fuse; it is not permission to throw yet.
-        local remaining=throwReadyAt-os.clock()
-        if remaining>0 then task.wait(remaining) end
-        record("LightingWaitFinished",function()return {RequestId=requestId,Ready=alive and phase=="lit"and os.clock()<expiresAt,
-            SinceAcknowledgementSeconds=ackAt and os.clock()-ackAt,ThrowReadyAt=throwReadyAt,FuseRemaining=expiresAt-os.clock()}end)
-        return alive and phase=="lit" and os.clock()<expiresAt
-    end
-    function gate.Throw(...)
-        if not alive or phase~="lit" or os.clock()<throwReadyAt or os.clock()>=expiresAt then
-            record("ThrowRejectedLocally",gate.DiagnosticSnapshot);return false
-        end
-        phase=nil -- Exactly one throw for a confirmed lighting request.
-        local ok,result=pcall(remote.FireServer,remote,"throw",...)
-        record("ThrowRequest",function()return {RequestId=requestId,Sent=ok,Error=not ok and tostring(result)or nil,
-            SinceLightRequestSeconds=requestAt and os.clock()-requestAt,SinceAcknowledgementSeconds=ackAt and os.clock()-ackAt,
-            LightingDeadlineOverrunSeconds=os.clock()-throwReadyAt,FuseRemaining=expiresAt-os.clock(),
-            Interpretation="Sent means local FireServer succeeded, not server acceptance or a hit"}end)
-        status(ok and "Throw request sent"or "Throw request failed locally")
-        return ok,result
-    end
-    function gate.Stop()
-        record("Stopped",gate.DiagnosticSnapshot)
-        alive=false;phase=nil
-        if connection then connection:Disconnect();connection=nil end
-    end
-    local previous=_G.__BEYY_HUB_CLEANUP
-    _G.__BEYY_HUB_CLEANUP=function()
-        gate.Stop()
-        if previous then pcall(previous) end
-    end
-    bind()
-    return gate
-end
-
--- Instrument the existing hay TNT sequence without changing its waits or targeting.
 
 local function createVacuumUpgradePriority(state, getConfig, getCash, getLevel, send)
     local pending
@@ -2027,10 +1731,12 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     })
 
     local sharedFarmPuzzleBusy = function() return false end
+    local tntPuzzleCameraBusy = function() return false end
     local sharedFarmDefaults = {
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
         AutoSellHay=false, SellThreshold=25, SellOnlyIfFull=false,
         AutoUseTNT=false, AutoUsePitchfork=false, AutoDeployDrone=false,
+        TntLightCooldown=0, TntThrowDelay=0.4,
         AutoUseVacuum=false, VacuumHotbarSlot=5, ToolInterval=0.5,
         AutoFindNeedle=false, AutoPickupNeedle=false, AutoHandInNeedle=false, NeedleInterval=1,
         AutoBuyTools=false, BuyToolsList={"Pitchfork"}, BuyInterval=1,
@@ -2111,9 +1817,8 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
-    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
-        Key="AutoTntDiagnostics",File="chapter2_auto_tnt_diagnostics",Player=LocalPlayer,
-        Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+    farmSlider(toolsTab,"TntLightCooldown","TNT Light Cooldown (s)",0,60,0.05)
+    farmSlider(toolsTab,"TntThrowDelay","TNT Throw Delay After Lighting (s)",0,5,0.05)
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
     farmToggle(toolsTab,"AutoDeployDrone","Auto Deploy Drone")
     farmToggle(toolsTab,"AutoUseVacuum","Auto Use Vacuum (live heat + cooldown)",
@@ -2383,20 +2088,6 @@ end
         end
     end)
     do
-    local tntRetry=createTntRetryGate(function() return farmRemote("TntAction") end,function() return LocalPlayer:GetAttribute("TntCooldown") end,function() return sharedGameConfig and sharedGameConfig.TNT_LIGHT_TIME end,tntDiagnostics)
-    local tntStartupReadyAt=os.clock()+1.5 -- Delay once per execution, before lighting the fuse.
-    local function tntBlocked()
-        if hubUnloaded or BEYY_CHAPTER=="Lobby"
-            or LocalPlayer:GetAttribute("IntroCutsceneFinished")~=true
-            or LocalPlayer:GetAttribute("NeedleRoundComplete")==true
-            or LocalPlayer:GetAttribute("HintViewerOpen")==true then return true end
-        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        local ending=pg and pg:FindFirstChild("NeedleEndingUI")
-        if tntEndingResultsVisible(ending)then return true end
-        -- Cinematics can lock input; TNT uses its remote without taking Mouse1.
-        return LocalPlayer:GetAttribute("NeedleInputLocked")==true
-            and LocalPlayer:GetAttribute("CutsceneActive")~=true
-    end
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
@@ -2414,68 +2105,34 @@ end
 
         end
     end)
-    local function captureTntConditions()
-        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
-        local ending=pg and pg:FindFirstChild("NeedleEndingUI")
-        local root=farmRoot()
-        local remote=farmRemote("TntAction")
-        local owned=LocalPlayer:GetAttribute("NeedleOwned")
-        local target
-        if not needleBusy and owned~=true and sharedFarmState.AutoPickupNeedle then target=exposedNeedle()end
-        local gate=tntRetry.DiagnosticSnapshot()
-        local detail=evaluateChapter2TntConditions({Now=os.clock(),StartupReadyAt=tntStartupReadyAt,GateReadyAt=gate.PredictedReadyAt,
-            HubUnloaded=hubUnloaded,Chapter=BEYY_CHAPTER,AutoUseTNT=sharedFarmState.AutoUseTNT,NeedleFolderPresent=needleFolder~=nil,
-            IntroCutsceneFinished=LocalPlayer:GetAttribute("IntroCutsceneFinished"),NeedleRoundComplete=LocalPlayer:GetAttribute("NeedleRoundComplete"),
-            HintViewerOpen=LocalPlayer:GetAttribute("HintViewerOpen"),NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),
-            CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),NeedleOwned=owned,TntOwned=LocalPlayer:GetAttribute("TntOwned"),
-            AutoPickupNeedle=sharedFarmState.AutoPickupNeedle,AutoHandInNeedle=sharedFarmState.AutoHandInNeedle,NeedleBusy=needleBusy,
-            ExposedObjective=target and target.Name,EndingUIPresent=ending~=nil,EndingUIClass=ending and ending.ClassName,
-            EndingUIEnabled=ending and ending:IsA("ScreenGui")and ending.Enabled,EndingUIScreenEnabled=tntEndingResultsVisible(ending),
-            RemotePresent=remote~=nil,RemoteIsEvent=remote~=nil and remote:IsA("RemoteEvent"),RootPresent=root~=nil,RootParented=root~=nil and root.Parent~=nil,
-            MenuClosed=hubWindow.Closed,PuzzleBusy=sharedFarmPuzzleBusy(),RootAnchored=root and root.Anchored})
-        detail.ActualTntBlocked=tntBlocked()
-        return detail
+    -- Auto TNT from BeyyTU/needlehub (chapter2.lua).
+    local function toolBlockReason()
+        if hubUnloaded or BEYY_CHAPTER=="Lobby" then return "hub inactive" end
+        if LocalPlayer:GetAttribute("NeedleRoundComplete")==true then return "final ending" end
+        if LocalPlayer:GetAttribute("IntroCutsceneFinished")~=true then return "intro" end
+        if tntPuzzleCameraBusy() then return "lever/colour camera" end
+        if needleBusy or LocalPlayer:GetAttribute("NeedleOwned")==true or exposedNeedle() or needlePriority() then return "exposed key" end
+        if LocalPlayer:GetAttribute("HintViewerOpen")==true then return "hint viewer" end
+        return nil
     end
-    local lastTntConditionsKey
-    local function recordTntConditions(stage,expectedRoot,aimReady)
-        if not tntDiagnostics.Enabled()then return end
-        local ok,detail=pcall(captureTntConditions)
-        if not ok then tntDiagnostics.Record("ConditionCaptureError",{Stage=stage,Error=tostring(detail)});return end
-        detail.Step={ExpectedRootPresent=expectedRoot~=nil,ExpectedRootParented=expectedRoot~=nil and expectedRoot.Parent~=nil,
-            CharacterRootUnchanged=expectedRoot==farmRoot(),AimReturned=aimReady,Stage=stage}
-        tntDiagnostics.Record("Conditions:"..stage,detail)
-    end
-    installTntObservation(tntDiagnostics,function()
-        local detail=captureTntConditions()
-        local key=table.concat(detail.ActiveBlockers,"|").."|"..tostring(detail.Raw.CutsceneActive).."|"..tostring(detail.Raw.NeedleInputLocked)
-        if tntDiagnostics.Enabled()and key~=lastTntConditionsKey then
-            lastTntConditionsKey=key;tntDiagnostics.Record("ConditionTransition",detail)
-        end
-        return {AutoUseTNT=sharedFarmState.AutoUseTNT,Owned=LocalPlayer:GetAttribute("TntOwned"),BlockReason=detail.BlockReason,
-            Exact=detail,RemoteAvailable=detail.Raw.RemotePresent,HayFolderPresent=Workspace:FindFirstChild("HaystackClient")~=nil}
-    end)
-    tntDiagnostics.BindGate(tntRetry)
     spawnChapterWorker(function()
+        local nextTntLightAt=0
         while not hubUnloaded do
-            task.wait(tntRetry.WaitInterval())
-            if sharedFarmState.AutoUseTNT and needleFolder and not tntBlocked() and not needlePriority()
-                and os.clock()>=tntStartupReadyAt
-                and LocalPlayer:GetAttribute("TntOwned")==true and tntRetry.Ready() then
-                -- Light waits for acknowledgement: recheck before sending the throw.
-                if sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority() then
-                    local root=farmRoot()
-                    local function allowed()
-                        return not hubUnloaded and sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority()
-                    end
-                    recordTntConditions("BeforeSearch",root)
-                    local from,velocity,hay=tntDiagnostics.MeasureAim("Target search",aimHayTnt,Workspace,sharedGameConfig,root,allowed)
-                    recordTntConditions("AfterSearch",root,from~=nil)
-                    if from and root and root.Parent and root==farmRoot() and allowed() and tntRetry.Light() then
-                        recordTntConditions("AfterLighting",root,from~=nil)
-                        from,velocity=tntDiagnostics.MeasureAim("Target refresh",aimHayTnt,Workspace,sharedGameConfig,root,allowed,hay)
-                        recordTntConditions("AfterTargetRefresh",root,from~=nil)
-                        if from and root.Parent and root==farmRoot() and allowed() then
-                            tntRetry.Throw(from,velocity)
+            task.wait(0.1)
+            if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true
+                and os.clock()>=nextTntLightAt then
+                needleFolder=needleFolder or ReplicatedStorage:FindFirstChild("NeedleHaystack")
+                if needleFolder and not toolBlockReason() then
+                    local cooldown=tonumber(LocalPlayer:GetAttribute("TntCooldown")) or 20
+                    nextTntLightAt=os.clock()+math.max(0.5,cooldown,tonumber(sharedFarmState.TntLightCooldown) or 0)
+                    if sendFarmRemote("TntAction","light") then
+                        task.wait(math.max(0,tonumber(sharedFarmState.TntThrowDelay) or 0.4))
+                        if not hubUnloaded and sharedFarmState.AutoUseTNT and not toolBlockReason() then
+                            local camera=Workspace.CurrentCamera
+                            if camera then
+                                sendFarmRemote("TntAction","throw",camera.CFrame,
+                                    camera.CFrame.LookVector*40+Vector3.new(0,8,0))
+                            end
                         end
                     end
                 end
@@ -3829,6 +3486,7 @@ end
         puzzleTab:Section({ Title = "Full Chapter 2 automation" })
         local allPuzzlesRunning = false
         sharedFarmPuzzleBusy = function() return allPuzzlesRunning or puzzleControllerBusy end
+        tntPuzzleCameraBusy = function() return puzzleControllerBusy end
         local allPuzzlesCancel = false
         local autoSolveOnJoin=true
         local autoRunClaimed=false

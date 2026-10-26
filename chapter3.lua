@@ -819,6 +819,139 @@ local function installTntObservation(diagnostics, probe)
     end
 end
 
+-- Optional read-only evidence for Chapter 3 player/vehicle finish requirements.
+-- Overlap and contact are observations, not proof of the server's validation rules.
+local function createFinishVehicleObserver(options)
+    local api={Current={Assessment="Not observed yet; server requirement unknown"}}
+    local enabled,alive=false,true
+    local vehicles,candidates,contacts,connections={},{},{},{}
+    local nextSample,lastKey=0,nil
+    local destination=Vector3.new(-658.85,3.76,285.29)
+    local collection=game:GetService("CollectionService")
+    local overlap=OverlapParams.new()
+    overlap.FilterType=Enum.RaycastFilterType.Include;overlap.MaxParts=128
+    local function path(object)local ok,result=pcall(object.GetFullName,object);return ok and result or object.Name end
+    local function point(position)return {X=position.X,Y=position.Y,Z=position.Z}end
+    local function disconnect()
+        for _,connection in ipairs(connections)do connection:Disconnect()end
+        for _,connection in pairs(contacts)do connection:Disconnect()end
+        table.clear(connections);table.clear(contacts);table.clear(vehicles);table.clear(candidates)
+        overlap.FilterDescendantsInstances={};enabled=false
+    end
+    local function add(object)
+        if object:IsA("Model")and(object.Name=="TruckCar"or object:FindFirstChild("DriverSeat")or collection:HasTag(object,"DriveableTruck"))then
+            vehicles[object]=true
+        elseif object:IsA("BasePart")and(object.Position-destination).Magnitude<=200 then
+            local ancestor,hops=object,0
+            local marked=false
+            while ancestor and ancestor~=options.World and hops<5 do
+                local name=ancestor.Name:lower()
+                if name:find("barrier",1,true)or name:find("finish",1,true)or name:find("trigger",1,true)
+                    or name:find("exit",1,true)or name:find("fence",1,true)then marked=true;break end
+                ancestor=ancestor.Parent;hops+=1
+            end
+            local unnamedTrigger=object.Anchored and object.CanTouch and object.Transparency>=0.95
+                and(object.Position-destination).Magnitude<=12
+            if marked or unnamedTrigger then candidates[object]=true end
+        end
+    end
+    local function remove(object)
+        vehicles[object]=nil;candidates[object]=nil
+        if contacts[object]then contacts[object]:Disconnect();contacts[object]=nil end
+    end
+    local function start()
+        enabled=true;lastKey=nil;nextSample=0
+        connections[1]=options.World.DescendantAdded:Connect(add)
+        connections[2]=options.World.DescendantRemoving:Connect(remove)
+        for _,object in ipairs(options.World:GetDescendants())do add(object)end
+        for _,object in ipairs(collection:GetTagged("DriveableTruck"))do if object:IsDescendantOf(options.World)then vehicles[object]=true end end
+        connections[3]=collection:GetInstanceAddedSignal("DriveableTruck"):Connect(function(object)if object:IsDescendantOf(options.World)then vehicles[object]=true end end)
+        options.Record("VehicleCheckStarted",{Assessment="Observations only; server requirement unknown"})
+    end
+    local function sample()
+        local character=options.Player.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        local state={Assessment="Server vehicle requirement unknown; compare contacts/overlaps and server replies",
+            Phase=options.Phase(),HasCarKey=options.Player:GetAttribute("HasCarKey"),InTruckSeat=options.Player:GetAttribute("InTruckSeat"),
+            Seat=humanoid and humanoid.SeatPart and path(humanoid.SeatPart),PlayerPosition=root and point(root.Position),
+            Vehicles={},Barriers={},BoundsOverlapIsApproximate=true,OverlapMaxParts=128}
+        local filter=character and {character}or {}
+        local vehicleList={}
+        for model in pairs(vehicles)do
+            if model:IsDescendantOf(options.World)then vehicleList[#vehicleList+1]=model else vehicles[model]=nil end
+        end
+        table.sort(vehicleList,function(a,b)return(a:GetPivot().Position-destination).Magnitude<(b:GetPivot().Position-destination).Magnitude end)
+        state.TotalVehicles=#vehicleList
+        for index,model in ipairs(vehicleList)do
+            if index>8 then break end
+            filter[#filter+1]=model
+            local position=model:GetPivot().Position
+            local row={Path=path(model),Position=point(position),DistanceToFinish=(position-destination).Magnitude,
+                DistanceToPlayer=root and(position-root.Position).Magnitude,Attributes=model:GetAttributes(),Seats={}}
+            for _,name in ipairs({"DriverSeat","PassengerSeat"})do
+                local seat=model:FindFirstChild(name)
+                if seat and(seat:IsA("Seat")or seat:IsA("VehicleSeat"))then
+                    local occupant=seat.Occupant
+                    row.Seats[name]={Occupied=occupant~=nil,LocalPlayer=occupant==humanoid,Anchored=seat.Anchored,
+                        Position=point(seat.Position),Speed=seat.AssemblyLinearVelocity.Magnitude}
+                end
+            end
+            state.Vehicles[#state.Vehicles+1]=row
+        end
+        overlap.FilterDescendantsInstances=filter
+        local nearby={}
+        for part in pairs(candidates)do if part:IsDescendantOf(options.World)then nearby[#nearby+1]=part else remove(part)end end
+        table.sort(nearby,function(a,b)return(a.Position-destination).Magnitude<(b.Position-destination).Magnitude end)
+        state.TotalBarrierCandidates=#nearby
+        local watching={}
+        for index,part in ipairs(nearby)do
+            if index>24 then break end
+            watching[part]=true
+            if not contacts[part]then
+                local lastContact={}
+                contacts[part]=part.Touched:Connect(function(hit)
+                    if not alive or not options.Enabled()then return end
+                    local who
+                    local current=options.Player.Character
+                    if current and hit:IsDescendantOf(current)then who="Player"
+                    else for model in pairs(vehicles)do if hit:IsDescendantOf(model)then who="Vehicle";break end end end
+                    if not who or os.clock()<(lastContact[who]or 0)then return end
+                    lastContact[who]=os.clock()+1
+                    options.Record("FinishPhysicalContact",function()return {Barrier=path(part),ContactType=who,Part=path(hit),Phase=options.Phase()}end)
+                end)
+            end
+            local row={Path=path(part),Position=point(part.Position),Size=point(part.Size),CanTouch=part.CanTouch,CanCollide=part.CanCollide,
+                Attributes=part:GetAttributes(),DistanceToPlayer=root and(root.Position-part.Position).Magnitude,PlayerBoundsOverlap=false,VehicleBoundsOverlap=false}
+            local hits=options.World:GetPartBoundsInBox(part.CFrame,part.Size,overlap)
+            row.OverlapLimitReached=#hits>=128
+            for _,hit in ipairs(hits)do
+                if character and hit:IsDescendantOf(character)then row.PlayerBoundsOverlap=true
+                else for _,model in ipairs(vehicleList)do if hit:IsDescendantOf(model)then row.VehicleBoundsOverlap=true;break end end end
+            end
+            state.Barriers[#state.Barriers+1]=row
+        end
+        for part,connection in pairs(contacts)do if not watching[part]then connection:Disconnect();contacts[part]=nil end end
+        api.Current=state
+        local keys={tostring(state.HasCarKey),tostring(state.InTruckSeat),tostring(state.Seat),state.Phase}
+        for _,row in ipairs(state.Barriers)do keys[#keys+1]=row.Path..":"..tostring(row.PlayerBoundsOverlap)..":"..tostring(row.VehicleBoundsOverlap)end
+        local key=table.concat(keys,"|")
+        if key~=lastKey then lastKey=key;options.Record("FinishContactState",function()return state end)end
+    end
+    function api.Tick()
+        if not alive then return end
+        if not options.Enabled()then if enabled then disconnect()end;return end
+        local ok,err=pcall(function()
+            if not enabled then start()end
+            if os.clock()<nextSample then return end
+            nextSample=os.clock()+1;sample()
+        end)
+        if not ok then nextSample=os.clock()+2;options.Record("VehicleObserverError",{Error=tostring(err)})end
+    end
+    function api.Stop()alive=false;disconnect()end
+    return api
+end
+
 local function createPitchforkSelector(allowModels, preferHovered, options)
     options=options or {}
     local folderName=options.FolderName or "HaystackClient"
@@ -4119,6 +4252,7 @@ local nextKeyAttempt=0
 local keyInputHeld
 local walkingHumanoid
 local pigCircleRunning,pigFinishSignal=false,nil
+local finishVehicleObserver
 local monitoringFinish=false
 local finishMonitorDeadline=0
 local roundWatched={}
@@ -4186,6 +4320,12 @@ local function monitorAttribute(obj,name)
         recordRound("attribute_changed",obj:GetFullName().."."..name,obj:GetAttribute(name))
     end)
 end
+local finishVehicleDiagnostics=createFeatureDiagnostics({Tab=tab,Registry=Registry,Title="Finish Vehicle Diagnostics",Key="FinishVehicleDiagnostics",File="chapter3_finish_vehicle_diagnostics",Player=player,Alive=function()return active and not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+finishVehicleObserver=createFinishVehicleObserver({Player=player,World=WS,Enabled=finishVehicleDiagnostics.Enabled,Record=finishVehicleDiagnostics.Record,
+    Phase=function()return pigCircleRunning and "Circling pig"or(monitoringFinish and "Ending observed"or(postFight and "Post-fight key/finish"or "Before finish"))end})
+finishVehicleDiagnostics.Probe=function()return finishVehicleObserver.Current end
+local previousFinishVehicleCleanup=_G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP=function()finishVehicleObserver.Stop();if previousFinishVehicleCleanup then previousFinishVehicleCleanup()end end
 local function monitorRemote(remote)
     if not remote or roundWatched[remote] or not remote:IsA("RemoteEvent") then return end
     roundWatched[remote]=true
@@ -4197,10 +4337,15 @@ local function monitorRemote(remote)
             if finish and remote==finish:FindFirstChild("Cutscene")then pigFinishSignal="TruckFinish.Cutscene"
             elseif folder and remote==folder:FindFirstChild("NeedleRoundCompleted")then pigFinishSignal="NeedleRoundCompleted"end
         end
+        if remote.Parent==RS:FindFirstChild("TruckFinish")or remote.Name=="NeedleRoundCompleted"then
+            local arguments=table.pack(...);local argumentCount=arguments.n;arguments.n=nil
+            finishVehicleDiagnostics.Record("FinishServerEvent",function()return {Remote=remote:GetFullName(),ArgumentCount=argumentCount,Arguments=arguments,Observation=finishVehicleObserver.Current}end)
+        end
         recordRound("server_event",remote:GetFullName(),table.pack(...))
     end)
 end
 local function refreshRoundMonitors()
+    if finishVehicleObserver then finishVehicleObserver.Tick()end
     monitorAttribute(player,"NeedleRoundComplete")
     local folder=RS:FindFirstChild("NeedleHaystack")
     if folder then
@@ -4215,6 +4360,8 @@ local function refreshRoundMonitors()
 end
 local bossTnt
 local function stop()
+    if finishVehicleObserver then finishVehicleObserver.Stop()end
+    finishVehicleDiagnostics.Stop()
     if bossTnt then bossTnt.Stop() end
     if not active then return end
     active=false

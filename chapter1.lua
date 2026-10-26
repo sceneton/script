@@ -5557,7 +5557,7 @@ local needleHandInConnection = RunService.Heartbeat:Connect(function()
     if Unloaded or not IN_GAME then return end
     if not State.AutoHandInNeedle then return end
     if LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
-    if os.clock() - lastNeedleHandIn < 0.12 then return end
+    if os.clock() - lastNeedleHandIn < 0.05 then return end
     lastNeedleHandIn = os.clock()
     if needlePickupActive or roundEndingVisible() then return end
     local farmer = Workspace:FindFirstChild("NPC") and Workspace.NPC:FindFirstChild("Farmer_NPC")

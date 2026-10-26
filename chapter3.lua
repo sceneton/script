@@ -4252,6 +4252,7 @@ local nextKeyAttempt=0
 local keyInputHeld
 local walkingHumanoid
 local pigCircleRunning,pigFinishSignal=false,nil
+local stopBossFinish,getBossFinishState,requestBossFinish
 local finishVehicleObserver
 local monitoringFinish=false
 local finishMonitorDeadline=0
@@ -4360,6 +4361,7 @@ local function refreshRoundMonitors()
 end
 local bossTnt
 local function stop()
+    if stopBossFinish then stopBossFinish()end
     if finishVehicleObserver then finishVehicleObserver.Stop()end
     finishVehicleDiagnostics.Stop()
     if bossTnt then bossTnt.Stop() end
@@ -4397,10 +4399,7 @@ bossToolsBusy=function()
     return state~=nil and state~="" and state~="Sleeping" and state~="Unavailable" and state~="Returning"
 end
 local function beginKeyPickup()
-    if postFight or finishedEncounter then return end
-    if not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish then return end
-    postFight=true; postFightDeadline=os.clock()+60
-    log("Boss defeated; waiting to collect neck key",{kind="key_start"})
+    if requestBossFinish then requestBossFinish("Boss feedback/state")end
 end
 local feedback=fight and fight:FindFirstChild("Feedback")
 if feedback and feedback:IsA("RemoteEvent") then
@@ -4568,131 +4567,330 @@ local function tick()
              needleEquippedSlot=player:GetAttribute("NeedleEquippedSlot"),bossHealth=boss:GetAttribute("BossHealth")})
     else log("Request error: "..tostring(err)) end
 end
-local function walkPigCircle(center,character,root)
-    local humanoid=character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then log("Circle paused: Humanoid unavailable"); return false end
-    local function permitted()
-        return active and not hubUnloaded and sharedFarmState.AutoBossFight and sharedFarmState.AutoBossFinish
-            and hubWindow.Closed and player.Character==character and root.Parent==character and humanoid.Health>0
+-- Finish controller adapted from BeyyTU/needlehub chapter3.lua.
+-- Upstream blob dfaca3adc314b10b5bb9a06d2be7918c993d9bf5; movement/key sequence unchanged.
+do
+    local listeners=connections
+    local function report(message)
+        log(message,{kind="needlehub_finish"})
     end
-    local function stopWalking()
-        pcall(function()humanoid:Move(Vector3.zero,false);humanoid:MoveTo(root.Position)end)
-        walkingHumanoid=nil;pigCircleRunning=false
-    end
-    local function finishReason()
-        if pigFinishSignal then return pigFinishSignal end
-        if player:GetAttribute("NeedleRoundComplete")==true then return "NeedleRoundComplete"end
-        if player:GetAttribute("CutsceneActive")==true then return "CutsceneActive"end
-    end
-    walkingHumanoid=humanoid;pigCircleRunning=true;pigFinishSignal=nil
-    log("Circling the pig until the ending cutscene starts",{kind="circle_start",radius=3})
-    local index,laps,blocked=0,0,0
-    while permitted()do
-        refreshRoundMonitors()
-        local reason=finishReason()
-        if reason then
-            trace.pigFinishConfirmed=reason;trace.pigCircleLaps=laps
-            log("Pig ending confirmed: "..reason,{kind="circle_finish_confirmed",reason=reason,laps=laps})
-            stopWalking();return true
-        end
-        if root.Anchored or player:GetAttribute("NeedleInputLocked")==true
-            or player:GetAttribute("BossHeld")==true or player:GetAttribute("BossRagdolled")==true then
-            humanoid:Move(Vector3.zero,false)
-            task.wait(0.1)
-        else
-            local angle=index*math.pi*2/12
-            local target=center+Vector3.new(math.cos(angle)*3,0,math.sin(angle)*3)
-            humanoid:MoveTo(target)
-            local legDeadline=os.clock()+3
-            local arrived=false
-            repeat
-                if not permitted()or finishReason()then break end
-                local offset=root.Position-target
-                arrived=Vector3.new(offset.X,0,offset.Z).Magnitude<=1
-                if arrived then break end
-                task.wait(0.05)
-            until os.clock()>=legDeadline
-            if arrived then
-                index+=1
-                if index>=12 then
-                    index=0;laps+=1;trace.pigCircleCompleted=true;trace.pigCircleLaps=laps
-                    log("Pig circle complete; still waiting for ending",{kind="circle_lap",radius=3,laps=laps})
-                end
-            elseif permitted()and not finishReason()then
-                blocked+=1;index=(index+1)%12
-                log("Pig walking waypoint blocked; continuing circle",{kind="circle_retry",waypoint=index,retries=blocked,position=root.Position})
+        local function installBossKeyFinish()
+            local running=true
+            local postFight=false
+            local finalStage="idle"
+            local startedAt=0
+            local deadline=0
+            local nextKeyAt=0
+            local circleAttempts=0
+            local watchedBoss=nil
+            local watchedEncounter=nil
+            local keyDown=nil
+            local walkingHumanoid=nil
+            local pigCenter=Vector3.new(-658.85,3.76,285.29)
+            local pendingCause="none"
+            local awaitCutsceneAt=0
+            local function enabled()
+                return running and active and not hubUnloaded
+                    and sharedFarmState.AutoBossFight
+                    and sharedFarmState.AutoBossFinish
             end
-            -- MoveTo tolerance can satisfy adjacent targets immediately. Always yield.
-            task.wait(0.05)
+            local function available()
+                return enabled() and hubWindow.Closed
+            end
+            local function stopMoving()
+                if walkingHumanoid then
+                    local humanoid=walkingHumanoid
+                    walkingHumanoid=nil
+                    pcall(function()
+                        humanoid:Move(Vector3.zero,false)
+                        local root=LocalPlayer.Character
+                            and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")
+                        if root then humanoid:MoveTo(root.Position) end
+                    end)
+                end
+            end
+            local function releaseKey()
+                if keyDown then
+                    local code=keyDown
+                    keyDown=nil
+                    pcall(function()
+                        VirtualInputManager:SendKeyEvent(false,code,false,game)
+                    end)
+                end
+            end
+            local function reset()
+                stopMoving()
+                releaseKey()
+                postFight=false
+                finalStage="idle"
+                startedAt=0
+                deadline=0
+                nextKeyAt=0
+                circleAttempts=0
+                awaitCutsceneAt=0
+                pendingCause="none"
+            end
+            local function announce(message)
+                print("[Beyy Boss Finish] "..message)
+                report("Finish: "..message,true)
+            end
+            local function begin(reason)
+                if not enabled() or postFight or finalStage=="done" then return end
+                postFight=true
+                finalStage="key"
+                startedAt=os.clock()
+                deadline=startedAt+60
+                pendingCause=reason
+                announce("Boss defeated ("..tostring(reason).."); finding CarKey neck prompt")
+            end
+            local function finishConfirmed()
+                return LocalPlayer:GetAttribute("CutsceneActive")==true
+                    or LocalPlayer:GetAttribute("NeedleRoundComplete")==true
+            end
+            local function keyAcquired()
+                if not enabled() or LocalPlayer:GetAttribute("HasCarKey")~=true
+                    or finishConfirmed() then return end
+                if not postFight then begin("HasCarKey") end
+                if postFight and finalStage=="key" then
+                    finalStage="teleport"
+                    deadline=os.clock()+120
+                    announce("HasCarKey confirmed; moving to pig cutscene trigger now")
+                end
+            end
+            listeners[#listeners+1]=LocalPlayer:GetAttributeChangedSignal("HasCarKey"):Connect(keyAcquired)
+            local function safeForKey()
+                if not available() then return false end
+                for _,attribute in ipairs({
+                    "CutsceneActive","NeedleInputLocked","BossHeld",
+                    "BossRagdolled","BossRagdollRecovering",
+                }) do
+                    if LocalPlayer:GetAttribute(attribute)==true then return false end
+                end
+                return true
+            end
+            local function circlePig(character,root)
+                local humanoid=character:FindFirstChildOfClass("Humanoid")
+                if not humanoid or humanoid.Health<=0 then
+                    return false,"Humanoid unavailable"
+                end
+                if not available() or not root.Parent then
+                    return false,"Interrupted"
+                end
+                if finishConfirmed() then return true,"Cutscene already active" end
+                local crossings={
+                    Vector3.new(14,0,0),Vector3.new(0,0,14),
+                    Vector3.new(10,0,10),Vector3.new(10,0,-10),
+                }
+                local expiry=os.clock()+35
+                walkingHumanoid=humanoid
+                announce("HasCarKey verified; crossing pig trigger with 28-stud passes")
+                local completed=0
+                for index,offset in ipairs(crossings) do
+                    if not available() or LocalPlayer.Character~=character
+                        or not root.Parent or humanoid.Health<=0 then
+                        stopMoving()
+                        return false,"Movement interrupted"
+                    end
+                    if finishConfirmed() then
+                        stopMoving()
+                        return true,"Cutscene confirmed before crossing"
+                    end
+                    local from=pigCenter+offset
+                    local goal=pigCenter-offset
+                    root.CFrame=CFrame.lookAt(from,goal,Vector3.yAxis)
+                    root.AssemblyLinearVelocity=Vector3.zero
+                    root.AssemblyAngularVelocity=Vector3.zero
+                    task.wait(0.08)
+                    if finishConfirmed() then
+                        stopMoving()
+                        return true,"Cutscene confirmed after positioning"
+                    end
+                    if not available() or LocalPlayer.Character~=character
+                        or not root.Parent or humanoid.Health<=0 then
+                        stopMoving()
+                        return false,"Movement interrupted after positioning"
+                    end
+                    humanoid:MoveTo(goal)
+                    local legEnd=math.min(expiry,os.clock()+5)
+                    local arrived=false
+                    repeat
+                        if finishConfirmed() then
+                            stopMoving()
+                            return true,"Cutscene confirmed during trigger crossing "..index
+                        end
+                        if not available() or LocalPlayer.Character~=character
+                            or not root.Parent or humanoid.Health<=0 then
+                            stopMoving()
+                            return false,"Movement interrupted"
+                        end
+                        local difference=root.Position-goal
+                        arrived=Vector3.new(difference.X,0,difference.Z).Magnitude<=2
+                        if arrived then break end
+                        task.wait(0.05)
+                    until os.clock()>=legEnd
+                    if arrived then completed+=1
+                    else announce("Trigger crossing "..index.." did not reach endpoint; trying next approach") end
+                    if os.clock()>=expiry then break end
+                end
+                stopMoving()
+                return completed>0,"Completed "..completed.." extended trigger crossings; awaiting server cutscene"
+            end
+            if feedback and feedback:IsA("RemoteEvent") then
+                listeners[#listeners+1]=feedback.OnClientEvent:Connect(
+                    function(kind,eventName)
+                        if kind=="BossEvent" and eventName=="Defeated" then
+                            begin("BossEvent")
+                        end
+                    end)
+            end
+            task.spawn(function()
+                local ok,err=xpcall(function()
+                    while running and active and not hubUnloaded do
+                        task.wait(0.10)
+                        if not enabled() then
+                            if postFight or finalStage~="idle" then reset() end
+                            continue
+                        end
+                        local boss=Workspace:FindFirstChild("HayGolem_Rig")
+                        local encounter=boss and boss:GetAttribute("Encounter")
+                        -- Do not reset on a brief disappearance after defeat.
+                        if boss and (boss~=watchedBoss
+                            or encounter~=watchedEncounter) then
+                            watchedBoss= boss
+                            watchedEncounter=encounter
+                            reset()
+                        end
+                        if boss and boss:GetAttribute("BossState")=="Defeated" then
+                            begin("BossState")
+                        end
+                        keyAcquired()
+                        if not postFight or finalStage=="done" then continue end
+                        if os.clock()>deadline then
+                            announce("Finish timed out at stage "..finalStage)
+                            finalStage="done"
+                            postFight=false
+                            continue
+                        end
+                        if finalStage=="key" then
+                            if os.clock()<nextKeyAt or not safeForKey() then
+                                continue
+                            end
+                            local body=boss and boss:FindFirstChild("HayGolem_Body")
+                            local key=body and body:FindFirstChild("CarKey")
+                            local prompt=key and key:FindFirstChild("TakeKeyPrompt")
+                            if not key or not key:IsA("BasePart")
+                                or not prompt or not prompt:IsA("ProximityPrompt")
+                                or not prompt.Enabled then
+                                continue
+                            end
+                            local character=LocalPlayer.Character
+                            local root=character and character:FindFirstChild("HumanoidRootPart")
+                            if not root then continue end
+                            nextKeyAt=os.clock()+1.5
+                            local from=root.Position-key.Position
+                            local flat=Vector3.new(from.X,0,from.Z)
+                            local direction=flat.Magnitude>0.01
+                                and flat.Unit or Vector3.new(1,0,0)
+                            local reach=math.min(3,
+                                math.max(0.5,prompt.MaxActivationDistance*0.5))
+                            root.CFrame=CFrame.lookAt(key.Position+direction*reach,
+                                key.Position)
+                            root.AssemblyLinearVelocity=Vector3.zero
+                            root.AssemblyAngularVelocity=Vector3.zero
+                            task.wait(0.20)
+                            if not safeForKey() or not prompt.Parent
+                                or not root.Parent or root~=
+                                    (LocalPlayer.Character and LocalPlayer.Character:FindFirstChild("HumanoidRootPart")) then
+                                continue
+                            end
+                            if LocalPlayer:GetAttribute("HasCarKey")==true then continue end
+                            if (root.Position-key.Position).Magnitude>
+                                prompt.MaxActivationDistance then
+                                announce("Key pickup out of prompt range after teleport")
+                                continue
+                            end
+                            local success,error=pcall(function()
+                                if type(fireproximityprompt)=="function" then
+                                    fireproximityprompt(prompt)
+                                else
+                                    local button=prompt.KeyboardKeyCode
+                                    keyDown=button
+                                    VirtualInputManager:SendKeyEvent(true,button,false,game)
+                                    task.wait(math.max(0,prompt.HoldDuration)+0.10)
+                                end
+                            end)
+                            releaseKey()
+                            announce(success and
+                                "Activated TakeKeyPrompt; awaiting HasCarKey"
+                                or ("Key prompt error: "..tostring(error)))
+                        elseif finalStage=="teleport" then
+                            if not available() then continue end
+                            if finishConfirmed() then
+                                finalStage="done"
+                                postFight=false
+                                announce("Post-boss cutscene confirmed")
+                                continue
+                            end
+                            local character=LocalPlayer.Character
+                            local root=character and character:FindFirstChild("HumanoidRootPart")
+                            if not root then continue end
+                            finalStage="walking"
+                            circleAttempts+=1
+                            local reached,reason=circlePig(character,root)
+                            announce("Pig cutscene trigger: "..tostring(reason))
+                            if finishConfirmed() then
+                                finalStage="done"
+                                postFight=false
+                                announce("Post-boss cutscene confirmed")
+                            elseif reached then
+                                finalStage="awaitCutscene"
+                                awaitCutsceneAt=os.clock()
+                            elseif enabled() and circleAttempts<3 then
+                                finalStage="retry"
+                                nextKeyAt=os.clock()+0.35
+                            else
+                                announce("Pig trigger navigation stopped after "..
+                                    circleAttempts.." attempt(s), no cutscene confirmed")
+                                finalStage="done"
+                                postFight=false
+                            end
+                        elseif finalStage=="retry" then
+                            if os.clock()>=nextKeyAt then
+                                finalStage="teleport"
+                            end
+                        elseif finalStage=="awaitCutscene" then
+                            if finishConfirmed() then
+                                finalStage="done"
+                                postFight=false
+                                announce("Post-boss cutscene confirmed")
+                            elseif os.clock()-awaitCutsceneAt>=3 then
+                                if circleAttempts<3 then
+                                    announce("Cutscene not confirmed; retrying wider trigger crossing")
+                                    finalStage="retry"
+                                    nextKeyAt=os.clock()+0.35
+                                else
+                                    announce("No cutscene after three extended trigger attempts")
+                                    finalStage="done"
+                                    postFight=false
+                                end
+                            end
+                        end
+                    end
+                end,function(e) return tostring(e) end)
+                stopMoving()
+                releaseKey()
+                if not ok then
+                    warn("[Beyy Boss Finish] Worker error: "..tostring(err))
+                end
+            end)
+            return function()
+                running=false
+                stopMoving()
+                releaseKey()
+            end,function()return postFight,finalStage,circleAttempts,pendingCause end,begin
         end
-        if os.clock()>=nextRoundSave then nextRoundSave=os.clock()+5;saveTrace()end
-    end
-    stopWalking()
-    log("Pig circling paused; finish remains pending",{kind="circle_paused",laps=laps})
-    return false
-end
 
-local function tickKeyPickup()
-    if not postFight or not active then return end
-    if not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed then return end
-    if player:GetAttribute("HasCarKey")~=true and os.clock()>=postFightDeadline then log("Key pickup timeout; teleport skipped"); finishedEncounter=true; postFight=false; saveTrace(true); return end
-    local character=player.Character
-    local root=character and character:FindFirstChild("HumanoidRootPart")
-    if not root then log("Waiting for character to collect key"); return end
-    if player:GetAttribute("HasCarKey")==true then
-        local destination=Vector3.new(-658.85,3.76,285.29)
-        root.CFrame=CFrame.new(destination)
-        root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero
-        trace.keyConfirmed=true; trace.teleportedToPig=true
-        log("HasCarKey confirmed; teleported to pig coordinates",{kind="key_complete",destination={x=-658.85,y=3.76,z=285.29}})
-        local finishConfirmed=walkPigCircle(destination,character,root)
-        if not active then return end
-        if walkingHumanoid then
-            pcall(function() walkingHumanoid:Move(Vector3.zero,false); walkingHumanoid:MoveTo(root.Position) end)
-            walkingHumanoid=nil
-        end
-        if not finishConfirmed then saveTrace();return end
-        finishedEncounter=true
-        monitoringFinish=true; finishMonitorDeadline=os.clock()+60
-        log("Round-end monitors remain active for 60 seconds",{kind="finish_monitor_start"})
-        saveTrace(); return
-    end
-    if player:GetAttribute("CutsceneActive")==true or player:GetAttribute("NeedleInputLocked")==true
-        or player:GetAttribute("BossHeld")==true or player:GetAttribute("BossRagdolled")==true then
-        log("Waiting for post-fight input lock to clear"); return
-    end
-    if os.clock()<nextKeyAttempt then return end
-    local boss=WS:FindFirstChild("HayGolem_Rig")
-    local body=boss and boss:FindFirstChild("HayGolem_Body")
-    local key=body and body:FindFirstChild("CarKey")
-    local prompt=key and key:FindFirstChild("TakeKeyPrompt")
-    if not key or not key:IsA("BasePart") or not prompt or not prompt:IsA("ProximityPrompt") then
-        log("Waiting for neck key / TakeKeyPrompt"); return
-    end
-    if not prompt.Enabled then log("Waiting for neck key prompt to enable"); return end
-    nextKeyAttempt=os.clock()+1.5
-    local reach=math.min(3,math.max(0.5,prompt.MaxActivationDistance*0.5))
-    local offset=root.Position-key.Position
-    local horizontal=Vector3.new(offset.X,0,offset.Z)
-    local direction=horizontal.Magnitude>0.01 and horizontal.Unit or Vector3.new(1,0,0)
-    local stand=key.Position+direction*reach
-    root.CFrame=CFrame.lookAt(stand,key.Position)
-    root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero
-    task.wait(0.2)
-    if not active or not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed or root~= (player.Character and player.Character:FindFirstChild("HumanoidRootPart")) then return end
-    if player:GetAttribute("HasCarKey")==true then return end
-    if not key.Parent or not prompt.Parent or not prompt.Enabled or (root.Position-key.Position).Magnitude>prompt.MaxActivationDistance then return end
-    local ok,err=pcall(function()
-        if type(fireproximityprompt)=="function" then fireproximityprompt(prompt)
-        else
-            keyInputHeld=prompt.KeyboardKeyCode
-            Input:SendKeyEvent(true,keyInputHeld,false,game)
-            task.wait(math.max(0,prompt.HoldDuration)+0.1)
-        end
-    end)
-    if keyInputHeld then pcall(function() Input:SendKeyEvent(false,keyInputHeld,false,game) end); keyInputHeld=nil end
-    log(ok and "Activated neck key prompt; waiting for HasCarKey" or "Key prompt error: "..tostring(err),
-        {kind="key_attempt",sent=ok})
+    stopBossFinish,getBossFinishState,requestBossFinish=installBossKeyFinish()
 end
 log("Auto Boss Fight is OFF")
 task.spawn(function()
@@ -4703,6 +4901,15 @@ task.spawn(function()
             if model and (model~=observedBoss or observedEncounter~=encounter) then
                 observedBoss=model; observedEncounter=encounter
                 finishedEncounter=false; postFight=false; monitoringFinish=false; grabSession=nil
+            end
+            if getBossFinishState then
+                local pending,stage,attempts,cause=getBossFinishState()
+                postFight=pending;pigCircleRunning=stage=="walking"
+                trace.finishController={Source="BeyyTU/needlehub",Stage=stage,Attempts=attempts,Cause=cause}
+                if stage=="done"and not finishedEncounter then
+                    finishedEncounter=true;monitoringFinish=true;finishMonitorDeadline=os.clock()+60
+                    saveTrace()
+                end
             end
             refreshRoundMonitors()
             bossTnt.Tick()
@@ -4717,7 +4924,7 @@ task.spawn(function()
             end
             if monitoringFinish then
                 if os.clock()>=finishMonitorDeadline then log("Round-end monitor window finished"); monitoringFinish=false; postFight=false; postFightDeadline=0; task.wait(0.5) end
-            elseif postFight then tickKeyPickup()
+            elseif postFight then -- The Needlehub finish worker owns key/trigger movement.
             else tickGrab(); if bossToolsBusy() then sampleVacuum() end; tick() end
             if os.clock()>=nextRoundSave then nextRoundSave=os.clock()+5; saveTrace() end
             task.wait(0.05)

@@ -4118,6 +4118,7 @@ local postFightDeadline=0
 local nextKeyAttempt=0
 local keyInputHeld
 local walkingHumanoid
+local pigCircleRunning,pigFinishSignal=false,nil
 local monitoringFinish=false
 local finishMonitorDeadline=0
 local roundWatched={}
@@ -4190,6 +4191,12 @@ local function monitorRemote(remote)
     roundWatched[remote]=true
     recordRound("listener_ready",remote:GetFullName(),nil)
     connections[#connections+1]=remote.OnClientEvent:Connect(function(...)
+        if pigCircleRunning then
+            local finish=RS:FindFirstChild("TruckFinish")
+            local folder=RS:FindFirstChild("NeedleHaystack")
+            if finish and remote==finish:FindFirstChild("Cutscene")then pigFinishSignal="TruckFinish.Cutscene"
+            elseif folder and remote==folder:FindFirstChild("NeedleRoundCompleted")then pigFinishSignal="NeedleRoundCompleted"end
+        end
         recordRound("server_event",remote:GetFullName(),table.pack(...))
     end)
 end
@@ -4416,50 +4423,72 @@ local function tick()
 end
 local function walkPigCircle(center,character,root)
     local humanoid=character:FindFirstChildOfClass("Humanoid")
-    if not humanoid then log("Circle skipped: Humanoid unavailable"); return false end
-    local function movementDetails(target)
-        local state="unknown"
-        pcall(function() state=humanoid:GetState().Name end)
-        local direction=humanoid.MoveDirection
-        return {position={x=root.Position.X,y=root.Position.Y,z=root.Position.Z},
-            target=target and {x=target.X,y=target.Y,z=target.Z} or nil,
-            walkSpeed=humanoid.WalkSpeed,health=humanoid.Health,anchored=root.Anchored,
-            humanoidState=state,sit=humanoid.Sit,platformStand=humanoid.PlatformStand,
-            moveDirection=direction and {x=direction.X,y=direction.Y,z=direction.Z} or nil,
-            cutsceneActive=player:GetAttribute("CutsceneActive"),inputLocked=player:GetAttribute("NeedleInputLocked"),
-            bossHeld=player:GetAttribute("BossHeld"),ragdolled=player:GetAttribute("BossRagdolled"),
-            knockdownCamera=player:GetAttribute("BossKnockdownCamera")}
+    if not humanoid then log("Circle paused: Humanoid unavailable"); return false end
+    local function permitted()
+        return active and not hubUnloaded and sharedFarmState.AutoBossFight and sharedFarmState.AutoBossFinish
+            and hubWindow.Closed and player.Character==character and root.Parent==character and humanoid.Health>0
     end
-    walkingHumanoid=humanoid
-    log("Walking one 360-degree circle with a 3-stud radius",{kind="circle_start",radius=3,movement=movementDetails()})
-    local deadline=os.clock()+20
-    -- MoveTo can finish within roughly one stud; use longer chords so the
-    -- arrival tolerance does not immediately consume successive waypoints.
-    for index=0,12 do
-        if not active or not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed or player.Character~=character or not root.Parent or humanoid.Health<=0 then return false end
-        local angle=index*math.pi*2/12
-        local target=center+Vector3.new(math.cos(angle)*3,0,math.sin(angle)*3)
-        humanoid:MoveTo(target)
-        local legDeadline=math.min(deadline,os.clock()+3)
-        local arrived=false
-        repeat
-            if not active or not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed or player.Character~=character or not root.Parent or humanoid.Health<=0 then return false end
-            local offset=root.Position-target
-            arrived=Vector3.new(offset.X,0,offset.Z).Magnitude<=1
-            if arrived then break end
+    local function stopWalking()
+        pcall(function()humanoid:Move(Vector3.zero,false);humanoid:MoveTo(root.Position)end)
+        walkingHumanoid=nil;pigCircleRunning=false
+    end
+    local function finishReason()
+        if pigFinishSignal then return pigFinishSignal end
+        if player:GetAttribute("NeedleRoundComplete")==true then return "NeedleRoundComplete"end
+        if player:GetAttribute("CutsceneActive")==true then return "CutsceneActive"end
+    end
+    walkingHumanoid=humanoid;pigCircleRunning=true;pigFinishSignal=nil
+    log("Circling the pig until the ending cutscene starts",{kind="circle_start",radius=3})
+    local index,laps,blocked=0,0,0
+    while permitted()do
+        refreshRoundMonitors()
+        local reason=finishReason()
+        if reason then
+            trace.pigFinishConfirmed=reason;trace.pigCircleLaps=laps
+            log("Pig ending confirmed: "..reason,{kind="circle_finish_confirmed",reason=reason,laps=laps})
+            stopWalking();return true
+        end
+        if root.Anchored or player:GetAttribute("NeedleInputLocked")==true
+            or player:GetAttribute("BossHeld")==true or player:GetAttribute("BossRagdolled")==true then
+            humanoid:Move(Vector3.zero,false)
+            task.wait(0.1)
+        else
+            local angle=index*math.pi*2/12
+            local target=center+Vector3.new(math.cos(angle)*3,0,math.sin(angle)*3)
+            humanoid:MoveTo(target)
+            local legDeadline=os.clock()+3
+            local arrived=false
+            repeat
+                if not permitted()or finishReason()then break end
+                local offset=root.Position-target
+                arrived=Vector3.new(offset.X,0,offset.Z).Magnitude<=1
+                if arrived then break end
+                task.wait(0.05)
+            until os.clock()>=legDeadline
+            if arrived then
+                index+=1
+                if index>=12 then
+                    index=0;laps+=1;trace.pigCircleCompleted=true;trace.pigCircleLaps=laps
+                    log("Pig circle complete; still waiting for ending",{kind="circle_lap",radius=3,laps=laps})
+                end
+            elseif permitted()and not finishReason()then
+                blocked+=1;index=(index+1)%12
+                log("Pig walking waypoint blocked; continuing circle",{kind="circle_retry",waypoint=index,retries=blocked,position=root.Position})
+            end
+            -- MoveTo tolerance can satisfy adjacent targets immediately. Always yield.
             task.wait(0.05)
-        until os.clock()>=legDeadline
-        if not arrived then log("Circle interrupted: walking path blocked or timed out",
-            {kind="circle_failed",waypoint=index,movement=movementDetails(target)}); return false end
+        end
+        if os.clock()>=nextRoundSave then nextRoundSave=os.clock()+5;saveTrace()end
     end
-    trace.pigCircleCompleted=true
-    log("Completed 3-stud-radius circle",{kind="circle_complete",radius=3,laps=1})
-    return true
+    stopWalking()
+    log("Pig circling paused; finish remains pending",{kind="circle_paused",laps=laps})
+    return false
 end
+
 local function tickKeyPickup()
     if not postFight or not active then return end
     if not sharedFarmState.AutoBossFight or not sharedFarmState.AutoBossFinish or not hubWindow.Closed then return end
-    if os.clock()>=postFightDeadline then log("Key pickup timeout; teleport skipped"); finishedEncounter=true; postFight=false; saveTrace(true); return end
+    if player:GetAttribute("HasCarKey")~=true and os.clock()>=postFightDeadline then log("Key pickup timeout; teleport skipped"); finishedEncounter=true; postFight=false; saveTrace(true); return end
     local character=player.Character
     local root=character and character:FindFirstChild("HumanoidRootPart")
     if not root then log("Waiting for character to collect key"); return end
@@ -4469,12 +4498,13 @@ local function tickKeyPickup()
         root.AssemblyLinearVelocity=Vector3.zero; root.AssemblyAngularVelocity=Vector3.zero
         trace.keyConfirmed=true; trace.teleportedToPig=true
         log("HasCarKey confirmed; teleported to pig coordinates",{kind="key_complete",destination={x=-658.85,y=3.76,z=285.29}})
-        walkPigCircle(destination,character,root)
+        local finishConfirmed=walkPigCircle(destination,character,root)
         if not active then return end
         if walkingHumanoid then
             pcall(function() walkingHumanoid:Move(Vector3.zero,false); walkingHumanoid:MoveTo(root.Position) end)
             walkingHumanoid=nil
         end
+        if not finishConfirmed then saveTrace();return end
         finishedEncounter=true
         monitoringFinish=true; finishMonitorDeadline=os.clock()+60
         log("Round-end monitors remain active for 60 seconds",{kind="finish_monitor_start"})

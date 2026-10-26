@@ -772,6 +772,50 @@ local function createFeatureDiagnostics(options)
     return api
 end
 
+-- Diagnostic mirror of Chapter 2's existing gates; never calls Ready/Light or changes state.
+local function evaluateChapter2TntConditions(state)
+    local function raw(value)if value==nil then return "<unset>"end;return value end
+    local inputLock=state.NeedleInputLocked==true and state.CutsceneActive~=true
+    local ownedPriority=state.NeedleOwned==true and(state.AutoHandInNeedle or state.AutoPickupNeedle)or false
+    local exposedPriority=state.NeedleOwned~=true and state.AutoPickupNeedle and state.ExposedObjective~=nil or false
+    local needlePriority=state.NeedleBusy or ownedPriority or exposedPriority or false
+    local tntBlocked=state.HubUnloaded or state.Chapter=="Lobby"or state.IntroCutsceneFinished~=true
+        or state.NeedleRoundComplete==true or state.HintViewerOpen==true or state.EndingUIScreenEnabled or inputLock or false
+    local checks={
+        {"Auto TNT disabled",not state.AutoUseTNT},
+        {"NeedleHaystack missing",not state.NeedleFolderPresent},
+        {"Hub unloaded",state.HubUnloaded},
+        {"Lobby place",state.Chapter=="Lobby"},
+        {"IntroCutsceneFinished is not true",state.IntroCutsceneFinished~=true},
+        {"NeedleRoundComplete is true",state.NeedleRoundComplete==true},
+        {"HintViewerOpen is true",state.HintViewerOpen==true},
+        {"NeedleEndingUI ScreenGui is enabled",state.EndingUIScreenEnabled},
+        {"NeedleInputLocked outside an active cutscene",inputLock},
+        {"Needle pickup worker busy",state.NeedleBusy},
+        {"Owned needle has pickup/hand-in priority",ownedPriority},
+        {"Exposed objective has pickup priority",exposedPriority},
+        {"One-time TNT startup delay",state.Now<state.StartupReadyAt},
+        {"TntOwned is not true",state.TntOwned~=true},
+        {"TntAction remote missing",not state.RemotePresent},
+        {"TntAction is not a RemoteEvent",state.RemotePresent and not state.RemoteIsEvent},
+        {"Character root missing",not state.RootPresent},
+        {"Character root no longer parented",state.RootPresent and not state.RootParented},
+        {"Predicted gate cooldown",state.Now<state.GateReadyAt},
+    }
+    local blockers,flags={},{}
+    for _,check in ipairs(checks)do flags[check[1]]=check[2]==true;if check[2]then blockers[#blockers+1]=check[1]end end
+    return {BlockReason=blockers[1],ActiveBlockers=blockers,Conditions=flags,TntBlocked=tntBlocked,NeedlePriority=needlePriority,
+        Raw={IntroCutsceneFinished=raw(state.IntroCutsceneFinished),NeedleRoundComplete=raw(state.NeedleRoundComplete),
+            HintViewerOpen=raw(state.HintViewerOpen),NeedleInputLocked=raw(state.NeedleInputLocked),CutsceneActive=raw(state.CutsceneActive),
+            NeedleOwned=raw(state.NeedleOwned),TntOwned=raw(state.TntOwned),AutoUseTNT=raw(state.AutoUseTNT),
+            AutoPickupNeedle=raw(state.AutoPickupNeedle),AutoHandInNeedle=raw(state.AutoHandInNeedle),NeedleBusy=state.NeedleBusy,
+            EndingUIPresent=state.EndingUIPresent,EndingUIClass=state.EndingUIClass,EndingUIEnabled=raw(state.EndingUIEnabled),
+            RemotePresent=state.RemotePresent,RemoteIsEvent=state.RemoteIsEvent,RootPresent=state.RootPresent,RootParented=state.RootParented,
+            ExposedObjective=state.ExposedObjective,Now=state.Now,StartupReadyAt=state.StartupReadyAt,GateReadyAt=state.GateReadyAt},
+        Informational={MenuClosed=state.MenuClosed,PuzzleBusy=state.PuzzleBusy,RootAnchored=state.RootAnchored,
+            Note="Menu/puzzle/anchor state is context, not an independent TNT gate. CutsceneActive alone is not a TNT blocker."}}
+end
+
 local function installTntObservation(diagnostics, probe)
     local retry,block,lastBlock,lastSample,lastAim=nil,nil,nil,0,nil
     local function snapshot()
@@ -2348,19 +2392,45 @@ end
 
         end
     end)
+    local function captureTntConditions()
+        local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+        local ending=pg and pg:FindFirstChild("NeedleEndingUI")
+        local root=farmRoot()
+        local remote=farmRemote("TntAction")
+        local owned=LocalPlayer:GetAttribute("NeedleOwned")
+        local target
+        if not needleBusy and owned~=true and sharedFarmState.AutoPickupNeedle then target=exposedNeedle()end
+        local gate=tntRetry.DiagnosticSnapshot()
+        local detail=evaluateChapter2TntConditions({Now=os.clock(),StartupReadyAt=tntStartupReadyAt,GateReadyAt=gate.PredictedReadyAt,
+            HubUnloaded=hubUnloaded,Chapter=BEYY_CHAPTER,AutoUseTNT=sharedFarmState.AutoUseTNT,NeedleFolderPresent=needleFolder~=nil,
+            IntroCutsceneFinished=LocalPlayer:GetAttribute("IntroCutsceneFinished"),NeedleRoundComplete=LocalPlayer:GetAttribute("NeedleRoundComplete"),
+            HintViewerOpen=LocalPlayer:GetAttribute("HintViewerOpen"),NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),
+            CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),NeedleOwned=owned,TntOwned=LocalPlayer:GetAttribute("TntOwned"),
+            AutoPickupNeedle=sharedFarmState.AutoPickupNeedle,AutoHandInNeedle=sharedFarmState.AutoHandInNeedle,NeedleBusy=needleBusy,
+            ExposedObjective=target and target.Name,EndingUIPresent=ending~=nil,EndingUIClass=ending and ending.ClassName,
+            EndingUIEnabled=ending and ending:IsA("ScreenGui")and ending.Enabled,EndingUIScreenEnabled=ending~=nil and ending:IsA("ScreenGui")and ending.Enabled==true,
+            RemotePresent=remote~=nil,RemoteIsEvent=remote~=nil and remote:IsA("RemoteEvent"),RootPresent=root~=nil,RootParented=root~=nil and root.Parent~=nil,
+            MenuClosed=hubWindow.Closed,PuzzleBusy=sharedFarmPuzzleBusy(),RootAnchored=root and root.Anchored})
+        detail.ActualTntBlocked=tntBlocked()
+        return detail
+    end
+    local lastTntConditionsKey
+    local function recordTntConditions(stage,expectedRoot,aimReady)
+        if not tntDiagnostics.Enabled()then return end
+        local ok,detail=pcall(captureTntConditions)
+        if not ok then tntDiagnostics.Record("ConditionCaptureError",{Stage=stage,Error=tostring(detail)});return end
+        detail.Step={ExpectedRootPresent=expectedRoot~=nil,ExpectedRootParented=expectedRoot~=nil and expectedRoot.Parent~=nil,
+            CharacterRootUnchanged=expectedRoot==farmRoot(),AimReturned=aimReady,Stage=stage}
+        tntDiagnostics.Record("Conditions:"..stage,detail)
+    end
     installTntObservation(tntDiagnostics,function()
-        local reason
-        if not sharedFarmState.AutoUseTNT then reason="Auto TNT disabled"
-        elseif not needleFolder then reason="Waiting for NeedleHaystack"
-        elseif tntBlocked()then
-            reason=LocalPlayer:GetAttribute("CutsceneActive")==true and "Paused for cutscene"or LocalPlayer:GetAttribute("NeedleInputLocked")==true and "Paused for input lock"or "Farming blocked"
-        elseif needlePriority()then reason="Paused for needle action"
-        elseif os.clock()<tntStartupReadyAt then reason="Waiting for TNT startup"
-        elseif LocalPlayer:GetAttribute("TntOwned")~=true then reason="Waiting for TNT ownership"
-        elseif not farmRemote("TntAction")then reason="Waiting for TNT remote"
-        elseif not farmRoot()then reason="Waiting for character"end
-        return {AutoUseTNT=sharedFarmState.AutoUseTNT,Owned=LocalPlayer:GetAttribute("TntOwned"),
-            BlockReason=reason,RemoteAvailable=farmRemote("TntAction")~=nil,HayFolderPresent=Workspace:FindFirstChild("HaystackClient")~=nil}
+        local detail=captureTntConditions()
+        local key=table.concat(detail.ActiveBlockers,"|").."|"..tostring(detail.Raw.CutsceneActive).."|"..tostring(detail.Raw.NeedleInputLocked)
+        if tntDiagnostics.Enabled()and key~=lastTntConditionsKey then
+            lastTntConditionsKey=key;tntDiagnostics.Record("ConditionTransition",detail)
+        end
+        return {AutoUseTNT=sharedFarmState.AutoUseTNT,Owned=LocalPlayer:GetAttribute("TntOwned"),BlockReason=detail.BlockReason,
+            Exact=detail,RemoteAvailable=detail.Raw.RemotePresent,HayFolderPresent=Workspace:FindFirstChild("HaystackClient")~=nil}
     end)
     tntDiagnostics.BindGate(tntRetry)
     spawnChapterWorker(function()
@@ -2375,9 +2445,13 @@ end
                     local function allowed()
                         return not hubUnloaded and sharedFarmState.AutoUseTNT and not tntBlocked() and not needlePriority()
                     end
+                    recordTntConditions("BeforeSearch",root)
                     local from,velocity,hay=tntDiagnostics.MeasureAim("Target search",aimHayTnt,Workspace,sharedGameConfig,root,allowed)
+                    recordTntConditions("AfterSearch",root,from~=nil)
                     if from and root and root.Parent and root==farmRoot() and allowed() and tntRetry.Light() then
+                        recordTntConditions("AfterLighting",root,from~=nil)
                         from,velocity=tntDiagnostics.MeasureAim("Target refresh",aimHayTnt,Workspace,sharedGameConfig,root,allowed,hay)
+                        recordTntConditions("AfterTargetRefresh",root,from~=nil)
                         if from and root.Parent and root==farmRoot() and allowed() then
                             tntRetry.Throw(from,velocity)
                         end

@@ -789,7 +789,7 @@ local function evaluateChapter2TntConditions(state)
         {"IntroCutsceneFinished is not true",state.IntroCutsceneFinished~=true},
         {"NeedleRoundComplete is true",state.NeedleRoundComplete==true},
         {"HintViewerOpen is true",state.HintViewerOpen==true},
-        {"NeedleEndingUI ScreenGui is enabled",state.EndingUIScreenEnabled},
+        {"NeedleEndingUI results are visible",state.EndingUIScreenEnabled},
         {"NeedleInputLocked outside an active cutscene",inputLock},
         {"Needle pickup worker busy",state.NeedleBusy},
         {"Owned needle has pickup/hand-in priority",ownedPriority},
@@ -1165,53 +1165,75 @@ local function budgetedFolderChildren(folder,isAllowed,descendants,nearCenter,ne
     end
 end
 
+-- An enabled UI shell is not an active ending. Match the visible results controls.
+local function tntEndingResultsVisible(ending)
+    if not(ending and ending:IsA("ScreenGui")and ending.Enabled)then return false end
+    local results=ending:FindFirstChild("ReturnToLobby",true)
+    if not(results and results:IsA("GuiObject"))then return false end
+    local node=results
+    while node and node~=ending do
+        if node:IsA("GuiObject")and not node.Visible then return false end
+        node=node.Parent
+    end
+    return node==ending
+end
+
 local function aimHayTnt(world,config,root,isAllowed,preferred)
-    if not root or not root.Parent or not isAllowed() then return nil end
+    if not root or not root.Parent or not isAllowed()then return nil end
     local folder=world:FindFirstChild("HaystackClient")
     if not folder then return nil end
+    local minSpeed=tonumber(config and config.TNT_MIN_THROW_SPEED)
+    local maxSpeed=tonumber(config and config.TNT_MAX_THROW_SPEED)
+    local fuse=tonumber(config and config.TNT_FUSE_TIME)or 2.9
+    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil end
     local function valid(part)
-        if not part or part.Parent~=folder or not part:IsA("BasePart") or part:GetAttribute("HayId")==nil then return false end
+        if not part or part.Parent~=folder or not part:IsA("BasePart")or part:GetAttribute("HayId")==nil then return false end
         local delta=part.Position-root.Position
         return delta.X*delta.X+delta.Z*delta.Z>9
     end
-    local hay=valid(preferred) and preferred or nil
-    if not hay then
-        local best=math.huge
-        local position=root.Position
-        for _,part in budgetedFolderChildren(folder,isAllowed) do
-            if valid(part) then
-                local delta=part.Position-position
-                local score=delta:Dot(delta)
-                if score<best then best=score;hay=part end
-            end
+    local function trajectory(part)
+        if not valid(part)then return nil end
+        local target=part.Position
+        local origin=root.Position+Vector3.new(0,1.5,0)
+        local toward=target-origin
+        local planar=Vector3.new(toward.X,0,toward.Z)
+        if planar.Magnitude<=3 then return nil end
+        origin+=planar.Unit*2.5
+        local displacement=target-origin
+        if displacement.Magnitude<0.1 then return nil end
+        local up=math.abs(displacement.Unit:Dot(Vector3.yAxis))>0.97 and Vector3.zAxis or Vector3.yAxis
+        local from=CFrame.lookAt(origin,target,up)
+        for index=4,60 do
+            local flight=index*0.025
+            if flight>=fuse-0.15 then break end
+            local velocity=displacement/flight+Vector3.new(0,world.Gravity*flight*0.5,0)
+            local speed=velocity.Magnitude
+            if speed>=minSpeed and speed<=maxSpeed then return from,velocity,part,flight end
         end
     end
-    -- The scan may yield. Use the current character and target positions afterward.
-    if not root.Parent or not isAllowed() or not valid(hay) then return nil end
-    local target=hay.Position
-    local origin=root.Position+Vector3.new(0,1.5,0)
-    local toward=target-origin
-    local planar=Vector3.new(toward.X,0,toward.Z)
-    if planar.Magnitude<=3 then return nil end
-    -- Put the projectile outside the avatar, on the side facing the hay.
-    origin+=planar.Unit*2.5
-    local displacement=target-origin
-    if displacement.Magnitude<0.1 then return nil end
-    local minSpeed=tonumber(config and config.TNT_MIN_THROW_SPEED)
-    local maxSpeed=tonumber(config and config.TNT_MAX_THROW_SPEED)
-    local fuse=tonumber(config and config.TNT_FUSE_TIME) or 2.9
-    if not minSpeed or not maxSpeed or minSpeed<0 or maxSpeed<minSpeed then return nil end
-    local up=math.abs(displacement.Unit:Dot(Vector3.yAxis))>0.97 and Vector3.zAxis or Vector3.yAxis
-    local from=CFrame.lookAt(origin,target,up)
-    -- Earliest feasible trajectory within the game's configured throw-speed limits.
-    for index=4,60 do
-        local flight=index*0.025
-        if flight>=fuse-0.15 then break end
-        local velocity=displacement/flight+Vector3.new(0,world.Gravity*flight*0.5,0)
-        local speed=velocity.Magnitude
-        if speed>=minSpeed and speed<=maxSpeed then return from,velocity,hay,flight end
+    if valid(preferred)then
+        local from,velocity,part,flight=trajectory(preferred)
+        if from then return from,velocity,part,flight end
     end
-    return nil
+    local function selectTarget(nearby)
+        local best,hay=math.huge,nil
+        local position=root.Position
+        -- Nearby uses the maintained spatial index. Keep a full-range fallback.
+        for _,part in budgetedFolderChildren(folder,isAllowed,false,nearby and position or nil,nearby and 48 or nil)do
+            if valid(part)then
+                local delta=part.Position-position
+                local score=delta:Dot(delta)
+                if score<best and(not nearby or score<=48*48)and trajectory(part)then best=score;hay=part end
+            end
+        end
+        -- Both the scan and index initialisation may yield. Recompute final geometry.
+        if not root.Parent or not isAllowed()or not valid(hay)then return nil end
+        return trajectory(hay)
+    end
+    local from,velocity,hay,flight=selectTarget(true)
+    if from then return from,velocity,hay,flight end
+    if not root.Parent or not isAllowed()then return nil end
+    return selectTarget(false)
 end
 
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
@@ -2370,7 +2392,7 @@ end
             or LocalPlayer:GetAttribute("HintViewerOpen")==true then return true end
         local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
         local ending=pg and pg:FindFirstChild("NeedleEndingUI")
-        if ending and ending:IsA("ScreenGui") and ending.Enabled then return true end
+        if tntEndingResultsVisible(ending)then return true end
         -- Cinematics can lock input; TNT uses its remote without taking Mouse1.
         return LocalPlayer:GetAttribute("NeedleInputLocked")==true
             and LocalPlayer:GetAttribute("CutsceneActive")~=true
@@ -2408,7 +2430,7 @@ end
             CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),NeedleOwned=owned,TntOwned=LocalPlayer:GetAttribute("TntOwned"),
             AutoPickupNeedle=sharedFarmState.AutoPickupNeedle,AutoHandInNeedle=sharedFarmState.AutoHandInNeedle,NeedleBusy=needleBusy,
             ExposedObjective=target and target.Name,EndingUIPresent=ending~=nil,EndingUIClass=ending and ending.ClassName,
-            EndingUIEnabled=ending and ending:IsA("ScreenGui")and ending.Enabled,EndingUIScreenEnabled=ending~=nil and ending:IsA("ScreenGui")and ending.Enabled==true,
+            EndingUIEnabled=ending and ending:IsA("ScreenGui")and ending.Enabled,EndingUIScreenEnabled=tntEndingResultsVisible(ending),
             RemotePresent=remote~=nil,RemoteIsEvent=remote~=nil and remote:IsA("RemoteEvent"),RootPresent=root~=nil,RootParented=root~=nil and root.Parent~=nil,
             MenuClosed=hubWindow.Closed,PuzzleBusy=sharedFarmPuzzleBusy(),RootAnchored=root and root.Anchored})
         detail.ActualTntBlocked=tntBlocked()

@@ -1158,53 +1158,6 @@ local function createFeatureDiagnostics(options)
     return api
 end
 
-local function installTntObservation(diagnostics, probe)
-    local retry,block,lastBlock,lastSample,lastAim=nil,nil,nil,0,nil
-    local function snapshot()
-        if not block then return nil end
-        return {Reason=block.Reason,ObservedAt=block.ObservedAt,PredictedReadyAt=block.ReadyAt,
-            BlockedAfterCooldownSeconds=os.clock()-block.ObservedAt,Active=true}
-    end
-    function diagnostics.BindGate(value)retry=value end
-    function diagnostics.MeasureAim(stage,fn,...)
-        local started=os.clock()
-        diagnostics.Status("TNT",stage)
-        local result=table.pack(pcall(fn,...))
-        if not result[1]then diagnostics.Record("WorkerError",{Stage=stage,Error=tostring(result[2])});error(result[2],0)end
-        lastAim={Stage=stage,Seconds=os.clock()-started,TargetFound=result[2]~=nil,Target=result[4],At=os.clock()}
-        diagnostics.Record("TargetTiming",lastAim)
-        return table.unpack(result,2,result.n)
-    end
-    diagnostics.Probe=function()
-        local data=probe()
-        local state=retry and retry.DiagnosticSnapshot()or nil
-        data.Gate=state
-        local now=os.clock()
-        local readyAt=state and state.PredictedReadyAt
-        local reason=data.BlockReason
-        if not reason and lastAim and not lastAim.TargetFound then reason="Waiting for reachable hay / valid throw trajectory"end
-        data.BlockReason=reason;data.LastTargetTiming=lastAim
-        local overdue=type(readyAt)=="number"and now>=readyAt
-        if not diagnostics.Enabled()then block=nil;lastBlock=nil;lastAim=nil
-        else
-            if block and (not reason or not overdue or reason~=block.Reason or readyAt~=block.ReadyAt)then
-                local ended=snapshot();ended.Active=false;ended.EndedAt=now
-                ended.EndReason=not reason and "Block cleared"or not overdue and "Cooldown prediction moved"or "Block reason changed"
-                lastBlock=ended;diagnostics.Record("CooldownBlockEnded",ended);block=nil
-            end
-            if reason and overdue then
-                if not block then
-                    block={Reason=reason,ObservedAt=now,ReadyAt=readyAt};lastSample=now
-                    diagnostics.Record("CooldownBlockStarted",snapshot())
-                elseif now-lastSample>=1 then lastSample=now;diagnostics.Record("CooldownBlockOngoing",snapshot())end
-            end
-        end
-        data.CooldownBlocks={Current=snapshot(),LastCompleted=lastBlock}
-        data.Observation="Block durations start at first enabled sample after predicted cooldown; sampled every 0.5 seconds"
-        return data
-    end
-end
-
 local function createPitchforkSelector(allowModels, preferHovered, options)
     options=options or {}
     local folderName=options.FolderName or "HaystackClient"
@@ -1964,6 +1917,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
         AutoPickHay=false, AutoCollectDroppedHay=false, AutoCollectGems=false, CollectInterval=0.5,
         AutoSellHay=false, SellThreshold=25, SellOnlyIfFull=false,
         AutoUseTNT=false, AutoUsePitchfork=false, AutoDeployDrone=false,
+        TntLightCooldown=0, TntThrowDelay=0.4,
         AutoUseVacuum=false, VacuumHotbarSlot=5, ToolInterval=0.5,
         AutoFindNeedle=false, AutoPickupNeedle=false, AutoHandInNeedle=false, NeedleInterval=1,
         AutoBuyTools=false, BuyToolsList={"Pitchfork"}, BuyInterval=1,
@@ -2044,9 +1998,8 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
-    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
-        Key="AutoTntDiagnostics",File="lobby_auto_tnt_diagnostics",Player=LocalPlayer,
-        Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+    farmSlider(toolsTab,"TntLightCooldown","TNT Light Cooldown (s)",0,60,0.05)
+    farmSlider(toolsTab,"TntThrowDelay","TNT Throw Delay After Lighting (s)",0,5,0.05)
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
     farmToggle(toolsTab,"AutoDeployDrone","Auto Deploy Drone")
     farmToggle(toolsTab,"AutoUseVacuum","Auto Use Vacuum (live heat + cooldown)",
@@ -2127,7 +2080,6 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
         local remote=farmRemote(name)
         if not remote then return false end
         local ok,result=pcall(remote.FireServer,remote,...)
-        if name=="TntAction"then tntDiagnostics.Record("TntRequest",{Action=select(1,...),Sent=ok,Error=not ok and tostring(result)or nil})end
         return ok,result
     end
     local function farmRoot()
@@ -2233,7 +2185,7 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     spawnChapterWorker(function()
         while not hubUnloaded do
             task.wait(math.max(0.2,tonumber(sharedFarmState.ToolInterval) or 0.5))
-            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone or sharedFarmState.AutoUseTNT)
+            if (sharedFarmState.AutoUsePitchfork or sharedFarmState.AutoDeployDrone)
                 and needleFolder and not farmBlocked() and not needlePriority() then
                 if sharedFarmState.AutoUsePitchfork and LocalPlayer:GetAttribute("PitchforkOwned")==true then
                     local _,id=selectPitchforkHay(function() return not hubUnloaded and sharedFarmState.AutoUsePitchfork and not farmBlocked() and not needlePriority() end)
@@ -2243,46 +2195,34 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
                     and LocalPlayer:GetAttribute("DroneDeployed")~=true then
                     sendFarmRemote("DeployDrone")
                 end
-                if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true then
-                    sendFarmRemote("TntAction","light")
-                    task.wait(0.4)
-                    if not farmBlocked() and not needlePriority() then
-                        local camera=Workspace.CurrentCamera
-                        if camera then
-                            sendFarmRemote("TntAction","throw",camera.CFrame,
-                                camera.CFrame.LookVector*40+Vector3.new(0,8,0))
+            end
+        end
+    end)
+
+-- Auto TNT from BeyyTU/needlehub (lobby.lua).
+    task.spawn(function()
+        local nextTntLightAt=0
+        while not hubUnloaded do
+            task.wait(0.1)
+            if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true
+                and os.clock()>=nextTntLightAt then
+                if needleFolder and not farmBlocked() and not needlePriority() then
+                    local cooldown=tonumber(LocalPlayer:GetAttribute("TntCooldown")) or 20
+                    nextTntLightAt=os.clock()+math.max(0.5,cooldown,tonumber(sharedFarmState.TntLightCooldown) or 0)
+                    if sendFarmRemote("TntAction","light") then
+                        task.wait(math.max(0,tonumber(sharedFarmState.TntThrowDelay) or 0.4))
+                        if not hubUnloaded and sharedFarmState.AutoUseTNT and not farmBlocked() and not needlePriority() then
+                            local camera=Workspace.CurrentCamera
+                            if camera then
+                                sendFarmRemote("TntAction","throw",camera.CFrame,
+                                    camera.CFrame.LookVector*40+Vector3.new(0,8,0))
+                            end
                         end
                     end
                 end
             end
         end
     end)
-    local observedReadyAt=nil
-    tntDiagnostics.ObserveFeedback=function(action,value)
-        if action=="lit"then
-            observedReadyAt=os.clock()+(tonumber(LocalPlayer:GetAttribute("TntCooldown"))or 20)+0.05
-        elseif action=="denied"then
-            local remaining=tonumber(value)
-            if remaining and remaining>=0 and remaining<math.huge then observedReadyAt=os.clock()+remaining+0.05 end
-        end
-    end
-    tntDiagnostics.Remote=function()return farmRemote("TntAction")end
-    installTntObservation(tntDiagnostics,function()
-        local reason
-        if not sharedFarmState.AutoUseTNT then reason="Auto TNT disabled"
-        elseif not needleFolder then reason="Waiting for NeedleHaystack"
-        elseif farmBlocked()then
-            reason=LocalPlayer:GetAttribute("CutsceneActive")==true and "Paused for cutscene"or LocalPlayer:GetAttribute("NeedleInputLocked")==true and "Paused for input lock"or "Farming blocked"
-        elseif needlePriority()then reason="Paused for needle action"
-        elseif LocalPlayer:GetAttribute("TntOwned")~=true then reason="Waiting for TNT ownership"
-        elseif not farmRemote("TntAction")then reason="Waiting for TNT remote"
-        elseif not farmRoot()then reason="Waiting for character"end
-        return {AutoUseTNT=sharedFarmState.AutoUseTNT,Owned=LocalPlayer:GetAttribute("TntOwned"),
-            BlockReason=reason,RemoteAvailable=farmRemote("TntAction")~=nil,HayFolderPresent=Workspace:FindFirstChild("HaystackClient")~=nil}
-    end)
-    tntDiagnostics.BindGate({DiagnosticSnapshot=function()
-        return {PredictedReadyAt=observedReadyAt,Clock="Client os.clock; predicted from observed server replies only"}
-    end})
     local vacuumWatchdog=createVacuumHeatWatchdog()
     local lastVacuumRecoveryWarning=-math.huge
     local forceVacuumReselect=false

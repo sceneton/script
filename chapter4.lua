@@ -3188,8 +3188,6 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     end
 
 
-        local tab = hubWindow:Tab({ Title = "Chapter 3", Icon = "construction" })
-        tab:Paragraph({ Title = "Chapter 3", Desc = "Chapter detected. No puzzle automation has been implemented for this map yet." })
 
     do
         local overview = overviewTab

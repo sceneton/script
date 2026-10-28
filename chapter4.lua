@@ -1424,6 +1424,327 @@ local function createPumpkinWeakpointResolver(spots)
 end
 
 -- Optional bounded Chapter 4 diagnostics. No gameplay actions or network delivery.
+-- Read-only combat recording; no movement, input, attribute or remote writes.
+local function installBossAttackRecorder(options)
+    local player,world,storage=options.Player,options.World,options.Storage
+    local alive,enabled,generation=true,false,0
+    local events,samples={},{}
+    local eventHead,sampleHead,eventCount,sampleCount=1,1,0,0
+    local eventTotal,sampleTotal,eventDropped,sampleDropped=0,0,0,0
+    local errors,trimmed,lastSaveError=0,0,nil
+    local EVENT_CAP,SAMPLE_CAP=8192,18000
+    local connections,characterConnections,bossConnections={},{},{}
+    local remote,character,boss,humanoid,configModule,config=nil,nil,nil,nil,nil,nil
+    local remoteConnection
+    local hazards,hazardOrder={},{}
+    local hazardSequence,hazardsDropped=0,0
+    local startedAt,startedServer,lastFeedback,dirty,nextSave=nil,nil,-math.huge,false,0
+    local nextBind,nextStatus=0,0
+    local path=CACHE_FOLDER.."/chapter4_boss_attack_diagnostics.json"
+    local http=game:GetService("HttpService")
+    local api={}
+    local status=options.Tab:Paragraph({Title="Boss Attack Recorder Status",Desc="Off; records visible attacks and player measurements"})
+    local function active()return alive and enabled and options.Alive()end
+    local function serverNow()return world:GetServerTimeNow()end
+    local function disconnect(list)
+        for _,connection in ipairs(list)do connection:Disconnect()end
+        table.clear(list)
+    end
+    local function finite(value)return type(value)=="number"and value==value and math.abs(value)<math.huge end
+    local function safe(value)
+        local seen,nodes={},0
+        local function visit(item,depth)
+            nodes+=1
+            if nodes>16000 or depth>12 then trimmed+=1;return "<capture limit>"end
+            local kind=typeof(item)
+            if kind=="nil"then return "<nil>"end
+            if kind=="boolean"then return item end
+            if kind=="number"then return finite(item)and item or tostring(item)end
+            if kind=="string"then
+                if #item>16384 then trimmed+=1;return item:sub(1,16384).."<truncated>"end
+                return item
+            end
+            if kind=="Vector3"then return {X=item.X,Y=item.Y,Z=item.Z}end
+            if kind=="CFrame"then return {Type="CFrame",Components={item:GetComponents()}}end
+            if kind=="Instance"then return {Type="Instance",Path=item:GetFullName(),Class=item.ClassName}end
+            if kind~="table"then return tostring(item)end
+            if seen[item]then trimmed+=1;return "<cycle>"end
+            seen[item]=true
+            local result,count={},0
+            for key,child in pairs(item)do
+                count+=1
+                if count>1024 then trimmed+=1;result.__CaptureTruncated=true;break end
+                result[tostring(key)]=visit(child,depth+1)
+            end
+            seen[item]=nil
+            return result
+        end
+        return visit(value,0)
+    end
+    local function flags(object)
+        local result={}
+        if object then for key,value in pairs(object:GetAttributes())do
+            if key:find("Boss",1,true)or key:find("Pumpkin",1,true)or key:find("Vacuum",1,true)
+                or key=="CutsceneActive"or key=="NeedleInputLocked"or key=="NeedleOwned"or key=="HintViewerOpen"then result[key]=value end
+        end end
+        return result
+    end
+    local function state()
+        local char=player.Character
+        local root=char and char:FindFirstChild("HumanoidRootPart")
+        local hum=char and char:FindFirstChildOfClass("Humanoid")
+        local body=boss and boss:FindFirstChild("RootPart")
+        return {Character=char,Position=root and root.Position,CFrame=root and root.CFrame,
+            Velocity=root and root.AssemblyLinearVelocity,AngularVelocity=root and root.AssemblyAngularVelocity,
+            Anchored=root and root.Anchored,Health=hum and hum.Health,MaxHealth=hum and hum.MaxHealth,
+            HumanoidState=hum and tostring(hum:GetState()),FloorMaterial=hum and tostring(hum.FloorMaterial),
+            MoveDirection=hum and hum.MoveDirection,WalkSpeed=hum and hum.WalkSpeed,
+            UseJumpPower=hum and hum.UseJumpPower,JumpPower=hum and hum.JumpPower,JumpHeight=hum and hum.JumpHeight,
+            Player=flags(player),Boss=boss and boss:GetAttributes(),BossPosition=body and body.Position,
+            BossDistance=root and body and(root.Position-body.Position).Magnitude,
+            Gravity=world.Gravity,MenuClosed=options.Menu()}
+    end
+    local function record(kind,data)
+        if not active()then return end
+        local ok,result=pcall(function()return {Sequence=eventTotal+1,At=os.clock(),ServerAt=serverNow(),Kind=kind,Data=safe(data)}end)
+        if not ok then errors+=1;return end
+        eventTotal+=1
+        if eventCount<EVENT_CAP then events[(eventHead+eventCount-1)%EVENT_CAP+1]=result;eventCount+=1
+        else events[eventHead]=result;eventHead=eventHead%EVENT_CAP+1;eventDropped+=1 end
+        dirty=true
+    end
+    local function watch(kind,payload,now)
+        if type(payload)~="table"then return end
+        if not ({Attack=true,Ring=true,Blasts=true,Seed=true,Spit=true,Tethers=true,Vines=true})[kind]then return end
+        local expires=now+10
+        local latest
+        local function consider(value)
+            if finite(value)then latest=math.max(latest or value,value)end
+        end
+        for _,name in ipairs({"impactAt","fireEnd","burstAt","endAt","tautAt","holdUntil"})do consider(payload[name])end
+        if type(payload.list)=="table"then for _,area in ipairs(payload.list)do if type(area)=="table"then consider(area.t)end end end
+        if type(payload.slams)=="table"then for _,slam in ipairs(payload.slams)do if type(slam)=="table"then consider(slam.impactAt)end end end
+        if kind=="Ring"and finite(payload.at)and finite(payload.maxRadius)and finite(payload.r0)and finite(payload.speed)and payload.speed>0 then
+            latest=payload.at+(payload.maxRadius-payload.r0)/payload.speed
+        end
+        if latest then expires=math.min(now+120,math.max(now+0.5,latest+0.75))end
+        hazardSequence+=1
+        local key=tostring(hazardSequence)
+        hazards[key]={Kind=kind,Id=payload.id,Name=payload.name,ReceivedAt=now,ExpiresAt=expires,Payload=payload}
+        hazardOrder[#hazardOrder+1]=key
+        if #hazardOrder>128 then hazards[table.remove(hazardOrder,1)]=nil;hazardsDropped+=1 end
+    end
+    local function measurements(now,position)
+        local result={}
+        for index=#hazardOrder,1,-1 do
+            local key=hazardOrder[index]
+            local hazard=hazards[key]
+            if not hazard or now>hazard.ExpiresAt then hazards[key]=nil;table.remove(hazardOrder,index)
+            elseif position then
+                local p=hazard.Payload
+                local measure={Key=key,Kind=hazard.Kind,Id=hazard.Id,Name=hazard.Name,SecondsSinceReceipt=now-hazard.ReceivedAt}
+                if hazard.Kind=="Ring"and typeof(p.origin)=="Vector3"and finite(p.at)and finite(p.r0)and finite(p.speed)and p.speed>0 then
+                    local delta=position-p.origin
+                    local distance=Vector3.new(delta.X,0,delta.Z).Magnitude
+                    measure.HorizontalDistance=distance
+                    measure.RingRadius=p.r0+p.speed*(now-p.at)
+                    measure.ArrivalAt=p.at+(distance-p.r0)/p.speed
+                    measure.SecondsUntilArrival=measure.ArrivalAt-now
+                    measure.InMaxRadius=finite(p.maxRadius)and distance<=p.maxRadius or false
+                elseif hazard.Kind=="Blasts"and type(p.list)=="table"then
+                    measure.Areas={}
+                    for areaIndex,area in ipairs(p.list)do
+                        if areaIndex>128 then break end
+                        if typeof(area.p)=="Vector3"and finite(area.r)then
+                            local delta=position-area.p
+                            local distance=Vector3.new(delta.X,0,delta.Z).Magnitude
+                            measure.Areas[#measure.Areas+1]={Index=areaIndex,Type=area.s,Distance=distance,
+                                BoundaryDistance=distance-area.r,Inside=distance<=area.r,
+                                SecondsUntilImpact=finite(area.t)and area.t-now or nil,Dud=area.dud}
+                        end
+                    end
+                elseif hazard.Kind=="Attack"and hazard.Name=="GroundThorns"and typeof(p.origin)=="Vector3"and type(p.lines)=="table"then
+                    measure.Lanes={}
+                    local delta=position-p.origin
+                    for laneIndex,lane in ipairs(p.lines)do
+                        if laneIndex>128 then break end
+                        if typeof(lane.d)=="Vector3"then measure.Lanes[#measure.Lanes+1]={Index=laneIndex,
+                            Along=delta.X*lane.d.X+delta.Z*lane.d.Z,
+                            Across=math.abs(delta.X*lane.d.Z-delta.Z*lane.d.X),Length=lane.l,HalfWidth=p.halfWidth}end
+                    end
+                    measure.SecondsUntilBurst=finite(p.burstAt)and p.burstAt-now or nil
+                elseif hazard.Kind=="Attack"and hazard.Name=="VineSlam"and type(p.slams)=="table"then
+                    measure.Lanes={}
+                    for laneIndex,lane in ipairs(p.slams)do
+                        if laneIndex>128 then break end
+                        if typeof(lane.base)=="Vector3"and typeof(lane.lane)=="Vector3"then
+                            local delta=position-lane.base
+                            measure.Lanes[#measure.Lanes+1]={Index=laneIndex,Along=delta.X*lane.lane.X+delta.Z*lane.lane.Z,
+                                Across=math.abs(delta.X*lane.lane.Z-delta.Z*lane.lane.X),HalfWidth=p.halfWidth,Length=p.length,
+                                SecondsUntilImpact=finite(lane.impactAt)and lane.impactAt-now or nil}
+                        end
+                    end
+                else
+                    for _,name in ipairs({"impactAt","fireStart","fireEnd","openAt","burstAt","endAt","castAt","tautAt","holdUntil"})do
+                        if finite(p[name])then measure[name.."MinusNow"]=p[name]-now end
+                    end
+                end
+                result[#result+1]=measure
+            end
+        end
+        return result
+    end
+    local function current()
+        local snapshot=state()
+        snapshot.Threats=measurements(serverNow(),snapshot.Position)
+        return snapshot
+    end
+    local function export(manual)
+        local ok,json=pcall(function()
+            local orderedEvents,orderedSamples={},{}
+            for i=1,eventCount do orderedEvents[i]=events[(eventHead+i-2)%EVENT_CAP+1]end
+            for i=1,sampleCount do orderedSamples[i]=samples[(sampleHead+i-2)%SAMPLE_CAP+1]end
+            return http:JSONEncode({Schema=1,Module=__BEYY_MODULE,Feature="Boss Attack Recorder",PlaceId=game.PlaceId,
+                JobId=game.JobId,StartedAt=startedAt,StartedServerAt=startedServer,ExportedAt=os.time(),Enabled=active(),
+                SampleInterval=0.1,EventCapacity=EVENT_CAP,SampleCapacity=SAMPLE_CAP,
+                TotalEvents=eventTotal,TotalSamples=sampleTotal,DroppedEvents=eventDropped,DroppedSamples=sampleDropped,
+                SerializationLimits=trimmed,HazardsDropped=hazardsDropped,DiagnosticErrors=errors,LastSaveError=lastSaveError,
+                Config=safe(config),Events=orderedEvents,Samples=orderedSamples,Current=safe(current()),
+                Interpretation="Client-visible feedback and measurements only. Threats are receipt-correlated, not proof of server hitboxes or hit attribution. Payload table keys are strings; bounds and overwrites are counted."})
+        end)
+        if not ok then errors+=1;lastSaveError=tostring(json);return false end
+        local written,result=pcall(options.Write,path,json)
+        if written and result then dirty=false;lastSaveError=nil else lastSaveError=written and "File write unavailable or failed"or tostring(result)end
+        if manual and type(setclipboard)=="function"then pcall(setclipboard,json)end
+        return written and result==true
+    end
+    local function bind()
+        local folder=storage:FindFirstChild("PumpkinBoss")
+        local nextRemote=folder and folder:FindFirstChild("Feedback")
+        if nextRemote~=remote then
+            if remoteConnection then remoteConnection:Disconnect();remoteConnection=nil end
+            remote=nextRemote
+            if remote and remote:IsA("RemoteEvent")then
+                remoteConnection=remote.OnClientEvent:Connect(function(...)
+                    if not active()then return end
+                    local args=table.pack(...)
+                    local ok,err=pcall(function()
+                        local now=serverNow()
+                        local kind,payload=args[1],args[2]
+                        lastFeedback=now
+                        if kind=="Cancel"or kind=="Finish"then
+                            local cancelledId=type(payload)=="table"and payload.id or payload
+                            for index=#hazardOrder,1,-1 do local key=hazardOrder[index];local h=hazards[key]
+                                if h and cancelledId~=nil and h.Id==cancelledId then hazards[key]=nil;table.remove(hazardOrder,index)end
+                            end
+                        elseif type(payload)=="table"then watch(kind,payload,now)end
+                        record("Feedback",{Kind=kind,Arguments=args,ArgumentCount=args.n,Context=current()})
+                    end)
+                    if not ok then errors+=1;record("RecorderError",{Source="Feedback",Error=tostring(err)})end
+                end)
+            end
+            record("RemoteBound",{Remote=remote})
+        end
+        local module=folder and folder:FindFirstChild("Config")
+        if module and module~=configModule then
+            local ok,result=pcall(require,module)
+            if ok then configModule=module;config=result;record("BossConfig",{Module=module,Config=config})end
+        end
+        local nextBoss=world:FindFirstChild("PumpkinGolem_Rig")
+        if nextBoss~=boss then
+            disconnect(bossConnections);boss=nextBoss;table.clear(hazards);table.clear(hazardOrder)
+            if boss then bossConnections[1]=boss.AttributeChanged:Connect(function(key)
+                if active()then record("BossAttribute",{Name=key,Value=boss:GetAttribute(key),Context=current()})end
+            end)end
+            record("BossBound",{Boss=boss,Context=current()})
+        end
+        local nextCharacter=player.Character
+        local nextHumanoid=nextCharacter and nextCharacter:FindFirstChildOfClass("Humanoid")
+        if nextCharacter~=character or nextHumanoid~=humanoid then
+            disconnect(characterConnections);character,humanoid=nextCharacter,nextHumanoid
+            if humanoid then
+                local previousHealth=humanoid.Health
+                characterConnections[1]=humanoid.HealthChanged:Connect(function(health)
+                    local delta=health-previousHealth;previousHealth=health
+                    record("HealthChanged",{Delta=delta,Health=health,Context=current(),Attribution="Concurrent hazards may overlap; inspect nearby feedback"})
+                end)
+                characterConnections[2]=humanoid.StateChanged:Connect(function(old,new)
+                    record("HumanoidState",{Previous=tostring(old),State=tostring(new),Context=current()})
+                end)
+            end
+            record("CharacterBound",{Context=current()})
+        end
+    end
+    local function unbind()
+        if remoteConnection then remoteConnection:Disconnect();remoteConnection=nil end
+        disconnect(connections);disconnect(characterConnections);disconnect(bossConnections)
+        remote,character,boss,humanoid=nil,nil,nil,nil
+    end
+    function api.Export()export(true)end
+    function api.SetEnabled(on)
+        if not alive then return end
+        on=on==true
+        if on==enabled then return end
+        if not on then record("RecordingStopped",{Context=current()});enabled=false;export(false)end
+        generation+=1;enabled=on;unbind()
+        if not enabled then status:SetDesc("Off | "..eventCount.." events, "..sampleCount.." samples");return end
+        if not startedAt then startedAt=os.clock();startedServer=serverNow()end
+        local run=generation
+        nextBind,nextStatus,nextSave=0,0,os.clock()+30
+        connections[1]=player.AttributeChanged:Connect(function(key)
+            if key:find("Pumpkin",1,true)or key:find("Boss",1,true)or key=="CutsceneActive"or key=="NeedleInputLocked"then
+                record("PlayerAttribute",{Name=key,Value=player:GetAttribute(key),Context=current()})
+            end
+        end)
+        if player.OnTeleport then connections[#connections+1]=player.OnTeleport:Connect(function(state)
+            record("Teleport",{State=tostring(state)});export(false)
+        end)end
+        task.spawn(function()
+            while active()and generation==run do
+                local ok,err=pcall(function()
+                    local now=os.clock()
+                    if now>=nextBind then nextBind=now+0.5;bind()end
+                    local server=serverNow()
+                    local health=boss and tonumber(boss:GetAttribute("BossHealth"))
+                    local bossState=boss and boss:GetAttribute("BossState")
+                    if (boss and health and health>0 and bossState~="Sleeping"and bossState~="Unavailable")or server-lastFeedback<2 then
+                        sampleTotal+=1
+                        local sample={Sequence=sampleTotal,At=now,ServerAt=server,Context=safe(current())}
+                        if sampleCount<SAMPLE_CAP then samples[(sampleHead+sampleCount-1)%SAMPLE_CAP+1]=sample;sampleCount+=1
+                        else samples[sampleHead]=sample;sampleHead=sampleHead%SAMPLE_CAP+1;sampleDropped+=1 end
+                        dirty=true
+                    end
+                    if dirty and now>=nextSave then nextSave=now+30;export(false)end
+                    if now>=nextStatus then
+                        nextStatus=now+1
+                        status:SetDesc("Recording | "..eventCount.." events | "..sampleCount.." samples | "..eventDropped.." / "..sampleDropped.." overwritten"..(lastSaveError and " | Save error: "..lastSaveError or ""))
+                    end
+                end)
+                if not ok then errors+=1;lastSaveError=tostring(err)end
+                task.wait(0.1)
+            end
+        end)
+    end
+    options.Registry.Chapter4BossAttackRecorder=options.Tab:Toggle({Title="Boss Attack Recorder",Value=false,
+        Desc="Record all visible boss feedback and 10 Hz combat measurements locally. No dodging or movement changes.",Callback=api.SetEnabled})
+    options.Tab:Button({Title="Export Boss Attack Recorder",Callback=api.Export})
+    options.Tab:Button({Title="Clear Boss Attack Recording",Callback=function()
+        table.clear(events);table.clear(samples);table.clear(hazards);table.clear(hazardOrder)
+        eventHead,sampleHead,eventCount,sampleCount=1,1,0,0
+        eventTotal,sampleTotal,eventDropped,sampleDropped=0,0,0,0
+        errors,trimmed,hazardsDropped=0,0,0;startedAt,startedServer=os.clock(),serverNow();dirty=true
+        record("RecordingCleared",{})
+    end})
+    function api.Stop()
+        if not alive then return end
+        if enabled then api.SetEnabled(false)end
+        alive=false;generation+=1;unbind()
+    end
+    local previous=_G.__BEYY_HUB_CLEANUP
+    _G.__BEYY_HUB_CLEANUP=function()api.Stop();if previous then pcall(previous)end end
+    return api
+end
+
 local function createChapter4Diagnostics(options)
     local player,world,storage=options.Player,options.World,options.Storage
     local alive=true
@@ -2600,6 +2921,8 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     local sellingTab = farmingSection:Tab({ Title = "Selling", Icon = "coins" })
     local toolsTab = farmingSection:Tab({ Title = "Tools", Icon = "hammer" })
     local bossFunctionsDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Boss Function Diagnostics",Key="BossFunctionDiagnostics",File="chapter4_boss_functions_diagnostics",Player=LocalPlayer,Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
+    installBossAttackRecorder({Tab=DiagnosticsTab,Registry=Registry,Player=LocalPlayer,World=Workspace,Storage=ReplicatedStorage,
+        Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite})
 
     local candleTab = farmingSection:Tab({ Title = "Candles", Icon = "flame" })
     local inventorySection = hubWindow:Section({ Title = "Inventory", Icon = "backpack", Opened = true })

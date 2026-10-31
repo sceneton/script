@@ -438,8 +438,6 @@ local function installAntiIdle(tab, registry, isRunning)
     end)
     local previousCleanup = _G.__BEYY_HUB_CLEANUP
     _G.__BEYY_HUB_CLEANUP = function()
-    stopEarlyIntro()
-    stopPitchforkSelector()
         alive = false
         idleConnection:Disconnect()
         if previousCleanup then previousCleanup() end
@@ -1077,91 +1075,220 @@ local function budgetedFolderChildren(folder,isAllowed,descendants,nearCenter,ne
 end
 
 local selectPitchforkHay, stopPitchforkSelector = createPitchforkSelector(true, false)
--- Start intro input before constructing the menu or waiting for gameplay assets.
-local earlyIntroRunning = true
-local earlyIntroPending = false
-local earlyIntroGui, earlyIntroConnection
-local earlyIntroButtons = setmetatable({}, {__mode="k"})
-local function stopEarlyIntro()
-    earlyIntroRunning = false; earlyIntroPending = false
-    if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
-    table.clear(earlyIntroButtons)
-end
-local function watchEarlyIntroGui(pg)
-    if pg==earlyIntroGui then return end
-    if earlyIntroConnection then earlyIntroConnection:Disconnect(); earlyIntroConnection=nil end
-    earlyIntroGui=pg; table.clear(earlyIntroButtons)
-    if not pg then return end
-    local function index(obj) if obj:IsA("GuiButton") then earlyIntroButtons[obj]=true end end
-    earlyIntroConnection=pg.DescendantAdded:Connect(index)
-    for _,obj in ipairs(pg:GetDescendants()) do index(obj) end
-end
-local function earlyIntroVisible(obj)
-    if not obj or not obj.Parent then return false end
-    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    local ancestor = obj
-    while ancestor and ancestor ~= pg do
-        if ancestor:IsA("GuiObject") and not ancestor.Visible then return false end
-        if ancestor:IsA("ScreenGui") and not ancestor.Enabled then return false end
-        if ancestor.Name == "BeyyNativeHub" or ancestor.Name == "NeedleEndingUI" then return false end
-        ancestor = ancestor.Parent
+-- Intro-only port of NeedleHub's final integrated v22 (e5b35b65fcbcfbe2378a7f0e18ab53449b9a38cd).
+-- Puzzle dispatch and later cinematic recovery remain owned by the existing hub.
+local function createChapter2IntroSkip(d)
+    local player,world,input=d.Player,d.World,d.Input
+    local alive,pending=true,false
+    local started,finishedAt=d.Now(),nil
+    local attempts,lastAttempt,clickRunning=0,-math.huge,false
+    local overlay,overlayOriginal,overlayRestored=nil,nil,false
+    local cameraActive,cameraReleased,yaw,pitch=false,false,nil,-0.18
+    local clicked,clickX,clickY=false,0,0
+    local lastStatus="Starting"
+    local api={}
+    local function status(text)
+        if text==lastStatus then return end
+        lastStatus=text
+        if d.Status then d.Status(text)end
     end
-    return ancestor == pg and obj.AbsoluteSize.X > 0 and obj.AbsoluteSize.Y > 0
-end
-local function findEarlyIntroSkip()
-    if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true or LocalPlayer:GetAttribute("NeedleOwned") == true then return nil end
-    local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
-    watchEarlyIntroGui(pg)
-    if not pg then return nil end
-    for obj in pairs(earlyIntroButtons) do
-        if not obj.Parent then earlyIntroButtons[obj]=nil
-        elseif earlyIntroVisible(obj) then
-            local context = obj.Name:lower()
-            if obj:IsA("TextButton") then context = context .. " " .. obj.Text:lower() end
-            for _,child in ipairs(obj:GetDescendants()) do
-                if child:IsA("TextLabel") then context = context .. " " .. child.Text:lower() end
+    local function visible(element)
+        local node=element
+        while node do
+            if node:IsA("GuiObject")and not node.Visible then return false end
+            if node:IsA("ScreenGui")and not node.Enabled then return false end
+            if node:IsA("PlayerGui")then return true end
+            node=node.Parent
+        end
+        return false
+    end
+    local function objects()
+        local pg=player:FindFirstChildOfClass("PlayerGui")
+        local fade=pg and pg:FindFirstChild("CutsceneFade")
+        local black=fade and fade:FindFirstChild("Black",true)
+        local holder=fade and fade:FindFirstChild("SkipCutsceneButton",true)
+        local skip=holder and holder:FindFirstChild("Button",true)
+        if skip and not skip:IsA("GuiButton")then skip=nil end
+        return pg,fade,black,holder,skip
+    end
+    local function ending()
+        if player:GetAttribute("NeedleRoundComplete")==true or player:GetAttribute("NeedleOwned")==true then return true end
+        local pg=player:FindFirstChildOfClass("PlayerGui")
+        local gui=pg and pg:FindFirstChild("NeedleEndingUI")
+        local results=gui and gui:FindFirstChild("ReturnToLobby",true)
+        -- This hub can keep an empty ending ScreenGui enabled throughout the intro.
+        return gui and gui:IsA("ScreenGui")and gui.Enabled and results and results:IsA("GuiObject")and visible(results)or false
+    end
+    local function safeToSkip(button)
+        if not alive or not button or not visible(button)or d.Now()-started>40
+            or player:GetAttribute("IntroCutsceneFinished")==true or ending()then return false end
+        local _,fade,_,holder=objects()
+        if not(fade and holder and button:IsDescendantOf(holder)and button:IsDescendantOf(fade))then return false end
+        return button.AbsoluteSize.X>8 and button.AbsoluteSize.Y>8
+    end
+    local function releaseMouse()
+        if not clicked then return end
+        clicked=false
+        pcall(function()d.Mouse:SendMouseButtonEvent(clickX,clickY,0,false,game,0)end)
+    end
+    local function releaseCamera(reason)
+        if cameraReleased then return end
+        cameraReleased=true
+        if cameraActive then
+            cameraActive=false
+            local camera=world.CurrentCamera
+            local character=player.Character
+            local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+            if camera then
+                if humanoid then pcall(function()camera.CameraSubject=humanoid end)end
+                pcall(function()camera.CameraType=Enum.CameraType.Custom end)
             end
-            local ancestor = obj.Parent
-            while ancestor and ancestor ~= pg do
-                context = context .. " " .. ancestor.Name:lower()
-                ancestor = ancestor.Parent
+            pcall(function()input.MouseBehavior=Enum.MouseBehavior.Default end)
+        end
+        status(reason)
+    end
+    local function restoreOverlay()
+        if overlayRestored then return end
+        overlayRestored=true
+        if overlay and overlay.Parent and overlayOriginal~=nil then pcall(function()overlay.Visible=overlayOriginal end)end
+    end
+    local function setOverlay(black)
+        if black==overlay then return end
+        if overlay and overlay.Parent and overlayOriginal~=nil then pcall(function()overlay.Visible=overlayOriginal end)end
+        overlay=black;overlayOriginal=black and black.Visible
+    end
+    function api.Snapshot()
+        return {Running=alive,Pending=pending,Status=lastStatus,Attempts=attempts,
+            BlackHidden=overlay and overlay.Parent and not overlay.Visible,CameraActive=cameraActive,
+            IntroFinished=player:GetAttribute("IntroCutsceneFinished"),Elapsed=d.Now()-started}
+    end
+    function api.Pending()return pending end
+    function api.Stop()
+        if not alive then return end
+        alive=false;pending=false
+        releaseMouse();releaseCamera("Intro controller stopped");restoreOverlay()
+    end
+    function api.Tick()
+        if not alive then return end
+        if ending()then api.Stop();return end
+        local done=player:GetAttribute("IntroCutsceneFinished")==true
+        if done and not finishedAt then finishedAt=d.Now();pending=false;releaseCamera("Intro confirmed")end
+        local _,fade,black,_,skip=objects()
+        if black and black:IsA("GuiObject")then
+            setOverlay(black)
+            if not overlayRestored and(not done or(finishedAt and d.Now()-finishedAt<8))then
+                if black.Visible then black.Visible=false;status("Intro blackout hidden")end
             end
-            if context:find("skip",1,true) and not context:find("ending",1,true)
-                and not context:find("outro",1,true) and not context:find("replay",1,true) then return obj end
+        end
+        if done then
+            if not black or not fade or not fade.Enabled or black.BackgroundTransparency>=0.98 or d.Now()-finishedAt>=8 then api.Stop()end
+            return
+        end
+        if d.Now()-started>40 then status("Native intro Skip timed out");api.Stop();return end
+        local shown=skip and visible(skip)or false
+        pending=shown
+        if shown then releaseCamera("Native intro Skip appeared")end
+        local character=player.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        if not shown and not cameraReleased and not cameraActive and root and world.CurrentCamera
+            and player:GetAttribute("CutsceneActive")==true then
+            local front=root.CFrame.LookVector
+            local flat=Vector3.new(front.X,0,front.Z)
+            if flat.Magnitude<0.1 then flat=Vector3.new(0,0,-1)end
+            yaw=math.atan2(flat.X,flat.Z);pitch=-0.18;cameraActive=true
+            status("Blackout removed; pre-Skip mouse camera active")
+        end
+        if shown and not clickRunning and attempts<2 and safeToSkip(skip)
+            and(attempts==0 or d.Now()-lastAttempt>=1)then
+            attempts+=1;lastAttempt=d.Now();clickRunning=true
+            local attempt=attempts
+            d.Spawn(function()
+                local restorePanel
+                local ok,err=pcall(function()
+                    if not safeToSkip(skip)then return end
+                    if d.BeforeClick then restorePanel=d.BeforeClick()end
+                    local pos,size=skip.AbsolutePosition,skip.AbsoluteSize
+                    local inset=d.Gui:GetGuiInset()
+                    clickX,clickY=pos.X+size.X/2,pos.Y+size.Y/2
+                    if attempt==1 then clickX+=inset.X;clickY+=inset.Y end
+                    d.Mouse:SendMouseMoveEvent(clickX,clickY,game)
+                    d.Wait(0.035)
+                    if not safeToSkip(skip)then return end
+                    d.Mouse:SendMouseButtonEvent(clickX,clickY,0,true,game,0);clicked=true
+                    d.Wait(0.075)
+                end)
+                releaseMouse()
+                if restorePanel then pcall(restorePanel)end
+                clickRunning=false
+                status(ok and "Native Skip click sent; awaiting intro confirmation"or("Native Skip input error: "..tostring(err)))
+            end)
         end
     end
+    function api.Render()
+        if not alive or not cameraActive or cameraReleased or ending()then return end
+        if player:GetAttribute("IntroCutsceneFinished")==true then releaseCamera("Intro confirmed");return end
+        if d.MenuOpen and d.MenuOpen()then return end
+        local character=player.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local camera=world.CurrentCamera
+        if not root or not camera or not yaw then return end
+        local humanoid=character:FindFirstChildOfClass("Humanoid")
+        input.MouseBehavior=Enum.MouseBehavior.LockCenter
+        local delta=input:GetMouseDelta()
+        if delta and not input:GetFocusedTextBox()then
+            yaw-=delta.X*0.004;pitch=math.clamp(pitch-delta.Y*0.004,-1,0.85)
+        end
+        local cp=math.cos(pitch)
+        local direction=Vector3.new(math.sin(yaw)*cp,math.sin(pitch),math.cos(yaw)*cp)
+        local target=root.Position+Vector3.new(0,1.6,0)
+        local desired=target-direction*4
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={character};params.RespectCanCollide=true
+        local hit=world:Raycast(target,desired-target,params)
+        if hit then desired=target-direction*math.max(0.45,(hit.Position-target).Magnitude-0.3)end
+        camera.CameraType=Enum.CameraType.Scriptable
+        if humanoid then camera.CameraSubject=humanoid end
+        camera.CFrame=CFrame.lookAt(desired,target,Vector3.yAxis);camera.Focus=CFrame.new(target)
+    end
+    return api
 end
+
+-- Start before UI/config construction so the initial blackout is removed promptly.
+local earlyIntroWindow
+local earlyIntroStopped=false
+local earlyIntroPending=false
+local earlyIntroController=createChapter2IntroSkip({Player=LocalPlayer,World=Workspace,Input=UserInputService,
+    Mouse=VirtualInputManager,Gui=GuiService,Now=os.clock,Spawn=task.spawn,Wait=task.wait,
+    MenuOpen=function()return earlyIntroWindow and not earlyIntroWindow.Closed end,
+    BeforeClick=function()
+        local window=earlyIntroWindow
+        if window and not window.Destroyed and not window.Closed then
+            window:Close()
+            return function()if not window.Destroyed and not earlyIntroStopped then window:Open()end end
+        end
+    end,
+    Status=function(text)print("[Chapter2 Intro] "..text)end})
+local earlyIntroBind="BeyyChapter2IntroBlackScreen_"..tostring(LocalPlayer.UserId)
+local function stopEarlyIntro()
+    earlyIntroStopped=true
+    earlyIntroController.Stop();earlyIntroPending=false
+    pcall(function()RunService:UnbindFromRenderStep(earlyIntroBind)end)
+end
+local previousEarlyIntroCleanup=_G.__BEYY_HUB_CLEANUP
+_G.__BEYY_HUB_CLEANUP=function()
+    stopEarlyIntro();stopPitchforkSelector()
+    if previousEarlyIntroCleanup then previousEarlyIntroCleanup()end
+end
+RunService:BindToRenderStep(earlyIntroBind,Enum.RenderPriority.Last.Value+2100,function()
+    local ok,err=pcall(earlyIntroController.Render)
+    if not ok then warn("[Chapter2 Intro] Camera error: "..tostring(err));stopEarlyIntro()end
+end)
 task.spawn(function()
-    local deadline = os.clock() + 20
-    local lastAttempt = -math.huge
-    while earlyIntroRunning and os.clock() < deadline do
-        if LocalPlayer:GetAttribute("IntroCutsceneFinished") == true then break end
-        pcall(function()
-            local btn = findEarlyIntroSkip()
-            earlyIntroPending = btn ~= nil
-            if not btn or os.clock() - lastAttempt < 0.2 then return end
-            lastAttempt = os.clock()
-            -- Signals avoid an overlapping startup menu when supported.
-            if type(firesignal) == "function" then
-                pcall(function() firesignal(btn.Activated) end)
-                pcall(function() firesignal(btn.MouseButton1Click) end)
-                task.wait(0.05)
-            end
-            if not earlyIntroRunning or not earlyIntroVisible(btn)
-                or LocalPlayer:GetAttribute("IntroCutsceneFinished") == true then return end
-            local inset = GuiService:GetGuiInset()
-            local pos,size = btn.AbsolutePosition,btn.AbsoluteSize
-            local x,y = pos.X+size.X/2+inset.X,pos.Y+size.Y/2+inset.Y
-            VirtualInputManager:SendMouseMoveEvent(x,y,game)
-            local pressed = false
-            pcall(function()
-                VirtualInputManager:SendMouseButtonEvent(x,y,0,true,game,0)
-                pressed = true
-                task.wait(0.03)
-            end)
-            if pressed then pcall(function() VirtualInputManager:SendMouseButtonEvent(x,y,0,false,game,0) end) end
-        end)
-        task.wait(0.05)
+    while earlyIntroController.Snapshot().Running do
+        local ok,err=pcall(earlyIntroController.Tick)
+        if not ok then warn("[Chapter2 Intro] Watcher error: "..tostring(err));stopEarlyIntro();break end
+        earlyIntroPending=earlyIntroController.Pending()
+        task.wait(0.035)
     end
     stopEarlyIntro()
 end)
@@ -1694,6 +1821,7 @@ end
         HideSearchBar = true,
         OpenButton = { Enabled = false },
     })
+    earlyIntroWindow=hubWindow
     pcall(function() hubWindow:SetToggleKey(Enum.KeyCode.RightControl) end)
     pcall(function() hubWindow:EditOpenButton({ Enabled = false }) end)
 

@@ -1086,6 +1086,8 @@ local function createChapter2IntroSkip(d)
     local cameraActive,cameraReleased,yaw,pitch=false,false,nil,-0.18
     local clicked,clickX,clickY=false,0,0
     local lastStatus="Starting"
+    local positionRoot,positionPose,positionGuardUntil
+    local positionRestored=false
     local api={}
     local function status(text)
         if text==lastStatus then return end
@@ -1157,8 +1159,36 @@ local function createChapter2IntroSkip(d)
         if overlay and overlay.Parent and overlayOriginal~=nil then pcall(function()overlay.Visible=overlayOriginal end)end
         overlay=black;overlayOriginal=black and black.Visible
     end
+    -- Follow ordinary movement, but retain the last pose across the native
+    -- intro's abrupt reposition. Never carry a pose across a respawn.
+    local function preserveIntroPosition(done)
+        local character=player.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        if not root or not humanoid or humanoid.Health<=0 then
+            positionRoot,positionPose=nil,nil
+            return
+        end
+        if root~=positionRoot then
+            positionRoot,positionPose=root,root.CFrame
+            return
+        end
+        if positionRestored or(positionGuardUntil and d.Now()>positionGuardUntil)then return end
+        local displaced=positionPose and(root.Position-positionPose.Position).Magnitude>20
+        if attempts>0 and displaced then
+            if done and positionGuardUntil then
+                root.CFrame=positionPose
+                positionRestored=true
+                status("Kept current position through native intro completion")
+            end
+            -- A reset can precede IntroCutsceneFinished by one replication tick.
+            -- Keep the pre-reset pose until that confirmation arrives.
+            return
+        end
+        positionPose=root.CFrame
+    end
     function api.Snapshot()
-        return {Running=alive,Pending=pending,Status=lastStatus,Attempts=attempts,
+        return {Running=alive,Pending=pending,Status=lastStatus,Attempts=attempts,PositionRestored=positionRestored,
             BlackHidden=overlay and overlay.Parent and not overlay.Visible,CameraActive=cameraActive,
             IntroFinished=player:GetAttribute("IntroCutsceneFinished"),Elapsed=d.Now()-started}
     end
@@ -1166,13 +1196,18 @@ local function createChapter2IntroSkip(d)
     function api.Stop()
         if not alive then return end
         alive=false;pending=false
+        positionRoot,positionPose=nil,nil
         releaseMouse();releaseCamera("Intro controller stopped");restoreOverlay()
     end
     function api.Tick()
         if not alive then return end
         if ending()then api.Stop();return end
         local done=player:GetAttribute("IntroCutsceneFinished")==true
-        if done and not finishedAt then finishedAt=d.Now();pending=false;releaseCamera("Intro confirmed")end
+        if done and not finishedAt then
+            finishedAt=d.Now();positionGuardUntil=finishedAt+2
+            pending=false;releaseCamera("Intro confirmed")
+        end
+        preserveIntroPosition(done)
         local _,fade,black,_,skip=objects()
         if black and black:IsA("GuiObject")then
             setOverlay(black)
@@ -1181,7 +1216,9 @@ local function createChapter2IntroSkip(d)
             end
         end
         if done then
-            if not black or not fade or not fade.Enabled or black.BackgroundTransparency>=0.98 or d.Now()-finishedAt>=8 then api.Stop()end
+            local visualsDone=not black or not fade or not fade.Enabled or black.BackgroundTransparency>=0.98 or d.Now()-finishedAt>=8
+            if visualsDone then restoreOverlay()end
+            if visualsDone and(positionRestored or attempts==0 or d.Now()>=positionGuardUntil)then api.Stop()end
             return
         end
         if d.Now()-started>40 then status("Native intro Skip timed out");api.Stop();return end
@@ -1225,7 +1262,11 @@ local function createChapter2IntroSkip(d)
         end
     end
     function api.Render()
-        if not alive or not cameraActive or cameraReleased or ending()then return end
+        if not alive or ending()then return end
+        -- Keep sampling even after yielding the camera to the native Skip button.
+        -- Tick owns the confirmation/restore so render and replication order agree.
+        if player:GetAttribute("IntroCutsceneFinished")~=true then preserveIntroPosition(false)end
+        if not cameraActive or cameraReleased then return end
         if player:GetAttribute("IntroCutsceneFinished")==true then releaseCamera("Intro confirmed");return end
         if d.MenuOpen and d.MenuOpen()then return end
         local character=player.Character

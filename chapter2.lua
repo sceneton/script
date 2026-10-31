@@ -1091,6 +1091,8 @@ local function createChapter2IntroSkip(d)
     local savedView,cameraRestorePending
     local cameraHandoffDone=false
     local positionJumpLogged=false
+    local handoff=d.Handoff or {}
+    local handoffCameraOwned,handoffInputReady=false,false
     local api={}
     local function trace(kind,build)
         if d.Trace then d.Trace(kind,build)end
@@ -1168,36 +1170,70 @@ local function createChapter2IntroSkip(d)
     end
     local function rememberView(root)
         local camera=world.CurrentCamera
-        if camera and camera.CFrame and not cameraHandoffDone then
+        if camera and camera.CFrame and not cameraHandoffDone and attempts==0 then
             savedView={Camera=camera,CFrame=camera.CFrame,Focus=camera.Focus,RootPosition=root.Position}
         end
     end
-    local function restoreView()
-        if not cameraRestorePending then return end
-        if positionGuardUntil and d.Now()>positionGuardUntil then
-            cameraRestorePending=false;trace("IntroCameraRestoreSkipped",{Reason="Handoff window expired"});return
+    local function releaseHandoffCamera()
+        if not handoffCameraOwned then return end
+        handoffCameraOwned=false
+        if handoff.Claimed then return end
+        local camera=world.CurrentCamera
+        if savedView and camera==savedView.Camera then
+            camera.CameraType=Enum.CameraType.Custom
+            input.MouseBehavior=Enum.MouseBehavior.Default
         end
-        if d.MenuOpen and d.MenuOpen()then return end
+    end
+    local function restoreView()
+        local guarding=finishedAt and positionGuardUntil and d.Now()<positionGuardUntil and attempts>0 and not handoff.Claimed
+        if handoff.Claimed then cameraRestorePending=false;handoffCameraOwned=false;return end
+        if not cameraRestorePending and not guarding then releaseHandoffCamera();return end
+        if positionGuardUntil and d.Now()>positionGuardUntil then
+            cameraRestorePending=false;releaseHandoffCamera();trace("IntroCameraRestoreSkipped",{Reason="Handoff window expired"});return
+        end
+        if(d.MenuOpen and d.MenuOpen())or(d.CameraBusy and d.CameraBusy())then releaseHandoffCamera();return end
         local character=player.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
         local humanoid=character and character:FindFirstChildOfClass("Humanoid")
         local camera=world.CurrentCamera
+        local logRestore=cameraRestorePending or not handoffCameraOwned
         cameraRestorePending=false
         if not savedView or root~=positionRoot or not humanoid or humanoid.Health<=0 or camera~=savedView.Camera then
+            releaseHandoffCamera();handoff.View=nil;handoff.Root=nil
             trace("IntroCameraRestoreSkipped",function()return {Reason="Saved view/character/camera is no longer valid",HasSavedView=savedView~=nil,
                 SameRoot=root==positionRoot,Health=humanoid and humanoid.Health,SameCamera=savedView and camera==savedView.Camera}end)
             return
         end
-        -- Translate with the player while keeping the saved rotation and zoom.
-        -- Write once after the normal camera update, then leave mouse look free.
+        -- Own the short transition without reading a cinematic's view back.
+        -- Discard the first mouse delta after native Skip to avoid its synthetic move.
+        local delta=input:GetMouseDelta()
+        if guarding and handoffInputReady and not clickRunning and delta and not input:GetFocusedTextBox()
+            and(delta.X~=0 or delta.Y~=0)then
+            local look=savedView.CFrame.LookVector
+            local viewYaw=math.atan2(look.X,look.Z)-delta.X*0.004
+            local viewPitch=math.clamp(math.asin(math.clamp(look.Y,-1,1))-delta.Y*0.004,-1,0.85)
+            local cp=math.cos(viewPitch)
+            local direction=Vector3.new(math.sin(viewYaw)*cp,math.sin(viewPitch),math.cos(viewYaw)*cp)
+            local focus=savedView.Focus and savedView.Focus.Position or(savedView.RootPosition+Vector3.new(0,1.6,0))
+            local viewDistance=(savedView.CFrame.Position-focus).Magnitude
+            savedView.CFrame=CFrame.lookAt(focus-direction*viewDistance,focus,Vector3.yAxis)
+            savedView.Focus=CFrame.new(focus)
+        end
+        handoffInputReady=true
         local offset=root.Position-savedView.RootPosition
         local beforeFrame,beforeFocus,beforeType=camera.CFrame,camera.Focus,tostring(camera.CameraType)
         camera.CameraSubject=humanoid
-        camera.CameraType=Enum.CameraType.Custom
+        camera.CameraType=guarding and Enum.CameraType.Scriptable or Enum.CameraType.Custom
+        handoffCameraOwned=guarding
+        if guarding then input.MouseBehavior=Enum.MouseBehavior.LockCenter end
         camera.CFrame=savedView.CFrame+offset
         if savedView.Focus then camera.Focus=savedView.Focus+offset end
-        trace("IntroCameraRestored",function()return {BeforeFrame=beforeFrame,BeforeFocus=beforeFocus,BeforeType=beforeType,
-            AfterFrame=camera.CFrame,AfterFocus=camera.Focus,AfterType=tostring(camera.CameraType),Offset=offset,Intro=api.Snapshot()}end)
+        handoff.View={Camera=camera,CFrame=camera.CFrame,Focus=camera.Focus,RootPosition=root.Position}
+        handoff.Root=root
+        if logRestore then
+            trace("IntroCameraRestored",function()return {BeforeFrame=beforeFrame,BeforeFocus=beforeFocus,BeforeType=beforeType,
+                AfterFrame=camera.CFrame,AfterFocus=camera.Focus,AfterType=tostring(camera.CameraType),Offset=offset,Guarding=guarding,Intro=api.Snapshot()}end)
+        end
     end
     -- Follow ordinary movement, but retain the last pose across the native
     -- intro's abrupt reposition. Never carry a pose across a respawn.
@@ -1206,16 +1242,19 @@ local function createChapter2IntroSkip(d)
         local root=character and character:FindFirstChild("HumanoidRootPart")
         local humanoid=character and character:FindFirstChildOfClass("Humanoid")
         if not root or not humanoid or humanoid.Health<=0 then
+            releaseHandoffCamera();handoff.View=nil;handoff.Root=nil
             positionRoot,positionPose=nil,nil
             savedView=nil;cameraRestorePending=false
             return
         end
         if root~=positionRoot then
+            releaseHandoffCamera();handoff.View=nil;handoff.Root=nil
             positionRoot,positionPose=root,root.CFrame
             savedView=nil;cameraRestorePending=false
             if not done then rememberView(root)end
             return
         end
+        if done and d.CameraBusy and d.CameraBusy()then positionPose=root.CFrame;return end
         if positionRestored or(positionGuardUntil and d.Now()>positionGuardUntil)then return end
         local displaced=positionPose and(root.Position-positionPose.Position).Magnitude>20
         if attempts>0 and displaced then
@@ -1243,6 +1282,7 @@ local function createChapter2IntroSkip(d)
     function api.Snapshot()
         return {Running=alive,Pending=pending,Status=lastStatus,Attempts=attempts,PositionRestored=positionRestored,
             SavedRootPose=positionPose,SavedView=savedView,CameraRestorePending=cameraRestorePending==true,
+            ViewLocked=attempts>0,HandoffClaimed=handoff.Claimed==true,HandoffCameraOwned=handoffCameraOwned,
             CameraHandoffDone=cameraHandoffDone,CameraReleased=cameraReleased,ClickRunning=clickRunning,MouseHeld=clicked,
             GuardRemaining=positionGuardUntil and math.max(0,positionGuardUntil-d.Now()) or nil,
             BlackHidden=overlay and overlay.Parent and not overlay.Visible,CameraActive=cameraActive,
@@ -1253,6 +1293,8 @@ local function createChapter2IntroSkip(d)
         if not alive then return end
         trace("IntroStopped",function()return {Intro=api.Snapshot()}end)
         alive=false;pending=false
+        releaseHandoffCamera()
+        handoff.View=nil;handoff.Root=nil;handoff.Expires=nil
         positionRoot,positionPose=nil,nil
         savedView=nil;cameraRestorePending=false
         releaseMouse();releaseCamera("Intro controller stopped");restoreOverlay()
@@ -1263,6 +1305,7 @@ local function createChapter2IntroSkip(d)
         local done=player:GetAttribute("IntroCutsceneFinished")==true
         if done and not finishedAt then
             finishedAt=d.Now();positionGuardUntil=finishedAt+2
+            handoff.Expires=positionGuardUntil
             pending=false;releaseCamera("Intro confirmed")
             cameraHandoffDone=true
             cameraRestorePending=attempts>0 and savedView~=nil
@@ -1280,7 +1323,7 @@ local function createChapter2IntroSkip(d)
         if done then
             local visualsDone=not black or not fade or not fade.Enabled or black.BackgroundTransparency>=0.98 or d.Now()-finishedAt>=8
             if visualsDone then restoreOverlay()end
-            if visualsDone and not cameraRestorePending and(positionRestored or attempts==0 or d.Now()>=positionGuardUntil)then api.Stop()end
+            if visualsDone and(attempts==0 or d.Now()>=positionGuardUntil)then api.Stop()end
             return
         end
         if d.Now()-started>40 then status("Native intro Skip timed out");api.Stop();return end
@@ -1366,6 +1409,8 @@ local earlyIntroPending=false
 local earlyIntroDiagnostics
 local earlyIntroLastSnapshot
 local earlyIntroController
+local earlyIntroHandoff
+local earlyIntroCameraBusy
 local earlyIntroGeneration=0
 local earlyIntroUnloaded=false
 local earlyIntroBind="BeyyChapter2IntroBlackScreen_"..tostring(LocalPlayer.UserId)
@@ -1380,7 +1425,8 @@ local function startEarlyIntro()
     if earlyIntroUnloaded or earlyIntroController or LocalPlayer:GetAttribute("IntroCutsceneFinished")==true then return end
     earlyIntroGeneration+=1
     local generation=earlyIntroGeneration
-    local controller=createChapter2IntroSkip({Player=LocalPlayer,World=Workspace,Input=UserInputService,
+    earlyIntroHandoff={}
+    local controller=createChapter2IntroSkip({Player=LocalPlayer,World=Workspace,Input=UserInputService,Handoff=earlyIntroHandoff,
         Mouse=VirtualInputManager,Gui=GuiService,Now=os.clock,Spawn=task.spawn,Wait=task.wait,
         MenuOpen=function()return earlyIntroWindow and not earlyIntroWindow.Closed end,
         BeforeClick=function()
@@ -1392,6 +1438,7 @@ local function startEarlyIntro()
                 end
             end
         end,
+        CameraBusy=function()return earlyIntroCameraBusy and earlyIntroCameraBusy()or false end,
         Trace=function(kind,build)
             if earlyIntroDiagnostics then pcall(earlyIntroDiagnostics.ObserveIntro,kind,build)end
         end,
@@ -5001,10 +5048,11 @@ local function cutsceneResultsVisible()
     end
     return node == ending
 end
+earlyIntroCameraBusy=function()return needleBusy or leverRunning or colourRunning end
 local function shouldYieldCutsceneBypass()
     if hubUnloaded or cutsceneBridge.FinalEndingProtected or not hubWindow.Closed
         or needleBusy or LocalPlayer:GetAttribute("NeedleOwned") == true
-        or cutsceneResultsVisible() then return true end
+        or LocalPlayer:GetAttribute("NeedleRoundComplete")==true or cutsceneResultsVisible() then return true end
     -- Levers are confirmed locally before the server's CutsceneActive flag
     -- necessarily replicates. A brief post-lever grace makes the bypass start
     -- immediately instead of being blocked by allPuzzlesRunning.
@@ -5107,7 +5155,14 @@ local function launchCutsceneBypass()
             if ok2 then controls = obj end
             return controls
         end
+        local function pendingIntroView()
+            local h=earlyIntroHandoff
+            local hum=humanoid()
+            if hum and hum.Health>0 and h and not h.Claimed and h.Expires and os.clock()<h.Expires and h.Root==root()
+                and h.View and h.View.Camera==camera()then return h end
+        end
         local function rememberGameplay()
+            if pendingIntroView()then return end
             local hum = humanoid()
             if hum then
                 if hum.WalkSpeed > 0 then lastSavedSpeed = hum.WalkSpeed end
@@ -5157,6 +5212,20 @@ local function launchCutsceneBypass()
             pitch = clamp(lastNormalPitch or -0.16, -1.20, 1.05)
             cameraFirstPerson = normalFirstPerson or player.CameraMode == Enum.CameraMode.LockFirstPerson
             distance = clamp(lastNormalDistance or 0.6, 0.0, 22)
+            local handoff=pendingIntroView()
+            if handoff then
+                local view=handoff.View
+                local look=view.CFrame.LookVector
+                yaw=math.atan2(look.X,look.Z)
+                pitch=clamp(math.asin(math.clamp(look.Y,-1,1)),-1,0.85)
+                local focus=view.Focus and view.Focus.Position or(view.RootPosition+Vector3.new(0,1.6,0))
+                distance=clamp((view.CFrame.Position-focus).Magnitude,0.0,22)
+                cameraFirstPerson=distance<2.5
+                lastNormalYaw,lastNormalPitch,lastNormalDistance=yaw,pitch,distance
+                normalFirstPerson=cameraFirstPerson
+                handoff.Claimed=true
+                cutsceneDiagnostics.Record("IntroViewClaimed",function()return {View=view,Yaw=yaw,Pitch=pitch,Distance=distance,FirstPerson=cameraFirstPerson}end)
+            end
             log(string.format("Normal camera calibration: %s d=%.2f pitch=%.2f (no forced 6+ stud zoom)",
                 cameraFirstPerson and "FIRST PERSON" or "THIRD PERSON", distance, pitch))
             cameraErrorWarned = false
@@ -5551,6 +5620,16 @@ local function launchCutsceneBypass()
         end
         local function updateScene()
             if not alive then return end
+            if player:GetAttribute("NeedleRoundComplete")==true then
+                cutsceneBridge.FinalEndingProtected=true
+                cutsceneBridge.LeverUntil,cutsceneBridge.PuzzleUntil=0,0
+                cutsceneBridge.GemAim=nil
+                recoveryEnd=0;scene=nil;yieldingToEnding=true
+                restoreFinalCutsceneVisuals();restoreGameplayHud()
+                if active then disablePlayableCamera("Round complete; ending protected")end
+                cutsceneDiagnostics.Decision(function()return {Reason="Round complete; ending protected",Active=false}end)
+                return
+            end
             -- Needle and puzzle VIM routines own the camera. During Gem,
             -- recover cutscene movement/input and HUD, but NEVER restore or
             -- force a second camera over the Gem solver's targeting.
@@ -5663,7 +5742,8 @@ local function launchCutsceneBypass()
             end
         end))
         hook(player.AttributeChanged:Connect(function(attr)
-            if not cutsceneBridge.FinalEndingProtected and player:GetAttribute("IntroCutsceneFinished") == true then
+            if not cutsceneBridge.FinalEndingProtected and player:GetAttribute("NeedleRoundComplete")~=true
+                and player:GetAttribute("IntroCutsceneFinished") == true then
                 if attr == "CutsceneActive" and player:GetAttribute(attr) == true then
                     cutsceneBridge.LeverUntil = math.max(cutsceneBridge.LeverUntil, os.clock() + 6.5)
                 elseif attr == "Chapter2ReleaseActive" and player:GetAttribute(attr) == true then
@@ -5685,7 +5765,7 @@ local function launchCutsceneBypass()
                 introNeutralSeen = true
             end
             if attr == "CutsceneActive" or attr == "Chapter2ReleaseActive" or
-                attr == "IntroCutsceneFinished" or attr == "NeedleInputLocked" or attr == "NeedleOwned" then
+                attr == "IntroCutsceneFinished" or attr == "NeedleInputLocked" or attr == "NeedleOwned" or attr == "NeedleRoundComplete" then
                 task.defer(updateScene)
             end
         end))
@@ -5727,7 +5807,7 @@ local function launchCutsceneBypass()
                 if active then updateScene() end
                 releaseEndingCursor()
             end
-            if alive and enabled and colourRunning and not cutsceneBridge.FinalEndingProtected
+            if alive and enabled and colourRunning and not cutsceneBridge.FinalEndingProtected and player:GetAttribute("NeedleRoundComplete")~=true
                 and hubWindow.Closed == true and not yieldingToEnding
                 and (os.clock() < cutsceneBridge.LeverUntil
                     or os.clock() < cutsceneBridge.PuzzleUntil

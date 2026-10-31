@@ -1253,45 +1253,61 @@ local function createChapter2IntroSkip(d)
     return api
 end
 
--- Start before UI/config construction so the initial blackout is removed promptly.
+-- The saved CutsceneBypass toggle owns both the intro helper and later scenes.
 local earlyIntroWindow
-local earlyIntroStopped=false
 local earlyIntroPending=false
-local earlyIntroController=createChapter2IntroSkip({Player=LocalPlayer,World=Workspace,Input=UserInputService,
-    Mouse=VirtualInputManager,Gui=GuiService,Now=os.clock,Spawn=task.spawn,Wait=task.wait,
-    MenuOpen=function()return earlyIntroWindow and not earlyIntroWindow.Closed end,
-    BeforeClick=function()
-        local window=earlyIntroWindow
-        if window and not window.Destroyed and not window.Closed then
-            window:Close()
-            return function()if not window.Destroyed and not earlyIntroStopped then window:Open()end end
-        end
-    end,
-    Status=function(text)print("[Chapter2 Intro] "..text)end})
+local earlyIntroController
+local earlyIntroGeneration=0
+local earlyIntroUnloaded=false
 local earlyIntroBind="BeyyChapter2IntroBlackScreen_"..tostring(LocalPlayer.UserId)
 local function stopEarlyIntro()
-    earlyIntroStopped=true
-    earlyIntroController.Stop();earlyIntroPending=false
+    earlyIntroGeneration+=1
+    local controller=earlyIntroController
+    earlyIntroController=nil;earlyIntroPending=false
+    if controller then controller.Stop()end
     pcall(function()RunService:UnbindFromRenderStep(earlyIntroBind)end)
+end
+local function startEarlyIntro()
+    if earlyIntroUnloaded or earlyIntroController or LocalPlayer:GetAttribute("IntroCutsceneFinished")==true then return end
+    earlyIntroGeneration+=1
+    local generation=earlyIntroGeneration
+    local controller=createChapter2IntroSkip({Player=LocalPlayer,World=Workspace,Input=UserInputService,
+        Mouse=VirtualInputManager,Gui=GuiService,Now=os.clock,Spawn=task.spawn,Wait=task.wait,
+        MenuOpen=function()return earlyIntroWindow and not earlyIntroWindow.Closed end,
+        BeforeClick=function()
+            local window=earlyIntroWindow
+            if window and not window.Destroyed and not window.Closed then
+                window:Close()
+                return function()
+                    if not window.Destroyed and not earlyIntroUnloaded and generation==earlyIntroGeneration then window:Open()end
+                end
+            end
+        end,
+        Status=function(text)print("[Chapter2 Intro] "..text)end})
+    earlyIntroController=controller
+    RunService:BindToRenderStep(earlyIntroBind,Enum.RenderPriority.Last.Value+2100,function()
+        if generation~=earlyIntroGeneration then return end
+        local ok,err=pcall(controller.Render)
+        if not ok then warn("[Chapter2 Intro] Camera error: "..tostring(err));stopEarlyIntro()end
+    end)
+    task.spawn(function()
+        while generation==earlyIntroGeneration and controller.Snapshot().Running do
+            local ok,err=pcall(controller.Tick)
+            if not ok then warn("[Chapter2 Intro] Watcher error: "..tostring(err));break end
+            if generation~=earlyIntroGeneration then return end
+            earlyIntroPending=controller.Pending()
+            task.wait(0.035)
+        end
+        -- An older watcher must never stop a newly enabled intro helper.
+        if generation==earlyIntroGeneration then stopEarlyIntro()end
+    end)
 end
 local previousEarlyIntroCleanup=_G.__BEYY_HUB_CLEANUP
 _G.__BEYY_HUB_CLEANUP=function()
+    earlyIntroUnloaded=true
     stopEarlyIntro();stopPitchforkSelector()
     if previousEarlyIntroCleanup then previousEarlyIntroCleanup()end
 end
-RunService:BindToRenderStep(earlyIntroBind,Enum.RenderPriority.Last.Value+2100,function()
-    local ok,err=pcall(earlyIntroController.Render)
-    if not ok then warn("[Chapter2 Intro] Camera error: "..tostring(err));stopEarlyIntro()end
-end)
-task.spawn(function()
-    while earlyIntroController.Snapshot().Running do
-        local ok,err=pcall(earlyIntroController.Tick)
-        if not ok then warn("[Chapter2 Intro] Watcher error: "..tostring(err));stopEarlyIntro();break end
-        earlyIntroPending=earlyIntroController.Pending()
-        task.wait(0.035)
-    end
-    stopEarlyIntro()
-end)
 
 local function createAutoUpgradeRuntime(options)
     local config, configModule, pending
@@ -5599,6 +5615,7 @@ local function launchCutsceneBypass()
     return true
 end
 local function shutdownCutsceneBypass()
+    stopEarlyIntro()
     local stopFn = cutsceneBypassStop
     cutsceneBypassStop = nil
     if stopFn then pcall(stopFn) end
@@ -5621,10 +5638,11 @@ end
     overview:Section({ Title = "Cutscenes" })
     Registry.CutsceneBypass = overview:Toggle({
         Title = "Unskippable Cutscene Bypass", Value = false,
-        Desc = "Keep local camera and movement during flagged unskippable scenes. Server timers still apply; menus, intro/skip screens and automation take priority.",
+        Desc = "Chapter 2 intro black-screen/native Skip plus camera and movement during later unskippable scenes. Saved with your config; server timers still apply.",
         Callback = function(enabled)
             if enabled then
-                if not launchCutsceneBypass() then warn("[BeyyHub] Cutscene bypass could not start") end
+                if launchCutsceneBypass() then startEarlyIntro()
+                else warn("[BeyyHub] Cutscene bypass could not start") end
             else shutdownCutsceneBypass() end
         end,
     })

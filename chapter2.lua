@@ -1092,7 +1092,7 @@ local function createChapter2IntroSkip(d)
     local cameraHandoffDone=false
     local positionJumpLogged=false
     local handoff=d.Handoff or {}
-    local handoffCameraOwned,handoffInputReady=false,false
+    local handoffCameraOwned,handoffInputReady=false,0
     local api={}
     local function trace(kind,build)
         if d.Trace then d.Trace(kind,build)end
@@ -1168,15 +1168,21 @@ local function createChapter2IntroSkip(d)
         if overlay and overlay.Parent and overlayOriginal~=nil then pcall(function()overlay.Visible=overlayOriginal end)end
         overlay=black;overlayOriginal=black and black.Visible
     end
-    local function rememberView(root)
+    local function rememberView(root,ownWrite)
         local camera=world.CurrentCamera
-        if camera and camera.CFrame and not cameraHandoffDone and attempts==0 then
-            savedView={Camera=camera,CFrame=camera.CFrame,Focus=camera.Focus,RootPosition=root.Position}
-        end
+        if not camera or not camera.CFrame or cameraHandoffDone or attempts>0 then return end
+        -- Tick can run after a cinematic has overwritten this frame. Only accept
+        -- our completed render write, or a nearby normal gameplay camera.
+        if not ownWrite and(cameraActive or camera.CameraType~=Enum.CameraType.Custom)then return end
+        local focus=root.Position+Vector3.new(0,1.6,0)
+        local distance=(camera.CFrame.Position-focus).Magnitude
+        if distance~=distance or distance>12 then return end
+        savedView={Camera=camera,CFrame=camera.CFrame,Focus=CFrame.new(focus),RootPosition=root.Position,
+            Distance=math.clamp(distance,0.5,12)}
     end
     local function releaseHandoffCamera()
         if not handoffCameraOwned then return end
-        handoffCameraOwned=false
+        handoffCameraOwned=false;handoffInputReady=0
         if handoff.Claimed then return end
         local camera=world.CurrentCamera
         if savedView and camera==savedView.Camera then
@@ -1204,31 +1210,38 @@ local function createChapter2IntroSkip(d)
                 SameRoot=root==positionRoot,Health=humanoid and humanoid.Health,SameCamera=savedView and camera==savedView.Camera}end)
             return
         end
-        -- Own the short transition without reading a cinematic's view back.
-        -- Discard the first mouse delta after native Skip to avoid its synthetic move.
+        -- Orbit the character, never the game's cinematic Focus. Warm up the
+        -- locked mouse for two frames and reject synthetic cursor jumps.
+        if guarding then input.MouseBehavior=Enum.MouseBehavior.LockCenter end
         local delta=input:GetMouseDelta()
-        if guarding and handoffInputReady and not clickRunning and delta and not input:GetFocusedTextBox()
+        local synthetic=delta and(math.abs(delta.X)>120 or math.abs(delta.Y)>120)
+        if guarding and handoffInputReady>=2 and not clickRunning and delta and not synthetic and not input:GetFocusedTextBox()
             and(delta.X~=0 or delta.Y~=0)then
             local look=savedView.CFrame.LookVector
-            local viewYaw=math.atan2(look.X,look.Z)-delta.X*0.004
-            local viewPitch=math.clamp(math.asin(math.clamp(look.Y,-1,1))-delta.Y*0.004,-1,0.85)
+            local viewYaw=math.atan2(look.X,look.Z)-math.clamp(delta.X*0.004,-0.12,0.12)
+            local viewPitch=math.clamp(math.asin(math.clamp(look.Y,-1,1))-math.clamp(delta.Y*0.004,-0.12,0.12),-1,0.85)
             local cp=math.cos(viewPitch)
             local direction=Vector3.new(math.sin(viewYaw)*cp,math.sin(viewPitch),math.cos(viewYaw)*cp)
-            local focus=savedView.Focus and savedView.Focus.Position or(savedView.RootPosition+Vector3.new(0,1.6,0))
-            local viewDistance=(savedView.CFrame.Position-focus).Magnitude
-            savedView.CFrame=CFrame.lookAt(focus-direction*viewDistance,focus,Vector3.yAxis)
-            savedView.Focus=CFrame.new(focus)
+            savedView.CFrame=CFrame.lookAt(savedView.CFrame.Position,savedView.CFrame.Position+direction,Vector3.yAxis)
         end
-        handoffInputReady=true
+        handoffInputReady=math.min(2,handoffInputReady+1)
         local offset=root.Position-savedView.RootPosition
+        local focus=root.Position+Vector3.new(0,1.6,0)
+        local direction=savedView.CFrame.LookVector
+        local viewDistance=math.clamp(savedView.Distance or 4,0.5,12)
+        local desired=focus-direction*viewDistance
+        local params=RaycastParams.new()
+        params.FilterType=Enum.RaycastFilterType.Exclude;params.FilterDescendantsInstances={character};params.RespectCanCollide=true
+        local hit=world:Raycast(focus,desired-focus,params)
+        if hit then desired=focus-direction*math.max(0.45,math.min(viewDistance,(hit.Position-focus).Magnitude-0.3))end
         local beforeFrame,beforeFocus,beforeType=camera.CFrame,camera.Focus,tostring(camera.CameraType)
         camera.CameraSubject=humanoid
         camera.CameraType=guarding and Enum.CameraType.Scriptable or Enum.CameraType.Custom
         handoffCameraOwned=guarding
         if guarding then input.MouseBehavior=Enum.MouseBehavior.LockCenter end
-        camera.CFrame=savedView.CFrame+offset
-        if savedView.Focus then camera.Focus=savedView.Focus+offset end
-        handoff.View={Camera=camera,CFrame=camera.CFrame,Focus=camera.Focus,RootPosition=root.Position}
+        camera.CFrame=savedView.CFrame+(desired-savedView.CFrame.Position)
+        camera.Focus=CFrame.new(focus)
+        handoff.View={Camera=camera,CFrame=camera.CFrame,Focus=camera.Focus,RootPosition=root.Position,Distance=viewDistance}
         handoff.Root=root
         if logRestore then
             trace("IntroCameraRestored",function()return {BeforeFrame=beforeFrame,BeforeFocus=beforeFocus,BeforeType=beforeType,
@@ -1398,7 +1411,7 @@ local function createChapter2IntroSkip(d)
         camera.CameraType=Enum.CameraType.Scriptable
         if humanoid then camera.CameraSubject=humanoid end
         camera.CFrame=CFrame.lookAt(desired,target,Vector3.yAxis);camera.Focus=CFrame.new(target)
-        rememberView(root)
+        rememberView(root,true)
     end
     return api
 end
@@ -5218,8 +5231,7 @@ local function launchCutsceneBypass()
                 local look=view.CFrame.LookVector
                 yaw=math.atan2(look.X,look.Z)
                 pitch=clamp(math.asin(math.clamp(look.Y,-1,1)),-1,0.85)
-                local focus=view.Focus and view.Focus.Position or(view.RootPosition+Vector3.new(0,1.6,0))
-                distance=clamp((view.CFrame.Position-focus).Magnitude,0.0,22)
+                distance=clamp(view.Distance or 4,0.5,12)
                 cameraFirstPerson=distance<2.5
                 lastNormalYaw,lastNormalPitch,lastNormalDistance=yaw,pitch,distance
                 normalFirstPerson=cameraFirstPerson

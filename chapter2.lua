@@ -1090,11 +1090,16 @@ local function createChapter2IntroSkip(d)
     local positionRestored=false
     local savedView,cameraRestorePending
     local cameraHandoffDone=false
+    local positionJumpLogged=false
     local api={}
+    local function trace(kind,build)
+        if d.Trace then d.Trace(kind,build)end
+    end
     local function status(text)
         if text==lastStatus then return end
         lastStatus=text
         if d.Status then d.Status(text)end
+        trace("IntroStatus",function()return {Status=text,Intro=api.Snapshot and api.Snapshot()}end)
     end
     local function visible(element)
         local node=element
@@ -1169,21 +1174,30 @@ local function createChapter2IntroSkip(d)
     end
     local function restoreView()
         if not cameraRestorePending then return end
-        if positionGuardUntil and d.Now()>positionGuardUntil then cameraRestorePending=false;return end
+        if positionGuardUntil and d.Now()>positionGuardUntil then
+            cameraRestorePending=false;trace("IntroCameraRestoreSkipped",{Reason="Handoff window expired"});return
+        end
         if d.MenuOpen and d.MenuOpen()then return end
         local character=player.Character
         local root=character and character:FindFirstChild("HumanoidRootPart")
         local humanoid=character and character:FindFirstChildOfClass("Humanoid")
         local camera=world.CurrentCamera
         cameraRestorePending=false
-        if not savedView or root~=positionRoot or not humanoid or humanoid.Health<=0 or camera~=savedView.Camera then return end
+        if not savedView or root~=positionRoot or not humanoid or humanoid.Health<=0 or camera~=savedView.Camera then
+            trace("IntroCameraRestoreSkipped",function()return {Reason="Saved view/character/camera is no longer valid",HasSavedView=savedView~=nil,
+                SameRoot=root==positionRoot,Health=humanoid and humanoid.Health,SameCamera=savedView and camera==savedView.Camera}end)
+            return
+        end
         -- Translate with the player while keeping the saved rotation and zoom.
         -- Write once after the normal camera update, then leave mouse look free.
         local offset=root.Position-savedView.RootPosition
+        local beforeFrame,beforeFocus,beforeType=camera.CFrame,camera.Focus,tostring(camera.CameraType)
         camera.CameraSubject=humanoid
         camera.CameraType=Enum.CameraType.Custom
         camera.CFrame=savedView.CFrame+offset
         if savedView.Focus then camera.Focus=savedView.Focus+offset end
+        trace("IntroCameraRestored",function()return {BeforeFrame=beforeFrame,BeforeFocus=beforeFocus,BeforeType=beforeType,
+            AfterFrame=camera.CFrame,AfterFocus=camera.Focus,AfterType=tostring(camera.CameraType),Offset=offset,Intro=api.Snapshot()}end)
     end
     -- Follow ordinary movement, but retain the last pose across the native
     -- intro's abrupt reposition. Never carry a pose across a respawn.
@@ -1205,8 +1219,15 @@ local function createChapter2IntroSkip(d)
         if positionRestored or(positionGuardUntil and d.Now()>positionGuardUntil)then return end
         local displaced=positionPose and(root.Position-positionPose.Position).Magnitude>20
         if attempts>0 and displaced then
+            if not positionJumpLogged then
+                positionJumpLogged=true
+                trace("IntroPositionJump",function()return {BeforeCorrection=root.CFrame,SavedPose=positionPose,
+                    Distance=(root.Position-positionPose.Position).Magnitude,Confirmed=done,Intro=api.Snapshot()}end)
+            end
             if done and positionGuardUntil then
+                local before=root.CFrame
                 root.CFrame=positionPose
+                trace("IntroPositionRestored",function()return {Before=before,After=root.CFrame,SavedView=savedView,Intro=api.Snapshot()}end)
                 positionRestored=true
                 cameraRestorePending=savedView~=nil
                 status("Kept position and view through native intro completion")
@@ -1215,17 +1236,22 @@ local function createChapter2IntroSkip(d)
             -- Keep the pre-reset pose until that confirmation arrives.
             return
         end
+        positionJumpLogged=false
         positionPose=root.CFrame
         if not done then rememberView(root)end
     end
     function api.Snapshot()
         return {Running=alive,Pending=pending,Status=lastStatus,Attempts=attempts,PositionRestored=positionRestored,
+            SavedRootPose=positionPose,SavedView=savedView,CameraRestorePending=cameraRestorePending==true,
+            CameraHandoffDone=cameraHandoffDone,CameraReleased=cameraReleased,ClickRunning=clickRunning,MouseHeld=clicked,
+            GuardRemaining=positionGuardUntil and math.max(0,positionGuardUntil-d.Now()) or nil,
             BlackHidden=overlay and overlay.Parent and not overlay.Visible,CameraActive=cameraActive,
             IntroFinished=player:GetAttribute("IntroCutsceneFinished"),Elapsed=d.Now()-started}
     end
     function api.Pending()return pending end
     function api.Stop()
         if not alive then return end
+        trace("IntroStopped",function()return {Intro=api.Snapshot()}end)
         alive=false;pending=false
         positionRoot,positionPose=nil,nil
         savedView=nil;cameraRestorePending=false
@@ -1240,6 +1266,7 @@ local function createChapter2IntroSkip(d)
             pending=false;releaseCamera("Intro confirmed")
             cameraHandoffDone=true
             cameraRestorePending=attempts>0 and savedView~=nil
+            trace("IntroConfirmed",function()return {Intro=api.Snapshot()}end)
         end
         preserveIntroPosition(done)
         if positionGuardUntil and d.Now()>positionGuardUntil then cameraRestorePending=false end
@@ -1274,6 +1301,7 @@ local function createChapter2IntroSkip(d)
             and(attempts==0 or d.Now()-lastAttempt>=1)then
             attempts+=1;lastAttempt=d.Now();clickRunning=true
             local attempt=attempts
+            trace("IntroSkipAttempt",function()return {Attempt=attempt,Intro=api.Snapshot()}end)
             d.Spawn(function()
                 local restorePanel
                 local ok,err=pcall(function()
@@ -1287,6 +1315,7 @@ local function createChapter2IntroSkip(d)
                     d.Wait(0.035)
                     if not safeToSkip(skip)then return end
                     d.Mouse:SendMouseButtonEvent(clickX,clickY,0,true,game,0);clicked=true
+                    trace("IntroSkipMouseDown",{Attempt=attempt,X=clickX,Y=clickY,UsesInset=attempt==1})
                     d.Wait(0.075)
                 end)
                 releaseMouse()
@@ -1334,6 +1363,8 @@ end
 -- The saved CutsceneBypass toggle owns both the intro helper and later scenes.
 local earlyIntroWindow
 local earlyIntroPending=false
+local earlyIntroDiagnostics
+local earlyIntroLastSnapshot
 local earlyIntroController
 local earlyIntroGeneration=0
 local earlyIntroUnloaded=false
@@ -1342,7 +1373,7 @@ local function stopEarlyIntro()
     earlyIntroGeneration+=1
     local controller=earlyIntroController
     earlyIntroController=nil;earlyIntroPending=false
-    if controller then controller.Stop()end
+    if controller then controller.Stop();earlyIntroLastSnapshot=controller.Snapshot()end
     pcall(function()RunService:UnbindFromRenderStep(earlyIntroBind)end)
 end
 local function startEarlyIntro()
@@ -1360,6 +1391,9 @@ local function startEarlyIntro()
                     if not window.Destroyed and not earlyIntroUnloaded and generation==earlyIntroGeneration then window:Open()end
                 end
             end
+        end,
+        Trace=function(kind,build)
+            if earlyIntroDiagnostics then pcall(earlyIntroDiagnostics.ObserveIntro,kind,build)end
         end,
         Status=function(text)print("[Chapter2 Intro] "..text)end})
     earlyIntroController=controller
@@ -4728,6 +4762,11 @@ local function createCutsceneDiagnostics(options)
     local expectedCamera,expectedFrame,lastWrite=nil,nil,nil
     local errors,lastDecisionKey=0,nil
     local lastCameraError=-math.huge
+    local capacity=2048
+    local nextSample,postIntroUntil=0,0
+    local postIntroFrame
+    local attributeConnection
+    local attributes={}
     local path=CACHE_FOLDER.."/"..tostring(__BEYY_MODULE):lower().."_cutscene_diagnostics.json"
     local function value(item,depth,seen)
         local kind=typeof(item)
@@ -4735,14 +4774,15 @@ local function createCutsceneDiagnostics(options)
         if kind=="number"then return item==item and math.abs(item)<math.huge and item or tostring(item)end
         if kind=="string"then return item:sub(1,768)end
         if kind=="Vector3"then return {X=item.X,Y=item.Y,Z=item.Z}end
-        if kind=="Instance"then return {Name=item.Name,Class=item.ClassName}end
+        if kind=="CFrame"then return {Position=value(item.Position),LookVector=value(item.LookVector),UpVector=value(item.UpVector),Components={item:GetComponents()}}end
+        if kind=="Instance"then return {Name=item.Name,Class=item.ClassName,Path=item:GetFullName()}end
         if kind~="table"then return "<"..kind..">"end
         depth=depth or 0;seen=seen or {}
-        if depth>=5 or seen[item]then return "<bounded>"end
+        if depth>=8 or seen[item]then return "<bounded>"end
         seen[item]=true
         local result,total={},0
         for key,child in pairs(item)do
-            total+=1;if total>40 then break end
+            total+=1;if total>80 then break end
             if type(key)=="string"or type(key)=="number"then result[key]=value(child,depth+1,seen)end
         end
         seen[item]=nil;return result
@@ -4758,8 +4798,8 @@ local function createCutsceneDiagnostics(options)
         if not ok then errors+=1;data={DiagnosticError=tostring(data):sub(1,512)}end
         sequence+=1
         local event={Sequence=sequence,At=os.clock(),Kind=kind,Data=data}
-        if count<256 then ring[(head+count-1)%256+1]=event;count+=1
-        else ring[head]=event;head=head%256+1;dropped+=1 end
+        if count<capacity then ring[(head+count-1)%capacity+1]=event;count+=1
+        else ring[head]=event;head=head%capacity+1;dropped+=1 end
         dirty=true
     end
     function api.Decision(build)
@@ -4770,20 +4810,43 @@ local function createCutsceneDiagnostics(options)
         api.LastDecision=tostring(data.Reason)
         if key~=lastDecisionKey then lastDecisionKey=key;api.Record("Decision",data)end
     end
+    function api.ObserveIntro(kind,build)
+        if not api.Enabled()then return end
+        api.Record(kind,build)
+        if kind=="IntroCameraRestored"then
+            local camera=options.World.CurrentCamera
+            postIntroFrame=camera and camera.CFrame
+            postIntroUntil=os.clock()+2;nextSample=0
+        end
+    end
+    local function disconnectAttributes()
+        if attributeConnection then attributeConnection:Disconnect();attributeConnection=nil end
+        attributes={}
+    end
+    local function watchAttributes()
+        disconnectAttributes()
+        attributes=options.Player:GetAttributes()
+        attributeConnection=options.Player.AttributeChanged:Connect(function(name)
+            local before,after=attributes[name],options.Player:GetAttribute(name)
+            attributes[name]=after
+            api.Record("PlayerAttributeChanged",function()return {Name=name,Before=before,After=after,
+                BeforeWasNil=before==nil,AfterIsNil=after==nil,Context=options.Base()}end)
+        end)
+    end
     function api.ClearCamera()expectedCamera,expectedFrame,lastWrite=nil,nil,nil end
     function api.CameraWritten(camera,frame)
         if api.Enabled()then expectedCamera,expectedFrame,lastWrite=camera,frame,os.clock()end
     end
     function api.Snapshot()
         local events={}
-        for index=1,count do events[index]=ring[(head+index-2)%256+1]end
+        for index=1,count do events[index]=ring[(head+index-2)%capacity+1]end
         local ok,current=pcall(function()
             return value({Base=options.Base(),Controller=api.Probe and api.Probe()or {Installed=false},
                 LastCameraWriteAt=lastWrite,LastDecision=api.LastDecision})
         end)
-        return {Schema=1,Module=__BEYY_MODULE,PlaceId=game.PlaceId,JobId=game.JobId,UserId=options.Player.UserId,
+        return {Schema=2,Module=__BEYY_MODULE,PlaceId=game.PlaceId,JobId=game.JobId,UserId=options.Player.UserId,
             ExportedAt=os.time(),Enabled=api.Enabled(),TotalEvents=sequence,DroppedEvents=dropped,
-            DiagnosticErrors=errors,Capacity=256,Current=ok and current or {DiagnosticError=tostring(current):sub(1,512)},Events=events}
+            DiagnosticErrors=errors,Capacity=capacity,Current=ok and current or {DiagnosticError=tostring(current):sub(1,512)},Events=events}
     end
     local status=options.Tab:Paragraph({Title="Cutscene Diagnostics Status",Desc="Off; no diagnostic capture"})
     local function export(manual)
@@ -4800,6 +4863,18 @@ local function createCutsceneDiagnostics(options)
     end
     function api.Tick()
         if not api.Enabled()then return end
+        local now=os.clock()
+        if now>=nextSample then
+            local watching=now<postIntroUntil
+            nextSample=now+(watching and 0.1 or 0.5)
+            api.Record(watching and "PostIntroCameraSample"or "StateSample",function()
+                local camera=options.World.CurrentCamera
+                return {Base=options.Base(),Controller=api.Probe and api.Probe(),LastDecision=api.LastDecision,
+                    SinceRestorePositionDelta=watching and camera and postIntroFrame and(camera.CFrame.Position-postIntroFrame.Position).Magnitude or nil,
+                    SinceRestoreLookDot=watching and camera and postIntroFrame and camera.CFrame.LookVector:Dot(postIntroFrame.LookVector)or nil,
+                    Note=watching and "Camera change observed after restoration; ordinary movement/mouse look may also change this"or nil}
+            end)
+        end
         if expectedFrame and os.clock()-lastMismatch>=2 then
             local ok,mismatch=pcall(function()
                 local camera=options.World.CurrentCamera
@@ -4814,12 +4889,16 @@ local function createCutsceneDiagnostics(options)
             if ok and mismatch then lastMismatch=os.clock();api.Record("CameraMismatch",mismatch)end
         end
         if dirty and os.clock()>=nextSave then nextSave=os.clock()+5;export(false)end
-        status:SetDesc("Capturing | "..count.."/256 events | "..dropped.." overwritten | "..api.LastDecision)
+        status:SetDesc("Capturing | "..count.."/"..capacity.." events | "..dropped.." overwritten | "..api.LastDecision)
     end
     local function pump()
         if pumping then return end;pumping=true
         task.spawn(function()
-            while api.Enabled()do pcall(api.Tick);task.wait(0.5)end
+            while api.Enabled()do
+                local ok,err=pcall(api.Tick)
+                if not ok then errors+=1;api.Record("DiagnosticTickError",{Error=tostring(err)})end
+                task.wait(os.clock()<postIntroUntil and 0.1 or 0.5)
+            end
             pumping=false
         end)
     end
@@ -4827,10 +4906,12 @@ local function createCutsceneDiagnostics(options)
         Callback=function(state)
             enabled=state==true
             if enabled then
-                nextSave=os.clock()+5;lastDecisionKey=nil
+                nextSave=os.clock()+5;nextSample=0;lastDecisionKey=nil
+                watchAttributes()
                 api.Record("DiagnosticsEnabled",function()return {Current=options.Base()}end)
                 pump()
             else
+                disconnectAttributes();postIntroFrame=nil;postIntroUntil=0
                 api.ClearCamera()
                 if dirty then export(false)end
                 status:SetDesc("Off; "..count.." recent events retained")
@@ -4839,11 +4920,46 @@ local function createCutsceneDiagnostics(options)
     options.Tab:Button({Title="Export Cutscene Diagnostics",Callback=api.Export})
     function api.Stop()
         if dirty then export(false)end
+        disconnectAttributes();postIntroFrame=nil;postIntroUntil=0
         alive=false;enabled=false;api.Probe=nil;api.ClearCamera()
     end
     return api
 end
 
+local function cutsceneGuiSnapshot()
+    local pg=LocalPlayer:FindFirstChildOfClass("PlayerGui")
+    local fade=pg and pg:FindFirstChild("CutsceneFade")
+    local black=fade and fade:FindFirstChild("Black",true)
+    local holder=fade and fade:FindFirstChild("SkipCutsceneButton",true)
+    local skip=holder and holder:FindFirstChild("Button",true)
+    local ending=pg and pg:FindFirstChild("NeedleEndingUI")
+    local results=ending and ending:FindFirstChild("ReturnToLobby",true)
+    local function state(object)
+        if not object then return {Present=false}end
+        local data={Present=true,Object=object,EffectiveVisible=true,Ancestors={}}
+        local node=object
+        while node and node~=pg do
+            local entry={Name=node.Name,Class=node.ClassName}
+            if node:IsA("GuiObject")then
+                entry.Visible=node.Visible
+                if not node.Visible then data.EffectiveVisible=false end
+            elseif node:IsA("ScreenGui")then
+                entry.Enabled=node.Enabled
+                if not node.Enabled then data.EffectiveVisible=false end
+            end
+            table.insert(data.Ancestors,entry)
+            if #data.Ancestors>=12 then break end
+            node=node.Parent
+        end
+        if object:IsA("GuiObject")then
+            data.Position={X=object.AbsolutePosition.X,Y=object.AbsolutePosition.Y}
+            data.Size={X=object.AbsoluteSize.X,Y=object.AbsoluteSize.Y}
+            data.BackgroundTransparency=object.BackgroundTransparency
+        end
+        return data
+    end
+    return {Fade=state(fade),Black=state(black),Skip=state(skip),Ending=state(ending),ReturnToLobby=state(results)}
+end
 local cutsceneDiagnostics=createCutsceneDiagnostics({
     Player=LocalPlayer,World=Workspace,Http=game:GetService("HttpService"),Tab=DiagnosticsTab,Registry=Registry,
     Alive=function()return not hubUnloaded end,Write=safeWrite,
@@ -4859,9 +4975,17 @@ local cutsceneDiagnostics=createCutsceneDiagnostics({
             Position=root and root.Position,WalkSpeed=humanoid and humanoid.WalkSpeed,JumpPower=humanoid and humanoid.JumpPower,
             PlatformStand=humanoid and humanoid.PlatformStand,Sit=humanoid and humanoid.Sit,
             CameraType=camera and tostring(camera.CameraType),CameraPosition=camera and camera.CFrame.Position,
-            MouseBehavior=tostring(UserInputService.MouseBehavior)}
+            MouseBehavior=tostring(UserInputService.MouseBehavior),
+            RootCFrame=root and root.CFrame,RootLinearVelocity=root and root.AssemblyLinearVelocity,RootAngularVelocity=root and root.AssemblyAngularVelocity,
+            Health=humanoid and humanoid.Health,AutoRotate=humanoid and humanoid.AutoRotate,MoveDirection=humanoid and humanoid.MoveDirection,
+            CameraCFrame=camera and camera.CFrame,CameraFocus=camera and camera.Focus,CameraSubject=camera and camera.CameraSubject,
+            CameraFieldOfView=camera and camera.FieldOfView,CameraMode=tostring(LocalPlayer.CameraMode),Attributes=LocalPlayer:GetAttributes(),Gui=cutsceneGuiSnapshot(),
+            IntroController=earlyIntroController and earlyIntroController.Snapshot() or earlyIntroLastSnapshot,
+            IntroControllerInstalled=earlyIntroController~=nil,IntroPending=earlyIntroPending,IntroHelperUnloaded=earlyIntroUnloaded,
+            Note="Snapshots show observed state; they do not identify which script changed a camera or attribute."}
     end,
 })
+earlyIntroDiagnostics=cutsceneDiagnostics
 local function cutsceneResultsVisible()
     local pg = LocalPlayer:FindFirstChildOfClass("PlayerGui")
     local ending = pg and pg:FindFirstChild("NeedleEndingUI")

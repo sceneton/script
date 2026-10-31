@@ -2596,10 +2596,11 @@ end
     end
     spawnChapterWorker(function()
         while not hubUnloaded do
-            task.wait(math.max(0.2,tonumber(sharedFarmState.NeedleInterval) or 1))
+            task.wait(0.25) -- Retry unconfirmed turn-ins independently of pickup/search timing.
             if needleFolder and not farmBlocked() and sharedFarmState.AutoHandInNeedle
                 and not needleBusy and not handInBusy
-                and LocalPlayer:GetAttribute("NeedleOwned")==true then
+                and LocalPlayer:GetAttribute("NeedleOwned")==true
+                and LocalPlayer:GetAttribute("NeedleRoundComplete")~=true then
                 handInBusy = true
                 local ok, err = pcall(function()
                     local root = farmRoot()
@@ -2611,12 +2612,15 @@ end
                             return
                         end
                         local destination = laser:GetPivot().Position - Vector3.new(0, 2.5, 0)
-                        root.CFrame = CFrame.new(destination) * root.CFrame.Rotation
-                        root.AssemblyLinearVelocity = Vector3.zero
-                        root.AssemblyAngularVelocity = Vector3.zero
-                        task.wait(0.2)
+                        if (root.Position-destination).Magnitude>5 then
+                            root.CFrame = CFrame.new(destination) * root.CFrame.Rotation
+                            root.AssemblyLinearVelocity = Vector3.zero
+                            root.AssemblyAngularVelocity = Vector3.zero
+                            task.wait(0.2) -- Settle only after moving, not on every retry.
+                        end
                         if hubUnloaded or farmBlocked() or not sharedFarmState.AutoHandInNeedle
-                            or LocalPlayer:GetAttribute("NeedleOwned") ~= true then return end
+                            or LocalPlayer:GetAttribute("NeedleOwned") ~= true
+                            or LocalPlayer:GetAttribute("NeedleRoundComplete")==true then return end
                         if cutsceneBridge.ProtectEnding then cutsceneBridge.ProtectEnding()
                         else cutsceneBridge.FinalEndingProtected = true end
                         keyDiagnostics.Record("HandInRequest",function()return {Owned=LocalPlayer:GetAttribute("NeedleOwned"),FinalEndingProtected=cutsceneBridge.FinalEndingProtected}end)
@@ -2624,15 +2628,8 @@ end
                             handInWarning("NeedleHandIn remote unavailable or send failed")
                             return
                         end
-                        local deadline = os.clock() + 1.5
-                        while not hubUnloaded and LocalPlayer:GetAttribute("NeedleOwned")==true
-                            and os.clock() < deadline do
-                            task.wait(0.05)
-                        end
-                        if not hubUnloaded and LocalPlayer:GetAttribute("NeedleOwned")==true then
-                            keyDiagnostics.Status("HandIn","No server confirmation; retry pending")
-                            handInWarning("no server confirmation; will retry from beneath Laser")
-                        end
+                        keyDiagnostics.Status("HandIn","Request sent; retry in 0.25s unless confirmed")
+
                     else
                         local npc = Workspace:FindFirstChild("NPC")
                         local farmer = npc and npc:FindFirstChild("Farmer_NPC")

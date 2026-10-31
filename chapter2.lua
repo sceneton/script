@@ -1088,6 +1088,8 @@ local function createChapter2IntroSkip(d)
     local lastStatus="Starting"
     local positionRoot,positionPose,positionGuardUntil
     local positionRestored=false
+    local savedView,cameraRestorePending
+    local cameraHandoffDone=false
     local api={}
     local function status(text)
         if text==lastStatus then return end
@@ -1159,6 +1161,30 @@ local function createChapter2IntroSkip(d)
         if overlay and overlay.Parent and overlayOriginal~=nil then pcall(function()overlay.Visible=overlayOriginal end)end
         overlay=black;overlayOriginal=black and black.Visible
     end
+    local function rememberView(root)
+        local camera=world.CurrentCamera
+        if camera and camera.CFrame and not cameraHandoffDone then
+            savedView={Camera=camera,CFrame=camera.CFrame,Focus=camera.Focus,RootPosition=root.Position}
+        end
+    end
+    local function restoreView()
+        if not cameraRestorePending then return end
+        if positionGuardUntil and d.Now()>positionGuardUntil then cameraRestorePending=false;return end
+        if d.MenuOpen and d.MenuOpen()then return end
+        local character=player.Character
+        local root=character and character:FindFirstChild("HumanoidRootPart")
+        local humanoid=character and character:FindFirstChildOfClass("Humanoid")
+        local camera=world.CurrentCamera
+        cameraRestorePending=false
+        if not savedView or root~=positionRoot or not humanoid or humanoid.Health<=0 or camera~=savedView.Camera then return end
+        -- Translate with the player while keeping the saved rotation and zoom.
+        -- Write once after the normal camera update, then leave mouse look free.
+        local offset=root.Position-savedView.RootPosition
+        camera.CameraSubject=humanoid
+        camera.CameraType=Enum.CameraType.Custom
+        camera.CFrame=savedView.CFrame+offset
+        if savedView.Focus then camera.Focus=savedView.Focus+offset end
+    end
     -- Follow ordinary movement, but retain the last pose across the native
     -- intro's abrupt reposition. Never carry a pose across a respawn.
     local function preserveIntroPosition(done)
@@ -1167,10 +1193,13 @@ local function createChapter2IntroSkip(d)
         local humanoid=character and character:FindFirstChildOfClass("Humanoid")
         if not root or not humanoid or humanoid.Health<=0 then
             positionRoot,positionPose=nil,nil
+            savedView=nil;cameraRestorePending=false
             return
         end
         if root~=positionRoot then
             positionRoot,positionPose=root,root.CFrame
+            savedView=nil;cameraRestorePending=false
+            if not done then rememberView(root)end
             return
         end
         if positionRestored or(positionGuardUntil and d.Now()>positionGuardUntil)then return end
@@ -1179,13 +1208,15 @@ local function createChapter2IntroSkip(d)
             if done and positionGuardUntil then
                 root.CFrame=positionPose
                 positionRestored=true
-                status("Kept current position through native intro completion")
+                cameraRestorePending=savedView~=nil
+                status("Kept position and view through native intro completion")
             end
             -- A reset can precede IntroCutsceneFinished by one replication tick.
             -- Keep the pre-reset pose until that confirmation arrives.
             return
         end
         positionPose=root.CFrame
+        if not done then rememberView(root)end
     end
     function api.Snapshot()
         return {Running=alive,Pending=pending,Status=lastStatus,Attempts=attempts,PositionRestored=positionRestored,
@@ -1197,6 +1228,7 @@ local function createChapter2IntroSkip(d)
         if not alive then return end
         alive=false;pending=false
         positionRoot,positionPose=nil,nil
+        savedView=nil;cameraRestorePending=false
         releaseMouse();releaseCamera("Intro controller stopped");restoreOverlay()
     end
     function api.Tick()
@@ -1206,8 +1238,11 @@ local function createChapter2IntroSkip(d)
         if done and not finishedAt then
             finishedAt=d.Now();positionGuardUntil=finishedAt+2
             pending=false;releaseCamera("Intro confirmed")
+            cameraHandoffDone=true
+            cameraRestorePending=attempts>0 and savedView~=nil
         end
         preserveIntroPosition(done)
+        if positionGuardUntil and d.Now()>positionGuardUntil then cameraRestorePending=false end
         local _,fade,black,_,skip=objects()
         if black and black:IsA("GuiObject")then
             setOverlay(black)
@@ -1218,7 +1253,7 @@ local function createChapter2IntroSkip(d)
         if done then
             local visualsDone=not black or not fade or not fade.Enabled or black.BackgroundTransparency>=0.98 or d.Now()-finishedAt>=8
             if visualsDone then restoreOverlay()end
-            if visualsDone and(positionRestored or attempts==0 or d.Now()>=positionGuardUntil)then api.Stop()end
+            if visualsDone and not cameraRestorePending and(positionRestored or attempts==0 or d.Now()>=positionGuardUntil)then api.Stop()end
             return
         end
         if d.Now()-started>40 then status("Native intro Skip timed out");api.Stop();return end
@@ -1265,7 +1300,8 @@ local function createChapter2IntroSkip(d)
         if not alive or ending()then return end
         -- Keep sampling even after yielding the camera to the native Skip button.
         -- Tick owns the confirmation/restore so render and replication order agree.
-        if player:GetAttribute("IntroCutsceneFinished")~=true then preserveIntroPosition(false)end
+        if player:GetAttribute("IntroCutsceneFinished")~=true then preserveIntroPosition(false)
+        else restoreView()end
         if not cameraActive or cameraReleased then return end
         if player:GetAttribute("IntroCutsceneFinished")==true then releaseCamera("Intro confirmed");return end
         if d.MenuOpen and d.MenuOpen()then return end
@@ -1290,6 +1326,7 @@ local function createChapter2IntroSkip(d)
         camera.CameraType=Enum.CameraType.Scriptable
         if humanoid then camera.CameraSubject=humanoid end
         camera.CFrame=CFrame.lookAt(desired,target,Vector3.yAxis);camera.Focus=CFrame.new(target)
+        rememberView(root)
     end
     return api
 end

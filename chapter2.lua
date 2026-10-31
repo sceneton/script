@@ -629,6 +629,7 @@ end
 -- Optional bounded local feature traces. Observers never send input or gameplay requests.
 local function createFeatureDiagnostics(options)
     local api={Probe=nil,Remote=nil}
+    local capacity=math.clamp(math.floor(tonumber(options.Capacity)or 256),256,8192)
     local enabled,alive,pumping=false,true,false
     local ring,head,count,total,dropped={},1,0,0,0
     local dirty,nextSave,lastState=false,0,nil
@@ -663,8 +664,8 @@ local function createFeatureDiagnostics(options)
         if not ok then errors+=1;return end
         total+=1;counters[kind]=(counters[kind]or 0)+1
         local event={Sequence=total,At=os.clock(),Kind=kind,Data=data}
-        if count<256 then ring[(head+count-1)%256+1]=event;count+=1
-        else ring[head]=event;head=head%256+1;dropped+=1 end
+        if count<capacity then ring[(head+count-1)%capacity+1]=event;count+=1
+        else ring[head]=event;head=head%capacity+1;dropped+=1 end
         dirty=true
     end
     function api.Status(stage,message)
@@ -689,9 +690,9 @@ local function createFeatureDiagnostics(options)
     end
     local status=options.Tab:Paragraph({Title=options.Title.." Status",Desc="Off; no diagnostic capture"})
     local function export(manual)
-        local events={};for i=1,count do events[i]=ring[(head+i-2)%256+1]end
+        local events={};for i=1,count do events[i]=ring[(head+i-2)%capacity+1]end
         local ok,json=pcall(function()return http:JSONEncode({Schema=1,Module=__BEYY_MODULE,Feature=options.Title,
-            PlaceId=game.PlaceId,JobId=game.JobId,ExportedAt=os.time(),Enabled=api.Enabled(),Capacity=256,
+            PlaceId=game.PlaceId,JobId=game.JobId,ExportedAt=os.time(),Enabled=api.Enabled(),Capacity=capacity,
             TotalEvents=total,DroppedEvents=dropped,DiagnosticErrors=errors,Counters=counters,Events=events,
             Current=api.Snapshot(),Interpretation="Requests are attempts. Observed feedback is not automatically credited to this automation."})end)
         if not ok then errors+=1;return end
@@ -715,6 +716,7 @@ local function createFeatureDiagnostics(options)
             feedbackConnection=remote.OnClientEvent:Connect(function(...)
                 local args=table.pack(...)
                 local argumentCount=args.n;args.n=nil
+                if options.OnFeedback then pcall(options.OnFeedback,args,argumentCount)end
                 if args[1]=="Hit"and args[2]~=options.Player.UserId then
                     if os.clock()<nextOtherFeedback then counters.SuppressedOtherFeedback=(counters.SuppressedOtherFeedback or 0)+1;return end
                     nextOtherFeedback=os.clock()+1
@@ -734,7 +736,7 @@ local function createFeatureDiagnostics(options)
                     local key=http:JSONEncode(current.Feature or {})
                     if key~=lastState then lastState=key;api.Record("StateChanged",current)end
                     if dirty and os.clock()>=nextSave then nextSave=os.clock()+5;export(false)end
-                    status:SetDesc("Capturing | "..count.."/256 events | "..dropped.." overwritten | "..lastStatus)
+                    status:SetDesc("Capturing | "..count.."/"..capacity.." events | "..dropped.." overwritten | "..lastStatus)
                 end)
                 if not ok then errors+=1 end
                 task.wait(0.5)
@@ -1821,6 +1823,18 @@ local workerWake=createWorkerWake(game:GetService("Players").LocalPlayer)
     toolsTab:Section({ Title="Auto Tool Usage" })
     toolsTab:Paragraph({ Title="Tools operate when the chapter supplies the required hay and tool remotes." })
     farmToggle(toolsTab,"AutoUseTNT","Auto Use TNT")
+    local tntTraceReply,tntTraceAttempt
+    local tntDiagnostics=createFeatureDiagnostics({Tab=DiagnosticsTab,Registry=Registry,Title="Auto TNT Diagnostics",
+        Key="AutoTntDiagnostics",File="chapter2_auto_tnt_diagnostics",Capacity=2048,Player=LocalPlayer,
+        Alive=function()return not hubUnloaded end,Menu=function()return hubWindow.Closed end,Write=safeWrite,
+        OnFeedback=function(args)
+            if args[1]=="lit"or args[1]=="denied"then
+                tntTraceReply={Action=args[1],Value=args[2],At=os.clock(),
+                    LatestAttemptId=tntTraceAttempt and tntTraceAttempt.Id,
+                    SinceLatestLight=tntTraceAttempt and os.clock()-tntTraceAttempt.LightRequestedAt,
+                    Attribution="Observed reply after latest local request; manual or other callers may share this remote"}
+            end
+        end})
     farmSlider(toolsTab,"TntLightCooldown","TNT Light Cooldown (s)",0,60,0.05)
     farmSlider(toolsTab,"TntThrowDelay","TNT Throw Delay After Lighting (s)",0,5,0.05)
     farmToggle(toolsTab,"AutoUsePitchfork","Auto Use Pitchfork")
@@ -2119,8 +2133,61 @@ end
         if LocalPlayer:GetAttribute("HintViewerOpen")==true then return "hint viewer" end
         return nil
     end
+    local nextTntLightAt=0
+    local tntTraceSequence,tntTracePhase=0,"Idle"
+    local function captureTntThrowState()
+        local now=os.clock()
+        local toolReason=toolBlockReason()
+        local root=farmRoot()
+        local camera=Workspace.CurrentCamera
+        local remaining=math.max(0,nextTntLightAt-now)
+        local blockers={}
+        if not sharedFarmState.AutoUseTNT then blockers[#blockers+1]="Auto TNT disabled"end
+        if LocalPlayer:GetAttribute("TntOwned")~=true then blockers[#blockers+1]="TNT not owned"end
+        if remaining>0 then blockers[#blockers+1]="Reserved local cooldown"end
+        if not needleFolder then blockers[#blockers+1]="NeedleHaystack not cached"end
+        if toolReason then blockers[#blockers+1]=toolReason end
+        local remote=farmRemote("TntAction")
+        local reason=blockers[1]
+        if not reason and not remote then reason="TntAction remote unavailable"end
+        if not reason and not camera then reason="Camera unavailable for throw"end
+        local throwReason=hubUnloaded and "Hub unloaded"or not sharedFarmState.AutoUseTNT and "Auto TNT disabled"or toolReason
+        if not throwReason and not camera then throwReason="Camera unavailable for throw"end
+        if not throwReason and tntTracePhase=="ThrowDelay"then throwReason="Waiting configured throw delay"end
+        if tntTracePhase=="ThrowDelay"then reason=throwReason end
+        return {BlockReason=reason or "No local blocker",ActiveBlockers=blockers,ToolBlockReason=toolReason,
+            LightBlockReason=blockers[1],ThrowBlockReason=throwReason,
+            Phase=tntTracePhase,Now=now,CooldownReadyAt=nextTntLightAt,CooldownRemaining=remaining,
+            AutoUseTNT=sharedFarmState.AutoUseTNT,TntOwned=LocalPlayer:GetAttribute("TntOwned"),
+            CooldownAttribute=LocalPlayer:GetAttribute("TntCooldown"),MinimumLightInterval=sharedFarmState.TntLightCooldown,
+            ThrowDelay=sharedFarmState.TntThrowDelay,NeedleFolderCached=needleFolder~=nil,RemoteAvailable=remote~=nil,
+            IntroFinished=LocalPlayer:GetAttribute("IntroCutsceneFinished"),RoundComplete=LocalPlayer:GetAttribute("NeedleRoundComplete"),
+            LeverColourCameraBusy=tntPuzzleCameraBusy(),NeedleBusy=needleBusy,NeedleOwned=LocalPlayer:GetAttribute("NeedleOwned"),
+            KeyExposed=exposedNeedle()~=nil,NeedlePriority=needlePriority(),HintViewerOpen=LocalPlayer:GetAttribute("HintViewerOpen"),
+            CutsceneActive=LocalPlayer:GetAttribute("CutsceneActive"),Chapter2ReleaseActive=LocalPlayer:GetAttribute("Chapter2ReleaseActive"),
+            NeedleInputLocked=LocalPlayer:GetAttribute("NeedleInputLocked"),BypassToggle=Registry.CutsceneBypass and Registry.CutsceneBypass.Value,
+            MenuClosed=hubWindow.Closed,RootPosition=root and root.Position,RootAnchored=root and root.Anchored,
+            CameraPosition=camera and camera.CFrame.Position,CameraLook=camera and camera.CFrame.LookVector,
+            CameraDistanceFromRoot=root and camera and(root.Position-camera.CFrame.Position).Magnitude,
+            LastAttempt=tntTraceAttempt,LastServerReply=tntTraceReply,
+            Interpretation="Cutscene/input flags and camera distance are context, not independent TNT gates. Cooldown is reserved locally before lighting; Sent means local call success, not server acceptance."}
+    end
+    local function traceTnt(kind,extra)
+        if not tntDiagnostics.Enabled()then return end
+        tntDiagnostics.Record(kind,function()return {AttemptId=tntTraceAttempt and tntTraceAttempt.Id,
+            State=captureTntThrowState(),Details=extra}end)
+    end
+    tntDiagnostics.Remote=function()return farmRemote("TntAction")end
+    tntDiagnostics.Probe=function()
+        local snapshot=captureTntThrowState()
+        local message=snapshot.BlockReason
+        if snapshot.ToolBlockReason then message=message.." | tool guard: "..snapshot.ToolBlockReason end
+        if snapshot.CooldownRemaining>0 then message=message..string.format(" (%.1fs)",snapshot.CooldownRemaining)end
+        if tntTraceReply then message=message.." | observed server reply: "..tostring(tntTraceReply.Action)end
+        tntDiagnostics.Status("TNT",message.." | phase: "..tntTracePhase)
+        return snapshot
+    end
     spawnChapterWorker(function()
-        local nextTntLightAt=0
         while not hubUnloaded do
             task.wait(0.1)
             if sharedFarmState.AutoUseTNT and LocalPlayer:GetAttribute("TntOwned")==true
@@ -2129,16 +2196,38 @@ end
                 if needleFolder and not toolBlockReason() then
                     local cooldown=tonumber(LocalPlayer:GetAttribute("TntCooldown")) or 20
                     nextTntLightAt=os.clock()+math.max(0.5,cooldown,tonumber(sharedFarmState.TntLightCooldown) or 0)
-                    if sendFarmRemote("TntAction","light") then
+                    tntTraceSequence+=1
+                    tntTraceAttempt={Id=tntTraceSequence,LightRequestedAt=os.clock(),ReservedCooldownUntil=nextTntLightAt}
+                    tntTracePhase="LightingSend"
+                    traceTnt("LightAttempt")
+                    local lightSent=sendFarmRemote("TntAction","light")
+                    tntTraceAttempt.LightSent=lightSent
+                    traceTnt(lightSent and "LightSent"or "LightSendFailed")
+                    if lightSent then
+                        tntTracePhase="ThrowDelay"
+                        local waitStarted=os.clock()
                         task.wait(math.max(0,tonumber(sharedFarmState.TntThrowDelay) or 0.4))
+                        tntTraceAttempt.ActualThrowDelay=os.clock()-waitStarted
                         if not hubUnloaded and sharedFarmState.AutoUseTNT and not toolBlockReason() then
                             local camera=Workspace.CurrentCamera
                             if camera then
-                                sendFarmRemote("TntAction","throw",camera.CFrame,
+                                tntTraceAttempt.ThrowRequestedAt=os.clock()
+                                local throwSent=sendFarmRemote("TntAction","throw",camera.CFrame,
                                     camera.CFrame.LookVector*40+Vector3.new(0,8,0))
+                                tntTraceAttempt.ThrowSent=throwSent
+                                tntTracePhase=throwSent and "ThrowSent"or "ThrowSendFailed"
+                                traceTnt(tntTracePhase,{Origin=camera.CFrame.Position,Look=camera.CFrame.LookVector,
+                                    Velocity=camera.CFrame.LookVector*40+Vector3.new(0,8,0)})
+                            else
+                                tntTracePhase="ThrowWithheld";tntTraceAttempt.WithheldReason="Camera missing after lighting"
+                                traceTnt("ThrowWithheld")
                             end
+                        else
+                            tntTracePhase="ThrowWithheld"
+                            tntTraceAttempt.WithheldReason=hubUnloaded and "Hub unloaded"or not sharedFarmState.AutoUseTNT and "Auto TNT disabled"or toolBlockReason()
+                            traceTnt("ThrowWithheld")
                         end
-                    end
+                    else tntTracePhase="LightSendFailed"end
                 end
             end
         end
